@@ -1,7 +1,7 @@
 import { For, Show, createMemo } from "solid-js"
 import type { MissionPanelMap, MissionPanelReport } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
-import { useMissionPanelStore } from "./mission-panel-scope"
+import { missionStore } from "../stores/missions"
 import { navigateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
@@ -16,15 +16,14 @@ import { createMissionDisclosure } from "./mission-disclosure"
  * reader: plan changes, reports, conversation cleanup history and identifiers.
  * The panel keeps none of it. */
 export function MissionOverviewDetails(props: {
-  instanceId: string; scope: string; mission: MissionPanelMap; recurrence?: MissionReaderTarget["recurrence"]
+  instanceId: string; scope: string; mission: MissionPanelMap
 }) {
-  const missionStore = useMissionPanelStore()
   const { t, locale } = useI18n()
   const [historyOpen, setHistoryOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:history")
   const [reportsOpen, setReportsOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:reports")
   const [technicalOpen, setTechnicalOpen] = createMissionDisclosure(() => props.instanceId, () => props.mission.id, () => "overview:technical")
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
-    navigateMissionProjectView(props.instanceId, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
+    navigateMissionProjectView(props.instanceId, { reader: { missionId: props.mission.id, kind, itemId } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
   // A compact map holds its rows' reports: the rest belong to tasks it does not hold.
@@ -37,7 +36,7 @@ export function MissionOverviewDetails(props: {
     : actorSessionId === props.mission.coordinatorSessionId ? t("missions.control.history.coordinator")
     : props.mission.actors.find(actor => actor.sessionId === actorSessionId)?.title ?? actorSessionId ?? ""
   const when = (at: number) => <time dateTime={new Date(at).toISOString()}>{new Date(at).toLocaleString(locale())}</time>
-  const cleanups = () => props.recurrence ? [] : missionStore.state(props.instanceId).cleanups ?? []
+  const cleanups = () => missionStore.state(props.instanceId).cleanups ?? []
   return <div class="mission-overview-details">
     <Show when={props.mission.status === "active" && props.mission.reports.some(report => report.notificationStatus === "pending" && report.delivery !== "native-return")}>
       <p role="status">{t("missions.control.report.notification.pending")}</p>
@@ -79,14 +78,10 @@ export function MissionOverviewDetails(props: {
         refresh={() => missionStore.refresh(props.instanceId)} />
     </Show>
     <details class="mission-report-technical" open={technicalOpen()} onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missionsPanel.technical")}</summary>
-      <Show when={!props.recurrence || props.mission.panelPassage}><MissionPanelFields instanceId={props.instanceId} mission={props.mission} /></Show>
+      <MissionPanelFields instanceId={props.instanceId} mission={props.mission} />
       <dl class="mission-technical">
         <dt>{t("missionsPanel.technical.mission")}</dt><dd><bdi>{props.mission.id}</bdi></dd>
         <dt>{t("missionsPanel.technical.coordinator")}</dt><dd><bdi>{props.mission.coordinatorSessionId}</bdi></dd>
-        <Show when={props.recurrence}>{owner => <>
-          <dt>{t("missionsPanel.technical.schedule")}</dt><dd><bdi>{owner().scheduleID}</bdi></dd>
-          <dt>{t("missionsPanel.technical.passage")}</dt><dd><bdi>{owner().passageID}</bdi></dd>
-        </>}</Show>
       </dl>
       <MissionProfileSummary profiles={props.mission.profiles} template={props.mission.template} />
     </details>

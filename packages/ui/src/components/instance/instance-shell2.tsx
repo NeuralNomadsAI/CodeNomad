@@ -875,9 +875,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Keep action items stable so unrelated updates do not rebuild their icon DOM.
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
-  // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
+  // A reader that needs no conversation: playbook details.
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionProjectView(props.instance.id).reader?.kind === "playbook"
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()

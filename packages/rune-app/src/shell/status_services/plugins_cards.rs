@@ -24,6 +24,8 @@ pub(super) fn system_attention_block(
     let locked = panel.mutations_locked();
     let mut box_el = col()
         .full_width()
+        .inset_surface()
+        .pad(Space::Sm)
         .separate(Space::Xs)
         .role("status")
         .label(t("instanceServiceStatus.plugins.system.attention"))
@@ -35,7 +37,7 @@ pub(super) fn system_attention_block(
     for entry in entries {
         box_el = box_el.child(system_attention_row(s, panel, &entry, locked));
     }
-    Some(settings::card(box_el).key("plugins-system-attention"))
+    Some(box_el.key("plugins-system-attention"))
 }
 
 fn system_attention_row(
@@ -45,10 +47,19 @@ fn system_attention_row(
     locked: bool,
 ) -> El {
     let scope_name = scope_label(entry.controlling_scope);
-    let status_key = match entry.kind {
-        SystemAttentionKind::Disabled => "instanceServiceStatus.plugins.system.disabled",
-        SystemAttentionKind::Failed => "instanceServiceStatus.plugins.system.failed",
-        SystemAttentionKind::Unconfirmed => "instanceServiceStatus.plugins.system.unconfirmed",
+    let (status_key, dot) = match entry.kind {
+        SystemAttentionKind::Disabled => (
+            "instanceServiceStatus.plugins.system.disabled",
+            shell::ServiceDot::Pending,
+        ),
+        SystemAttentionKind::Failed => (
+            "instanceServiceStatus.plugins.system.failed",
+            shell::ServiceDot::Error,
+        ),
+        SystemAttentionKind::Unconfirmed => (
+            "instanceServiceStatus.plugins.system.unconfirmed",
+            shell::ServiceDot::Pending,
+        ),
     };
     let label = t(status_key)
         .replace("{name}", &entry.name)
@@ -102,7 +113,9 @@ fn system_attention_row(
         );
     }
 
-    shell::service_row(None, &label, trailing).key(format!("plugin-sys-{}", entry.key))
+    shell::service_row(Some(shell::status_dot(dot)), &label, trailing)
+        .help(&details)
+        .key(format!("plugin-sys-{}", entry.key))
 }
 
 fn system_attention_details(entry: &SystemAttentionEntry) -> String {
@@ -198,6 +211,8 @@ pub(super) fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) ->
 
     let mut form = col()
         .full_width()
+        .inset_surface()
+        .pad(Space::Sm)
         .separate(Space::Xs)
         .child(shell::service_heading_row(
             t("instanceServiceStatus.plugins.sources.addTitle"),
@@ -219,6 +234,9 @@ pub(super) fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) ->
                 .literal_direction()
                 .key("plugins-add-spec"),
         )
+        .child(shell::panel_title(t(
+            "instanceServiceStatus.plugins.sources.scope",
+        )))
         .child(
             layout::action_row()
                 .child(
@@ -245,7 +263,7 @@ pub(super) fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) ->
                 ),
         );
     if let Some(err) = &panel.add_error {
-        form = form.child(text(err).wrap().role("alert"));
+        form = form.child(settings::palette::save_error(err).key("plugins-add-error"));
     }
     let submit_label = if panel.write_active {
         t("instanceServiceStatus.plugins.sources.adding")
@@ -263,7 +281,7 @@ pub(super) fn add_source_panel(s: &State, panel: &PluginsPanel, locked: bool) ->
         )
         .key("plugins-add-submit"),
     );
-    settings::card(form)
+    form.key("plugins-add-card")
 }
 
 pub(super) fn remove_confirm_card(
@@ -289,56 +307,56 @@ pub(super) fn remove_confirm_card(
     detail.push_str(t("instanceServiceStatus.plugins.sources.removeRecovery"));
     let escape_scope = s.input_scope.clone();
     let modal_scope = s.input_scope.clone();
-    settings::card(
-        col()
-            .key("plugins-remove-dialog")
-            .full_width()
-            .separate(Space::Xs)
-            .role("alertdialog")
-            .label(&action)
-            .description(&detail)
-            .modal_tx(true, move |s: &mut State, tx| {
-                if s.input_scope == modal_scope {
-                    s.status_services.plugins.cancel_remove_confirm(tx);
-                }
-            })
-            .child(text(&action).text_role(TextRole::Button).role("heading"))
-            .child(text(&detail).wrap())
-            .child(
-                layout::action_row()
-                    .child(
-                        layout::button_tx(
-                            t("settings.providers.actions.close"),
-                            false,
-                            screen::action_tx(&s.input_scope, |s, tx| {
-                                s.status_services.plugins.cancel_remove_confirm(tx);
-                            }),
-                        )
-                        .key("plugins-remove-cancel")
-                        .autofocus(),
+    col()
+        .key("plugins-remove-dialog")
+        .full_width()
+        .inset_surface()
+        .pad(Space::Sm)
+        .separate(Space::Xs)
+        .role("alertdialog")
+        .label(&action)
+        .description(&detail)
+        .modal_tx(true, move |s: &mut State, tx| {
+            if s.input_scope == modal_scope {
+                s.status_services.plugins.cancel_remove_confirm(tx);
+            }
+        })
+        .child(text(&action).text_role(TextRole::Button).role("heading"))
+        .child(settings::stats::caption(&detail))
+        .child(
+            layout::action_row()
+                .child(
+                    layout::button_tx(
+                        t("settings.providers.actions.close"),
+                        false,
+                        screen::action_tx(&s.input_scope, |s, tx| {
+                            s.status_services.plugins.cancel_remove_confirm(tx);
+                        }),
                     )
-                    .child(
-                        settings::primary_action(
-                            &action,
-                            locked || !ready,
-                            screen::action(&s.input_scope, |s| {
-                                let wake = s.wake.clone();
-                                s.status_services.plugins.confirm_and_remove(&wake);
-                            }),
-                        )
-                        .key("plugins-remove-confirm"),
-                    ),
-            )
-            .on_key(move |s: &mut State, key, tx| {
-                if s.input_scope == escape_scope
-                    && !tx.key_repeat()
-                    && key.mods == rune::Mods::default()
-                    && key.key == rune::Key::Escape
-                {
-                    s.status_services.plugins.cancel_remove_confirm(tx)
-                } else {
-                    false
-                }
-            }),
-    )
+                    .key("plugins-remove-cancel")
+                    .autofocus(),
+                )
+                .child(
+                    settings::primary_action(
+                        &action,
+                        locked || !ready,
+                        screen::action(&s.input_scope, |s| {
+                            let wake = s.wake.clone();
+                            s.status_services.plugins.confirm_and_remove(&wake);
+                        }),
+                    )
+                    .key("plugins-remove-confirm"),
+                ),
+        )
+        .on_key(move |s: &mut State, key, tx| {
+            if s.input_scope == escape_scope
+                && !tx.key_repeat()
+                && key.mods == rune::Mods::default()
+                && key.key == rune::Key::Escape
+            {
+                s.status_services.plugins.cancel_remove_confirm(tx)
+            } else {
+                false
+            }
+        })
 }

@@ -86,7 +86,7 @@ Schedules include Once, now, Every N hours, Every day, Selected weekdays, Day of
 
 **Once, now** takes its instant at Start, rather than when the form opens. It offers one opportunity, which a condition can consume without launching. Choose a repeating schedule for later opportunities. Scheduling runs while its OpenCode service and execution host are available.
 
-Starting or resuming prepares scheduling in the project's OpenCode configuration automatically. An explicit OFF is preserved: use **Open scheduling settings** when offered to open the responsible file, and the **i** tip for its source or environment details.
+Starting or resuming prepares scheduling in the project's OpenCode configuration automatically.
 
 ### Events and combinations {#scheduling-conditions}
 
@@ -94,25 +94,22 @@ Choose **Repository activity → Event**, then any optional filters in the same 
 
 Forge checks use `gh`, `glab` or `tea` on the OpenCode execution host, including with CodeNomad closed; public repositories can use anonymous access. Self-hosted forges require a CLI signed in to that host. **github.com** also offers account notifications and Dependabot alerts through signed-in `gh`, with [notification access](https://docs.github.com/en/rest/activity/notifications) or [alert read access](https://docs.github.com/en/rest/dependabot/alerts). Notifications preserve read status; alerts include fixed or dismissed items. Stored notifications with an empty **GitHub repository** cover the account. First Start sets the reference.
 
-An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
+An event can follow commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
 
 - **or** combines adjacent schedules, or adjacent events.
 - **if**: events after schedules are their conditions. At each scheduled time, one of those events must have changed since the last successful passage.
-- **else**: schedules after events are a fallback. At their time, they run only if the criteria above launched no passage since that schedule's previous slot, or since it was armed. Events after the fallback condition that fallback.
 
 Events at the beginning can launch a passage on each new occurrence; trigger events are checked every 15 minutes. First Start establishes the source reference. A successful passage advances it; failed work keeps it. Passages do not overlap.
 
 ### Counts and history {#scheduling-limits}
 
-**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**. The conversation must use the coordinator's agent, model and thinking: saving refuses it otherwise, and a launch that finds them changed uses another session.
+**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**. At each launch the conversation is put on the coordinator's agent, model and thinking.
 
 You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
 
-Select a schedule to read its state, next wake or check, launched and successful passage counts, and **Past runs**. The history retains 30 results; lifetime counts remain. **Run now** counts as a launched passage once admitted.
-
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
-In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
+In **Followed conversations**, use **Add conversation** and choose a conversation, for an immediate Mission. Before Play, change a selection or use its × button to remove it.
 
 Choose **New commits on a local branch** to watch a local Git ref, or **New commits on a remote branch** and enter the branch name (for example `dev`). The remote check reads the detected repository directly, without a local fetch. Several commits between checks produce one passage.
 
@@ -139,7 +136,7 @@ The flag shows the Mission's state; its chevron carries its tasks' attention sta
 | Green | A Mission, task or successful scheduled run awaits review in this window. |
 | Accent hourglass | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
 | Accent icon alone | Prepared Mission or a task that has not started. |
-| Neutral | Reviewed completion, stopped schedule or **State unconfirmed**; read the status text. |
+| Neutral | Reviewed completion or stopped schedule; read the status text. |
 
 Select a green Mission or task, click or sweep green task icons, or use **Mark as read** on the chevron's context menu. For **Successful run to review**, explicitly select the recurring row in the active window or use **Mark as read**. Its icon returns to waiting while scheduling remains active, otherwise neutral. New results arriving on an already selected row stay unread.
 
@@ -173,7 +170,7 @@ A running one-time Mission keeps assigning its tasks and delivering their report
 
 One-time **Pause** lets current steps finish without starting new work. **Interrupt now** requests immediate interruption. **Stop** is terminal and asks for confirmation. Native schedule Pause closes future admission and requests interruption of its current passage. Tool effects may continue after an interruption; inspect partial results.
 
-Keep an unconfirmed action's original request: while a native schedule or editor view is open, CodeNomad rereads it automatically until it settles and automatically retries only an exact recorded partial preparation. Use **Check status** for one-time Mission controls, and **Refresh mission map** for ordinary one-time creation when offered; do not create a replacement to bypass uncertainty. A native schedule offers **Check status** in its **More actions** menu.
+Keep an unconfirmed action's original request: while a native schedule or editor view is open, CodeNomad rereads it automatically until it settles and automatically retries only an exact recorded partial preparation. Use **Check status** for one-time Mission controls, and **Refresh mission map** for ordinary one-time creation when offered; do not create a replacement to bypass uncertainty.
 
 An interrupted or failed one-time Mission can offer **Recover interrupted mission**. Eligible tasks offer missing-report recovery.
 

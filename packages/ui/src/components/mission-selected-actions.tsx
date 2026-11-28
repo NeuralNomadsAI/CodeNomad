@@ -105,7 +105,7 @@ export function MissionSelectedActions(props: {
   // The Mission's lifecycle state lives here, so it survives a task taking the toolbar.
   const feedback = <>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>
   return <Show when={props.task?.task.key} keyed fallback={
-     <Show when={!props.taskPending} fallback={<MissionActionBar task label={t("missionsPanel.picker.actions")} reading={false} feedback={feedback} />}><MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
+     <Show when={!props.taskPending} fallback={<MissionActionBar label={t("missionsPanel.picker.actions")} reading={false} feedback={feedback} />}><MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
       primary={primary()} stop={props.programming?.between ? stopProgramming() : lifecycle.stop()}
       interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
       onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}

@@ -38,6 +38,8 @@ pub(super) fn modal_open(s: &State) -> bool {
     settings::blocks_shell_shortcuts(s)
         || super::blank_cleanup::is_open(s)
         || super::temporary::is_open(s)
+        || super::directory_browser::is_open(s)
+        || super::new_instance_launcher::is_open(s)
         || super::tab_rename::is_open(s)
         || super::command_palette::is_open(s)
         || notifications::history_open(s)
@@ -62,6 +64,8 @@ fn overlay_open(s: &State) -> bool {
 
 fn any_editor_composing(s: &State) -> bool {
     s.draft.is_composing()
+        || super::directory_browser::is_composing(s)
+        || super::new_instance_launcher::is_composing(s)
         || super::tab_rename::is_composing(s)
         || super::command_palette::is_composing(s)
         || s.files
@@ -139,8 +143,7 @@ fn home_focus_allows_browse(tx: &Tx) -> bool {
 }
 
 fn can_browse_home(s: &State, tx: &Tx) -> bool {
-    crate::platform::folder_picker_available()
-        && launcher_replaces_project(s)
+    launcher_replaces_project(s)
         && !focused_text_field(s, tx)
         && home_focus_allows_browse(tx)
         && s.screen
@@ -299,7 +302,11 @@ pub(super) fn dispatch(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             let ready =
                 workspace::input_ready(s) && s.screen.launcher().is_some_and(|l| !l.pending);
             if ready {
-                crate::platform::browse(s, tx);
+                if crate::platform::folder_picker_available() {
+                    crate::platform::browse(s, tx);
+                } else {
+                    super::directory_browser::open(s, None, tx);
+                }
             }
         }
         Action::RenameInstance(tab_key) => {

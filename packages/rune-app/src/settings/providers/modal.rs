@@ -12,6 +12,9 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 
+pub(super) const API_KEY_AUTOFILL: rune::Autofill = rune::Autofill::Off;
+pub(super) const OAUTH_CODE_AUTOFILL: rune::Autofill = rune::Autofill::OneTimeCode;
+
 pub(super) fn view<S: 'static>(
     catalog: &Catalog,
     layers: &mut Vec<El>,
@@ -91,6 +94,7 @@ pub(super) fn view<S: 'static>(
                     layout::hinted_field(&flow.api_key, t("settings.providers.apiKey.placeholder"))
                         .label(t("settings.providers.apiKey.label"))
                         .secure()
+                        .autofill(API_KEY_AUTOFILL)
                         .disabled(prompts_disabled)
                         .on_edit(move |s: &mut S| access(s).manager.connect_api_key_mut())
                         .on_submit(move |s: &mut S, _| {
@@ -99,16 +103,20 @@ pub(super) fn view<S: 'static>(
                         .build(&field_kit(layout::dark()))
                         .literal_direction()
                         .key("provider-auth-apikey");
-                body = body
-                    .child(text(t("settings.providers.apiKey.label")).text_role(TextRole::Label))
-                    .child(input);
+                body = body.child(
+                    col()
+                        .full_width()
+                        .separate(Space::Xs)
+                        .child(
+                            text(t("settings.providers.apiKey.label")).text_role(TextRole::Label),
+                        )
+                        .child(input),
+                );
             }
             AuthMethod::Command { command, .. } => {
                 let preview = command.join(" ");
                 body = body.child(
-                    text(preview)
-                        .wrap_anywhere()
-                        .literal_direction()
+                    chrome::log_block(&preview)
                         .help(t("settings.providers.command.description"))
                         .key("provider-auth-command-preview"),
                 );
@@ -142,7 +150,15 @@ pub(super) fn view<S: 'static>(
             .map(|a| a.instructions.as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| t("settings.providers.oauth.enterCode"));
-        body = body.child(text(instructions).wrap().role("status"));
+        body = body.child(
+            col()
+                .full_width()
+                .pad(Space::Sm)
+                .inset_surface()
+                .role("status")
+                .key("provider-auth-oauth-instructions")
+                .child(text(instructions).wrap().text_role(TextRole::Small)),
+        );
         if let Some(auth) = &flow.oauth
             && is_http_url(&auth.url)
         {
@@ -158,6 +174,7 @@ pub(super) fn view<S: 'static>(
             t("settings.providers.oauth.codePlaceholder"),
         )
         .label(t("settings.providers.oauth.codeLabel"))
+        .autofill(OAUTH_CODE_AUTOFILL)
         .on_edit(move |s: &mut S| access(s).manager.connect_oauth_code_mut())
         .on_submit(move |s: &mut S, _| {
             access(s).manager.request_submit_oauth_code();
@@ -166,9 +183,13 @@ pub(super) fn view<S: 'static>(
         .literal_direction()
         .autofocus()
         .key("provider-auth-oauth-code");
-        body = body
-            .child(text(t("settings.providers.oauth.codeLabel")).text_role(TextRole::Label))
-            .child(code_input);
+        body = body.child(
+            col()
+                .full_width()
+                .separate(Space::Xs)
+                .child(text(t("settings.providers.oauth.codeLabel")).text_role(TextRole::Label))
+                .child(code_input),
+        );
     }
 
     if flow.stage == AuthStage::Waiting {
@@ -190,11 +211,14 @@ pub(super) fn view<S: 'static>(
         };
         let mut wait_box = col()
             .full_width()
+            .pad(Space::Sm)
             .separate(Space::Xs)
+            .inset_surface()
             .role("status")
+            .key("provider-auth-waiting-card")
             .child(text(wait_title).text_role(TextRole::Button));
         if !wait_detail.is_empty() {
-            wait_box = wait_box.child(text(wait_detail).wrap());
+            wait_box = wait_box.child(text(wait_detail).wrap().text_role(TextRole::Small));
         }
         body = body.child(wait_box);
         if let Some(auth) = &flow.oauth

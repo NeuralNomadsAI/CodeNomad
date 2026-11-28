@@ -196,34 +196,35 @@ pub(super) fn view<S: 'static>(
 ) -> El {
     let install = &prefs.opencode_install;
     let pending = status.flight.is_some() || install.busy();
-    let mut card = col().full_width().separate(Space::Sm).child(
-        text(t("settings.opencode.update.title"))
-            .text_role(TextRole::Title)
-            .role("heading"),
-    );
-    if status.failed {
-        card = card.child(
-            text(t("settings.opencode.setup.serviceError"))
-                .full_width()
-                .wrap()
-                .role("alert"),
-        );
-    }
-    if let Some(error) = install.error(prefs.backend.as_ref()) {
-        card = card.child(text(t(error)).wrap().role("alert"));
-    }
-    if let Some(snapshot) = &status.value {
+    let header_status = status.value.as_ref().map(|snapshot| {
         let label = if status.failed {
             "disconnected"
         } else {
             snapshot.state
         };
-        card = card
-            .child(text(t(&format!("settings.opencode.setup.{label}"))).role("status"))
-            .child(version(
-                "settings.opencode.update.installed",
-                snapshot.current.as_deref(),
-            ));
+        t(&format!("settings.opencode.setup.{label}"))
+    });
+    let mut card = col()
+        .full_width()
+        .separate(Space::Sm)
+        .child(chrome::card_header(
+            t("settings.opencode.update.title"),
+            header_status,
+        ));
+    if status.failed {
+        card = card.child(chrome::palette::save_error(t(
+            "settings.opencode.setup.serviceError",
+        )));
+    }
+    if let Some(error) = install.error(prefs.backend.as_ref()) {
+        card = card.child(chrome::palette::save_error(t(error)));
+    }
+    let mut install_button = None;
+    if let Some(snapshot) = &status.value {
+        card = card.child(version(
+            "settings.opencode.update.installed",
+            snapshot.current.as_deref(),
+        ));
         if snapshot.running.is_none() || snapshot.running != snapshot.current {
             card = card.child(version(
                 "settings.opencode.setup.daemon",
@@ -240,6 +241,7 @@ pub(super) fn view<S: 'static>(
                     "settings.opencode.update.available",
                     &[("version", latest)],
                 ))
+                .text_role(TextRole::Small)
                 .role("status"),
             );
         }
@@ -247,6 +249,7 @@ pub(super) fn view<S: 'static>(
             if let Some(restart) = snapshot.restart {
                 card = card.child(
                     text(t(restart))
+                        .text_role(TextRole::Small)
                         .full_width()
                         .wrap()
                         .role("status")
@@ -256,6 +259,7 @@ pub(super) fn view<S: 'static>(
             if snapshot.check_failed {
                 card = card.child(
                     text(t("settings.opencode.update.checkFailed"))
+                        .text_role(TextRole::Small)
                         .full_width()
                         .wrap()
                         .role("status")
@@ -277,26 +281,32 @@ pub(super) fn view<S: 'static>(
                     &[("version", snapshot.latest.as_deref().unwrap_or(""))],
                 )
             };
-            card = card.child(
-                layout::action_row().child(
-                    chrome::primary_action(&label, pending || !prefs.can_retry(), start)
-                        .key("opencode-install"),
-                ),
+            install_button = Some(
+                chrome::primary_action(&label, pending || !prefs.can_retry(), start)
+                    .key("opencode-install"),
             );
         }
     }
     if let Some(progress) = install.label() {
-        card = card.child(text(t(progress)).role("status"));
+        card = card.child(text(t(progress)).text_role(TextRole::Small).role("status"));
     } else if pending {
-        card = card.child(text(t("settings.opencode.update.checking")).role("status"));
+        card = card.child(
+            text(t("settings.opencode.update.checking"))
+                .text_role(TextRole::Small)
+                .role("status"),
+        );
     }
-    card = card.child(layout::action_row().child(layout::button(
-        t("settings.opencode.setup.check"),
-        pending || !prefs.can_retry(),
-        check,
-    )));
+    card = card.child(
+        layout::action_row()
+            .children(install_button)
+            .child(layout::button(
+                t("settings.opencode.setup.check"),
+                pending || !prefs.can_retry(),
+                check,
+            )),
+    );
     if let Some(snapshot) = &status.value {
-        let mut details = col().full_width().child(version(
+        let mut details = col().full_width().separate(Space::Xs).child(version(
             "settings.opencode.setup.minimum",
             snapshot.minimum.as_deref(),
         ));
@@ -320,7 +330,12 @@ pub(super) fn view<S: 'static>(
 }
 
 fn version(label: &str, value: Option<&str>) -> El {
-    chrome::setting_row(t(label), text(value.unwrap_or("—")).literal_direction())
+    chrome::setting_row(
+        t(label),
+        text(value.unwrap_or("—"))
+            .text_role(TextRole::Mono)
+            .literal_direction(),
+    )
 }
 
 pub(super) fn executable_view<S: 'static>(
@@ -354,4 +369,49 @@ pub(super) fn logs_action_view<S: 'static>(
     access: fn(&mut S) -> &mut Status,
 ) -> El {
     status.logs.action_view(prefs, shared, wake, layers, access)
+}
+
+#[cfg(test)]
+#[test]
+fn opencode_status_card_renders_header_and_error_in_both_themes() {
+    struct Harness {
+        dark: bool,
+        status: Status,
+        prefs: Preferences,
+    }
+    for dark in [false, true] {
+        let mut prefs = Preferences::default();
+        prefs.fixture();
+        prefs.fixture_locale("en");
+        let mut status = Status::default();
+        status.fixture();
+        status.failed = true;
+        let mut rt = rune::Runtime::new(
+            Harness {
+                dark,
+                status,
+                prefs,
+            },
+            |s, cx| {
+                rune_theme_codenomad::settings::render(cx, s.dark, None, |_| {
+                    crate::strings::with_locale("en", || {
+                        view(
+                            &s.status,
+                            &s.prefs,
+                            |_: &mut Harness| {},
+                            |_: &mut Harness| {},
+                            |s: &mut Harness| &mut s.status,
+                        )
+                    })
+                })
+            },
+            (720.0, 560.0),
+            rune::Env::new(dark, 1.0),
+        );
+        rt.frame(0.02);
+        let tree = rt.accessibility_json().to_string();
+        assert!(tree.contains("\"role\":\"heading\""), "dark={dark}");
+        assert!(tree.contains("\"role\":\"status\""), "dark={dark}");
+        assert!(tree.contains("\"role\":\"alert\""), "dark={dark}");
+    }
 }

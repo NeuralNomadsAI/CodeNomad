@@ -147,3 +147,33 @@ fn stats_owner_error_preserves_cache_and_activity_coalesces_after_settlement() {
     assert_eq!(d.due, Some(0.0));
     assert!(d.flight.is_none() && d.snapshot.is_none());
 }
+
+#[test]
+fn stats_view_renders_metrics_and_error_alert_in_both_themes() {
+    for dark in [false, true] {
+        let mut dashboard = Dashboard::default();
+        dashboard.scope = Some(("owner".into(), "ws-1".into()));
+        dashboard.days = Some(30);
+        dashboard.failed = true;
+        dashboard.snapshot = Some(snapshot(30, proof("owner", Some("root"), "live")));
+        let mut rt = rune::Runtime::new(
+            (dark, dashboard),
+            |(dark, stats), cx| {
+                rune_theme_codenomad::settings::render(cx, *dark, None, |cx| {
+                    crate::strings::with_locale("en", || {
+                        let mut layers = Vec::new();
+                        let body = view::view(cx, stats, &mut layers, |s| Some(&mut s.1));
+                        rune_theme_codenomad::layout::with_overlays(body, layers)
+                    })
+                })
+            },
+            (840.0, 760.0),
+            rune::Env::new(dark, 1.0),
+        );
+        rt.frame(0.02);
+        let tree = rt.accessibility_json().to_string();
+        assert!(tree.contains("\"role\":\"alert\""), "dark={dark}");
+        assert!(tree.contains("\"role\":\"table\""), "dark={dark}");
+        assert!(rt.find("stats-refresh").is_some(), "dark={dark}");
+    }
+}

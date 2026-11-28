@@ -568,29 +568,6 @@ the bounded context/observation paginator, with source checks on every native sl
 separately observed windows retain partial/unknown coverage. Each native page request
 observes its range once.
 
-The UI reuses `createMissionPanelInventory` for selected passages, without project inventory
-discovery or project completion seeding. `MissionPanelScope` supplies that exact owner to
-the existing tree, graph, Needs-you, fields and row readers. Body cache identities include
-the passage source, and historical reports retain their exact report selectors. Explicit
-continuation/Retry, original deadlines, stream-slot ownership and last-good displays follow
-the ordinary panel contract. Unrelated journal revisions revalidate the header without
-rereading unchanged task windows or bodies. Scheduled inventory and schedule controls
-retain their document-owned paths.
-
-Each outstanding current body demand owns one monotonic 30-second deadline and
-cancellation signal across semantic content offsets, automatic restarts/revalidation
-and outer wire pieces. Assembly is staged before the final publication check. A
-fulfilled demand ends its operation; a later user extension or explicit Retry can
-start a fresh one. Need reductions and consumer releases reconsider aggregate coverage
-even during a running continuation: fresh covered demand ends that read immediately,
-while stale/invalidated data and outstanding peers keep their original operation.
-Every current pending promotion shares the store's stale/mark, exact expected digest and
-live-operation deadline eligibility, including accept, demand changes and completion.
-Ending an operation discards unpromoted current data and retains its last good display.
-Failed outstanding operations retain their budget through automatic revalidation.
-Technical details exposes the scoped persisted-field/raw-page reader for
-compact current maps.
-
 ## Settlement, result and watched cursors
 
 Settlement requires the coordinator and **all descendants** to be inactive,

@@ -28,6 +28,8 @@ pub struct Panels {
     floating: Option<usize>,
     floating_epoch: u64,
     resizing: Option<usize>,
+    pub(crate) directory_browser: Box<super::directory_browser::Browser>,
+    pub(crate) new_instance_launcher: Box<super::new_instance_launcher::LauncherMenu>,
     #[cfg(target_arch = "wasm32")]
     orientation_watch: Option<super::web_orientation::Watch>,
     #[cfg(target_arch = "wasm32")]
@@ -55,6 +57,8 @@ impl Default for Panels {
             floating: None,
             floating_epoch: 0,
             resizing: None,
+            directory_browser: Box::default(),
+            new_instance_launcher: Box::default(),
             #[cfg(target_arch = "wasm32")]
             orientation_watch: None,
             #[cfg(target_arch = "wasm32")]
@@ -336,6 +340,8 @@ impl Panels {
     pub fn leave_project(&mut self) {
         self.floating = None;
         self.resizing = None;
+        self.directory_browser.dismiss();
+        self.new_instance_launcher.dismiss();
     }
 
     pub fn dismiss_outside(s: &mut State, tx: &mut Tx) {

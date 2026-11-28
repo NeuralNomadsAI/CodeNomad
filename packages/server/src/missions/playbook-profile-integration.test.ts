@@ -12,7 +12,7 @@ const profiles: MissionProfiles = {
   roles: { research: { agent: "child", model: { providerID: "owned", id: "small", variant: "quick" } } },
 }
 
-function fixture() {
+function fixture(switches = false) {
   const data = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
   let births = 0, sends = 0, validations = 0, clock = 1
   const storage: MissionStorage = {
@@ -34,6 +34,10 @@ function fixture() {
       return structuredClone(session)
     },
     prompt: async () => { sends++ }, synthetic: async () => { sends++ },
+    ...(switches ? {
+      switchAgent: async ({ sessionID, agent }) => { sessions.set(sessionID, { ...sessions.get(sessionID)!, agent }) },
+      switchModel: async ({ sessionID, model }) => { sessions.set(sessionID, { ...sessions.get(sessionID)!, model }) },
+    } : {}),
   }
   const control = new MissionControl({ project, storage, sessions: native, now: () => clock++,
     validateProfiles: async request => {
@@ -104,13 +108,17 @@ test("illegal profiles refuse before root creation or native sends", async () =>
   }
 })
 
-test("an existing coordinator with a different profile is never switched", async () => {
-  const f = fixture()
-  f.sessions.set("ses_existing", { id: "ses_existing", projectID: f.project.id, location: f.project.location, agent: "other" })
-  await assert.rejects(f.control.create({ ...f.input, coordinatorSessionID: "ses_existing" }), /requested native profile/)
-  assert.equal(f.sessions.get("ses_existing")!.agent, "other")
-  assert.equal(f.counts().births, 0)
-  assert.equal(f.counts().sends, 0)
+test("a conversation chosen to coordinate takes the coordinator's agent and model; one that cannot be changed coordinates as it is", async () => {
+  for (const switches of [true, false]) {
+    const f = fixture(switches), own = { providerID: "owned", id: "large", variant: "shallow" }
+    f.sessions.set("ses_existing", { id: "ses_existing", projectID: f.project.id, location: f.project.location, agent: "other", model: own })
+    const { mission } = await f.control.create({ ...f.input, coordinatorSessionID: "ses_existing" })
+    assert.equal(mission.coordinatorSessionId, "ses_existing", "never refused, never another conversation")
+    const session = f.sessions.get("ses_existing")!
+    assert.deepEqual([session.agent, session.model], switches ? ["lead", profiles.coordinator!.model] : ["other", own])
+    assert.equal(f.counts().births, 0)
+    assert.equal(f.counts().sends, 0)
+  }
 })
 
 test("historical absent profiles remain absent; malformed durable profiles are refused", () => {

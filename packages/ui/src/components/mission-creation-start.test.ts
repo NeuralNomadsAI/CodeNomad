@@ -6,7 +6,6 @@ import { serverApi } from "../lib/api-client"
 import { MissionLifecycleRequestError, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { missionLifecycleIntents, missionLifecycleSource } from "../stores/mission-lifecycle-intents"
 import { createMissionCreationStart } from "./mission-creation-start"
-import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 import { backends, localBackend, type BackendClient } from "../lib/backend-client"
 import { backendEvents } from "../lib/server-events"
 
@@ -88,19 +87,6 @@ test("creation continuation retains its captured project and physical directory 
     finally { f.dispose() }
   }
   assert.equal(calls, 0, "a late creation ACK cannot start or publish under another owner")
-})
-
-test("a schedule without a discovered control owner stays paused instead of creating an orphaned holder", async t => {
-  const f = setup()
-  let reads = 0
-  t.mock.method(serverApi, "fetchMissionSchedule", async () => { reads++; throw new Error("unexpected") })
-  try {
-    f.project(undefined)
-    const start = f.capture(true), created = { kind: "schedule", state: "paused", firstPlayedAt: null, configuration: {} } as UnifiedMissionSchedule
-    await start(created)
-    f.project("project"); await start(created)
-    assert.equal(reads, 0, "project publication cannot replay a consumed creation continuation")
-  } finally { f.dispose() }
 })
 
 test("lost Start ACK retains its exact lifecycle identity across remount without another launch", async t => {

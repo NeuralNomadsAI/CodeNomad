@@ -214,6 +214,30 @@ impl Preferences {
         self.show_environment = shown;
     }
 
+    pub(in crate::settings) fn show_speech(&mut self, shown: bool) {
+        if self.show_speech != shown && shown {
+            self.server.invalidate();
+        }
+        self.show_speech = shown;
+    }
+
+    pub(in crate::settings) fn speech_server_failed(&self) -> bool {
+        self.server.read_failed()
+            || (self.server.snapshot.is_some() && !self.server.transport_revalidated())
+    }
+
+    pub(in crate::settings) fn speech_server_ready(&self) -> bool {
+        self.can_retry()
+            && !self.transport_lost
+            && self.server.transport_revalidated()
+            && self.server.confirmed().is_some()
+            && !self.speech.saving()
+    }
+
+    pub(in crate::settings) fn refresh_speech_server(&mut self) {
+        self.server.invalidate();
+    }
+
     pub(in crate::settings) fn environment_document(&self) -> Option<&serde_json::Value> {
         self.server.snapshot.as_ref().filter(|_| self.can_retry())
     }

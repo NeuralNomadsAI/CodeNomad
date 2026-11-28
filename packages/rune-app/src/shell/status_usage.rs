@@ -3,8 +3,8 @@ use codenomad_client::{
     Receiver, Sender, bounded,
     provider_usage::{Usage, Watch},
 };
-use rune::{El, Tx, col, text};
-use rune_theme_codenomad::{Space, layout::Layout, settings};
+use rune::{El, Tx};
+use rune_theme_codenomad::{git_panel, settings};
 
 pub(crate) mod date;
 mod view;
@@ -14,6 +14,7 @@ pub(crate) struct Panel {
     backend: Option<Backend>,
     model: Option<(String, String, String)>,
     expanded: bool,
+    pub(super) console_info_open: bool,
     watch: Option<Watch>,
     authority: (u64, bool, u64),
     due: Option<f64>,
@@ -47,6 +48,7 @@ impl Panel {
         self.due = None;
         self.scheduled_wake = None;
         self.trailing = false;
+        self.console_info_open = false;
     }
 
     pub(crate) fn watch(&mut self, watch: Watch) {
@@ -217,7 +219,7 @@ pub(super) fn section(s: &State) -> Option<El> {
         } else {
             "providerUsage.loading"
         };
-        col().pad(Space::Sm).child(text(t(key)).role("status"))
+        git_panel::note(t(key), "status").key("status-usage-empty")
     };
     Some(
         settings::disclosure(
@@ -226,6 +228,7 @@ pub(super) fn section(s: &State) -> Option<El> {
             body,
             screen::action(&s.input_scope, |s| {
                 s.status_usage.expanded = !s.status_usage.expanded;
+                s.status_usage.console_info_open = false;
             }),
         )
         .key("status-provider-usage"),
@@ -378,5 +381,215 @@ mod tests {
                 rt.wake_deadline()
             );
         });
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn status_usage_renders_muted_empty_states_inset_cards_and_console_info_in_both_themes() {
+        use rune::{Env, Runtime, col};
+        use rune_theme_codenomad::layout::{self, Layout};
+        use serde_json::json;
+
+        fn render(s: &State, cx: &mut rune::Cx<State>) -> El {
+            layout::render(cx, |_| {
+                col()
+                    .full_width()
+                    .full_height()
+                    .child(section(s).unwrap())
+                    .child(git_panel::note("ref-muted", "status").key("ref-muted"))
+                    .child(col().inset_surface().key("ref-inset"))
+            })
+        }
+
+        let backend = platform::block_on(Backend::connect("http://127.0.0.1:9/", "")).unwrap();
+        let make_state = |usage: Option<Usage>, failed: bool| {
+            let mut s = crate::init();
+            s.status_usage.backend = Some(backend.clone());
+            s.status_usage.expanded = true;
+            s.status_usage.authority = (1, true, 0);
+            s.status_usage.failed = failed;
+            s.status_usage.usage = usage;
+            s
+        };
+
+        for dark in [false, true] {
+            crate::strings::with_locale("en", || {
+                // Empty / loading state renders muted note without inset card.
+                let mut rt = Runtime::new(
+                    make_state(None, false),
+                    render,
+                    (320.0, 420.0),
+                    Env::new(dark, 1.0),
+                );
+                rt.frame(0.0);
+                let nodes = rt.elements();
+                let find = |key: &str| {
+                    nodes
+                        .iter()
+                        .find(|node| node.key.as_deref() == Some(key))
+                        .unwrap_or_else(|| panic!("missing key `{key}` in dark={dark}"))
+                };
+                let empty = find("status-usage-empty");
+                let ref_muted = find("ref-muted");
+                assert_eq!(empty.role, "status");
+                assert_eq!(empty.text_color, ref_muted.text_color);
+                assert!(
+                    nodes
+                        .iter()
+                        .all(|node| node.key.as_deref() != Some("status-usage-card")),
+                    "loading state must not wrap empty copy in an inset card"
+                );
+
+                // Unsupported usage renders muted note without inset card.
+                let unsupported: Usage = serde_json::from_value(json!({
+                    "requestedProviderId": "acme",
+                    "providerName": "Acme",
+                    "supported": false,
+                    "configured": true,
+                    "ok": true,
+                    "windows": {}
+                }))
+                .unwrap();
+                let mut rt = Runtime::new(
+                    make_state(Some(unsupported), false),
+                    render,
+                    (320.0, 420.0),
+                    Env::new(dark, 1.0),
+                );
+                rt.frame(0.0);
+                let nodes = rt.elements();
+                let empty = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("status-usage-empty"))
+                    .expect("unsupported muted note");
+                let ref_muted = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("ref-muted"))
+                    .unwrap();
+                assert_eq!(empty.text_color, ref_muted.text_color);
+                assert!(
+                    nodes
+                        .iter()
+                        .all(|n| n.key.as_deref() != Some("status-usage-card"))
+                );
+
+                // Unavailable reason renders inset card with caption + settings action.
+                let missing_cred: Usage = serde_json::from_value(json!({
+                    "requestedProviderId": "opencode-console",
+                    "providerName": "OpenCode Console",
+                    "supported": true,
+                    "configured": false,
+                    "ok": false,
+                    "unavailableReason": "opencode-console-missing-credential",
+                    "windows": {}
+                }))
+                .unwrap();
+                let mut rt = Runtime::new(
+                    make_state(Some(missing_cred), false),
+                    render,
+                    (320.0, 420.0),
+                    Env::new(dark, 1.0),
+                );
+                rt.frame(0.0);
+                let nodes = rt.elements();
+                let card = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("status-usage-card"))
+                    .expect("unavailable inset card");
+                let ref_inset = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("ref-inset"))
+                    .unwrap();
+                assert_eq!(card.fill, ref_inset.fill);
+                assert_eq!(card.radius, 0.0, "usage card must keep square corners");
+                assert!(
+                    nodes
+                        .iter()
+                        .any(|n| n.key.as_deref() == Some("status-usage-unavailable")
+                            && n.role == "status")
+                );
+
+                // Active windows + Console usage renders inset card, meter, tooltips, and console info tip.
+                let active: Usage = serde_json::from_value(json!({
+                    "requestedProviderId": "opencode-console",
+                    "providerName": "OpenCode Console",
+                    "supported": true,
+                    "configured": true,
+                    "ok": true,
+                    "copilotPlan": "pro",
+                    "windows": {
+                        "5h": { "usedPercent": 64.0, "resetAt": 1800000000000.0 }
+                    },
+                    "console": {
+                        "requests": { "24h": 12, "7d": 48, "30d": 120 },
+                        "models": [{ "provider": "anthropic", "model": "claude-sonnet", "requests": 42 }],
+                        "budgets": {
+                            "status": "available",
+                            "items": [{ "name": "CI Bot", "spentUsd": 12.5, "limitUsd": 50.0, "resetAt": 1800000000000.0 }]
+                        }
+                    }
+                }))
+                .unwrap();
+                let mut rt = Runtime::new(
+                    make_state(Some(active), false),
+                    render,
+                    (320.0, 600.0),
+                    Env::new(dark, 1.0),
+                );
+                rt.frame(0.0);
+                let nodes = rt.elements();
+                let card = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("status-usage-card"))
+                    .expect("active usage card");
+                let ref_inset = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("ref-inset"))
+                    .unwrap();
+                assert_eq!(card.fill, ref_inset.fill);
+                assert_eq!(card.radius, 0.0);
+
+                let window = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("5h"))
+                    .expect("5h window row");
+                assert!(
+                    window.help.as_deref().is_some_and(|h| {
+                        h.contains(t("providerUsage.windows.fiveHours"))
+                            && h.contains("64%")
+                            && h.contains("Resets")
+                    }),
+                    "window tooltip must summarize reading: {:?}",
+                    window.help
+                );
+                assert!(
+                    nodes.iter().any(|n| n.role == "progressbar"),
+                    "window meter must render a progressbar"
+                );
+
+                let console_info = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("status-usage-console-info"))
+                    .expect("console info button");
+                assert_eq!(
+                    console_info.help.as_deref(),
+                    Some(t("providerUsage.console.info"))
+                );
+                assert_eq!(console_info.radius, 0.0);
+
+                let provider = nodes
+                    .iter()
+                    .find(|n| n.key.as_deref() == Some("status-usage-provider"))
+                    .expect("provider footer");
+                assert!(
+                    provider
+                        .help
+                        .as_deref()
+                        .is_some_and(|h| h.contains("OpenCode Console") && h.contains("Pro")),
+                    "provider footer must expose full name + plan tooltip: {:?}",
+                    provider.help
+                );
+            });
+        }
     }
 }

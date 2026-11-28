@@ -8,9 +8,9 @@ use codenomad_client::plugins::{
     ActivationControl, ConfigScope, RemovalTarget, RuntimeEntry, RuntimeSource, RuntimeState,
     Scope, ScopeRuleState, Snapshot,
 };
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{
-    Space, TextRole,
+    Space, attachment, git_panel,
     layout::{self, Layout},
     settings, shell,
 };
@@ -30,13 +30,12 @@ pub(super) fn view(s: &State) -> Option<El> {
         body = body.child(header_row(s, panel, reading, locked, controls_available));
 
         if let Some(err) = &panel.feedback_error {
-            body = body.child(text(err).wrap().role("alert"));
+            body = body.child(settings::palette::save_error(err).key("plugins-feedback-error"));
         }
         if panel.failed && panel.snapshot.is_some() {
             body = body.child(
-                text(t("instanceServiceStatus.plugins.errors.refresh"))
-                    .wrap()
-                    .role("alert"),
+                settings::palette::save_error(t("instanceServiceStatus.plugins.errors.refresh"))
+                    .key("plugins-refresh-error"),
             );
         }
 
@@ -60,14 +59,22 @@ pub(super) fn view(s: &State) -> Option<El> {
         }
 
         if panel.snapshot.is_none() {
-            let status_key = if panel.unsupported {
-                "instanceServiceStatus.plugins.empty"
+            if panel.unsupported {
+                body = body.child(
+                    git_panel::note(t("instanceServiceStatus.plugins.empty"), "status")
+                        .key("plugins-status"),
+                );
             } else if panel.failed && !reading {
-                "instanceServiceStatus.plugins.errors.load"
+                body = body.child(
+                    settings::palette::save_error(t("instanceServiceStatus.plugins.errors.load"))
+                        .key("plugins-load-error"),
+                );
             } else {
-                "instanceServiceStatus.plugins.loading"
-            };
-            body = body.child(text(t(status_key)).wrap().role("status"));
+                body = body.child(
+                    git_panel::note(t("instanceServiceStatus.plugins.loading"), "status")
+                        .key("plugins-status"),
+                );
+            }
         } else if let Some(snap) = &panel.snapshot {
             body = body.child(rows_list(s, panel, snap, locked));
         }
@@ -126,13 +133,14 @@ fn header_row(
             .snapshot
             .as_ref()
             .is_some_and(Snapshot::project_available);
-        let mut project_label = text(t(Scope::Project.i18n_key())).text_role(TextRole::Small);
+        let mut project_label =
+            shell::panel_title(t(Scope::Project.i18n_key())).key("plugins-scope-project");
         if !project_available {
             let reason = t("instanceServiceStatus.plugins.scope.unavailable");
             project_label = project_label.help(reason).description(reason);
         }
         header = header.child(shell::service_header([
-            text(t(Scope::Global.i18n_key())).text_role(TextRole::Small),
+            shell::panel_title(t(Scope::Global.i18n_key())).key("plugins-scope-global"),
             project_label,
         ]));
     }
@@ -153,9 +161,8 @@ fn rows_list(s: &State, panel: &PluginsPanel, snap: &Snapshot, locked: bool) -> 
         }
     }
     if controls.is_empty() && unmatched_rt.is_empty() && pending_targets.is_empty() {
-        return text(t("instanceServiceStatus.plugins.empty"))
-            .wrap()
-            .role("status");
+        return git_panel::note(t("instanceServiceStatus.plugins.empty"), "status")
+            .key("plugins-status");
     }
     let mut list = col().full_width().separate(Space::Xs);
     for control in controls {
@@ -173,11 +180,7 @@ fn rows_list(s: &State, panel: &PluginsPanel, snap: &Snapshot, locked: bool) -> 
         } else {
             "instanceServiceStatus.plugins.sources.unconfirmedLabel"
         };
-        let mut trailing = vec![
-            text(t(status_key))
-                .text_role(TextRole::Small)
-                .role("status"),
-        ];
+        let mut trailing = vec![attachment::status_badge(t(status_key))];
         if !installing {
             trailing.push(
                 layout::button(
@@ -192,6 +195,8 @@ fn rows_list(s: &State, panel: &PluginsPanel, snap: &Snapshot, locked: bool) -> 
         }
         let mut item = col()
             .full_width()
+            .inset_surface()
+            .pad(Space::Sm)
             .separate(Space::Xs)
             .role("group")
             .label(target)
@@ -241,23 +246,24 @@ fn control_row(
         .key(format!("plugin-info-{}", control.id)),
     ];
     if let Some(ver) = &version {
-        trailing.push(text(ver).text_role(TextRole::Small));
+        trailing.push(shell::panel_title(ver).help(ver));
     }
     if failed {
-        trailing.push(
-            text(t("instanceServiceStatus.plugins.runtime.failed"))
-                .text_role(TextRole::Small)
-                .role("status"),
-        );
+        trailing.push(settings::palette::save_error(t(
+            "instanceServiceStatus.plugins.runtime.failed",
+        )));
     }
     if !control.orphan {
         trailing.push(scope_switch(s, snap, control, Scope::Global, locked));
         trailing.push(scope_switch(s, snap, control, Scope::Project, locked));
     }
-    let header = shell::service_row(None, &control.id, trailing);
+    let leading = failed.then(|| shell::status_dot(shell::ServiceDot::Error));
+    let header = shell::service_row(leading, &control.id, trailing);
 
     let mut row_el = col()
         .full_width()
+        .inset_surface()
+        .pad(Space::Sm)
         .separate(Space::Xs)
         .role("group")
         .label(&control.id)
@@ -283,6 +289,7 @@ fn runtime_row(
 ) -> El {
     let title = entry.id.as_deref().unwrap_or(&entry.key);
     let details = runtime_details(entry);
+    let failed = matches!(entry.state, RuntimeState::Failed { .. });
     let info_key = format!("rt:{}", entry.key);
     let info_key_toggle = info_key.clone();
     let info_label = t("instanceServiceStatus.plugins.system.details").replace("{name}", title);
@@ -300,18 +307,19 @@ fn runtime_row(
         .key(format!("plugin-rt-info-{}", entry.key)),
     ];
     if let Some(ver) = entry.display_version() {
-        trailing.push(text(&ver).text_role(TextRole::Small));
+        trailing.push(shell::panel_title(&ver).help(&ver));
     }
-    if matches!(entry.state, RuntimeState::Failed { .. }) {
-        trailing.push(
-            text(t("instanceServiceStatus.plugins.runtime.failed"))
-                .text_role(TextRole::Small)
-                .role("status"),
-        );
+    if failed {
+        trailing.push(settings::palette::save_error(t(
+            "instanceServiceStatus.plugins.runtime.failed",
+        )));
     }
-    let header = shell::service_row(None, title, trailing);
+    let leading = failed.then(|| shell::status_dot(shell::ServiceDot::Error));
+    let header = shell::service_row(leading, title, trailing);
     let mut row_el = col()
         .full_width()
+        .inset_surface()
+        .pad(Space::Sm)
         .separate(Space::Xs)
         .role("group")
         .label(title)

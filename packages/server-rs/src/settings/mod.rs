@@ -385,7 +385,10 @@ fn publish_with_order(app: &App, kind: Kind, name: &str, value: Value, history_o
     }
     let (event_type, value) = match kind {
         Kind::Config => ("storage.configChanged", sanitized(name, value)),
-        Kind::State => ("storage.stateChanged", value),
+        Kind::State => (
+            "storage.stateChanged",
+            if matches!(name, "sessionFavorites" | "sessionPermissionBlocks") { json!({}) } else { value },
+        ),
     };
     let event = json!({"type": event_type, "owner": name, "value": value});
     if kind == Kind::State

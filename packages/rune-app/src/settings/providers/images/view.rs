@@ -3,7 +3,7 @@ use crate::{settings::providers::attach_picker_keys, strings::t};
 use codenomad_client::settings::images::{self, GenerationSelection, Mutation};
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space,
+    Space, TextRole,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -73,7 +73,12 @@ pub(in crate::settings::providers) fn view<S: 'static>(
 
     if expanded {
         if !available {
-            body = body.child(text(t("settings.providers.empty.noInstance")).role("status"));
+            body = body.child(
+                text(t("settings.providers.empty.noInstance"))
+                    .wrap()
+                    .text_role(TextRole::Small)
+                    .role("status"),
+            );
         } else {
             if state.error {
                 let refresh_rc = state_rc.clone();
@@ -93,19 +98,43 @@ pub(in crate::settings::providers) fn view<S: 'static>(
                 );
             }
             if state.snapshot.is_none() && !state.unsupported && busy {
-                body = body.child(text(t("settings.providers.loading")).role("status"));
+                body = body.child(
+                    col()
+                        .full_width()
+                        .pad(Space::Sm)
+                        .inset_surface()
+                        .role("status")
+                        .key("images-loading")
+                        .child(
+                            text(t("settings.providers.loading"))
+                                .wrap()
+                                .text_role(TextRole::Small),
+                        ),
+                );
             }
             if state.unsupported {
-                body = body.child(text(t("settings.images.unsupported")).wrap().role("status"));
+                body = body.child(
+                    text(t("settings.images.unsupported"))
+                        .wrap()
+                        .text_role(TextRole::Small)
+                        .role("status"),
+                );
             }
             if let Some(snapshot) = &state.snapshot {
                 let blocked = snapshot.blocked_by.is_some();
                 let disabled = state.mutations_disabled() || blocked;
                 if snapshot.generation.is_none() && snapshot.media_storage.is_none() {
-                    body = body.child(text(t("settings.images.unsupported")).wrap().role("status"));
+                    body = body.child(
+                        text(t("settings.images.unsupported"))
+                            .wrap()
+                            .text_role(TextRole::Small)
+                            .role("status"),
+                    );
                 }
                 if let Some(blocked_by) = &snapshot.blocked_by {
-                    let mut note = text(t("settings.images.blocked")).wrap();
+                    let mut note = text(t("settings.images.blocked"))
+                        .wrap()
+                        .text_role(TextRole::Small);
                     if let Some(path) = &blocked_by.path {
                         note = note.help(path).description(path);
                     }
@@ -241,18 +270,28 @@ fn generation_section<S: 'static>(
     if let Some(overridden) = &generation.overridden {
         let effective = generation_label(&generation.effective, models);
         let mut note =
-            text(t("settings.images.generation.override").replace("{value}", &effective)).wrap();
+            text(t("settings.images.generation.override").replace("{value}", &effective))
+                .wrap()
+                .text_role(TextRole::Small);
         if let Some(path) = &overridden.path {
             note = note.help(path).description(path);
         }
         section = section.child(note);
     }
     if generation.models.is_none() {
-        section = section.child(text(t("settings.images.generation.modelsUnavailable")).wrap());
+        section = section.child(
+            text(t("settings.images.generation.modelsUnavailable"))
+                .wrap()
+                .text_role(TextRole::Small),
+        );
     } else if generation.effective != GenerationSelection::Off
         && generation.models.as_ref().is_some_and(Vec::is_empty)
     {
-        section = section.child(text(t("settings.images.generation.noModels")).wrap());
+        section = section.child(
+            text(t("settings.images.generation.noModels"))
+                .wrap()
+                .text_role(TextRole::Small),
+        );
     }
     section
 }
@@ -307,7 +346,7 @@ fn media_storage_section<S: 'static>(
         } else {
             "settings.images.storage.override.off"
         };
-        let mut note = text(t(key)).wrap();
+        let mut note = text(t(key)).wrap().text_role(TextRole::Small);
         if let Some(path) = &overridden.path {
             note = note.help(path).description(path);
         }

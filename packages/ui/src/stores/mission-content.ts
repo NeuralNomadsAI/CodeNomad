@@ -10,11 +10,10 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createMissionContentStore, type MissionBodyConsumer, type MissionBodyRef, type MissionBodyState } from "./mission-content-store"
 import { missionBodyRevision, missionHistoryMark } from "./mission-task-pages"
 
-export const missionContent = createMissionContentStore(async (ref, query, signal, deadline) => {
+export const missionContent = createMissionContentStore(async (ref, query, signal) => {
   signal.throwIfAborted()
   const api = backendOf(ref.instanceId).api, workspaceId = parseInstanceKey(ref.instanceId).workspaceId
-  return ref.passage ? api.fetchMissionCurrentBody(workspaceId, ref.passage, { missionID: ref.missionID, ...ref.selector, ...query }, signal, deadline)
-    : api.fetchMissionContent(workspaceId, ref.missionID, { ...ref.selector, ...query }, signal)
+  return api.fetchMissionContent(workspaceId, ref.missionID, { ...ref.selector, ...query }, signal)
 }, undefined, id => captureBackendOperation(id).signal)
 
 /** A body a reader shows, the revision its descriptor is expected at, that descriptor
@@ -27,7 +26,7 @@ export interface MissionBodySource { ref: MissionBodyRef; revision: number; desc
  * older than that page never stands for its descriptor. */
 export function missionBodySource(instanceId: string, mission: MissionPanelMap, selector: MissionContentSelector): MissionBodySource {
   const descriptor = missionBodyDescriptor(mission, selector), mark = missionHistoryMark(mission, selector)
-  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector, ...(mission.panelPassage ? { passage: mission.panelPassage } : {}) }, revision: missionBodyRevision(mission, selector),
+  return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector }, revision: missionBodyRevision(mission, selector),
     ...(descriptor ? { descriptor } : {}), ...(mark ? { mark } : {}) }
 }
 
@@ -78,7 +77,7 @@ export function useMissionBodyValue<T>(source: () => MissionBodySource | undefin
     if (state.status === "missing") return { value: undefined }
     if (body && body.text.length === body.characters) {
       try { return { value: (body.json ? JSON.parse(body.text) : body.text) as T } }
-      catch { return source()?.ref.passage ? { value: undefined, invalid: true } : undefined }
+      catch { return undefined }
     }
     return undefined
   })

@@ -3,7 +3,7 @@ use crate::{backend::Backend, platform, strings::t};
 use codenomad_client::{Receiver, Sender, bounded, settings::config_files as api};
 use rune::{El, TextEdit, Waker, col, text};
 use rune_theme_codenomad::{
-    Space, field_kit,
+    Space, TextRole, field_kit,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -577,7 +577,7 @@ impl Editor {
         let names: Vec<_> = files.iter().map(|file| file.label.as_str()).collect();
         let mut view = col().full_width().separate(Space::Sm);
         if files.is_empty() && !waiting && self.notice.is_none() {
-            view = view.child(text(t("settings.configFiles.empty")));
+            view = view.child(text(t("settings.configFiles.empty")).text_role(TextRole::Small));
         }
         if !files.is_empty() {
             view = view.child(chrome::segments(
@@ -596,7 +596,12 @@ impl Editor {
         if let Some(index) = self.active {
             let shared = shared.clone();
             view = view
-                .child(text(&files[index].path).literal_direction().wrap())
+                .child(
+                    text(&files[index].path)
+                        .text_role(TextRole::Mono)
+                        .literal_direction()
+                        .wrap(),
+                )
                 .child(
                     layout::textarea(&self.draft)
                         .rows(12)
@@ -612,6 +617,7 @@ impl Editor {
                 )
                 .children(self.syntax_line.map(|line| {
                     text(t("settings.configFiles.syntaxLine").replace("{line}", &line.to_string()))
+                        .text_role(TextRole::Small)
                         .role("status")
                 }))
                 .child(
@@ -636,25 +642,26 @@ impl Editor {
                     } else {
                         "settings.configFiles.state.notCreated"
                     }))
+                    .text_role(TextRole::Small)
                     .role("status")
                 }));
         }
         if let Some(key) = self.notice {
-            view = view.child(text(t(key)).role(if key.contains(".errors.") {
-                "alert"
+            let notice = if key.contains(".errors.") {
+                chrome::palette::save_error(t(key))
             } else {
-                "status"
-            }));
-            if self.reverify {
-                view = view.child(layout::button(
+                text(t(key)).text_role(TextRole::Small).role("status")
+            };
+            let retry = if self.reverify {
+                Some(layout::button(
                     t("sessionList.loadError.retry"),
                     waiting || !readable,
                     move |s| {
                         edit(s).notice = None;
                     },
-                ));
+                ))
             } else if key == "settings.configFiles.errors.loadList" || self.active.is_none() {
-                view = view.child(layout::button(
+                Some(layout::button(
                     t("sessionList.loadError.retry"),
                     waiting,
                     move |s| {
@@ -665,10 +672,21 @@ impl Editor {
                             .as_ref()
                             .and_then(|list| (!list.is_empty()).then_some(0));
                     },
-                ));
-            }
+                ))
+            } else {
+                None
+            };
+            view = view.child(if let Some(retry) = retry {
+                layout::action_row().child(notice).child(retry)
+            } else {
+                notice
+            });
         } else if self.saved_notice {
-            view = view.child(text(t("settings.configFiles.toast.saveSuccess")).role("status"));
+            view = view.child(
+                text(t("settings.configFiles.toast.saveSuccess"))
+                    .text_role(TextRole::Small)
+                    .role("status"),
+            );
         }
         if let Some(index) = self.confirm {
             layers.push(confirm_discard(move |s, accept, _| {

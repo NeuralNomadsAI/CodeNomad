@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionMark, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
-import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
+import { filterMissionPickerEntries, missionMark, type MissionPickerEntry } from "./mission-picker-model"
 
 const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark, activityAt: 0 })
 
@@ -22,35 +21,6 @@ test("a mission's mark: an answer first, then resumable stops, observed work, an
     coordinatorState: "idle-without-report" }), "working", "running work outranks the idle coordinator")
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["idle-without-report"], coordinatorState: "idle-without-report" }), "interrupted")
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["unknown"], coordinatorState: "unknown" }), "idle")
-})
-
-test("schedule mark: an answer first, then the schedule's state, and a current positive calendar observation", () => {
-  const doc = { state: "running", firstPlayedAt: 1, timeGeneration: 3, blockReason: null, control: null, pendingPassage: null,
-    latestResult: null, observation: { state: "known", nativeStatus: "active", timeGeneration: 3, nextDueAt: 100 } } as UnifiedMissionSchedule
-  const mark = (patch: Partial<UnifiedMissionSchedule> = {}, seen = true, requests = 0, fresh = true) =>
-    unifiedScheduleMark({ ...doc, ...patch }, requests, seen, fresh, 50)
-  assert.equal(mark(), "waiting")
-  assert.equal(mark({ observation: { ...doc.observation, state: "unknown" } }), "unconfirmed")
-  assert.equal(mark({ observation: { ...doc.observation, timeGeneration: 2 } }), "unconfirmed")
-  assert.equal(mark({ observation: { ...doc.observation, nativeStatus: "paused", nextDueAt: null } }), "unconfirmed")
-  assert.equal(mark({ observation: { ...doc.observation, nextDueAt: 40 } }), "unconfirmed")
-  assert.equal(mark({}, true, 0, false), "unconfirmed")
-  assert.equal(mark({ blockReason: "unknown" }), "unconfirmed")
-  assert.equal(mark({ blockReason: "failed" }, false), "interrupted")
-  const pendingPassage = { id: "passage" } as NonNullable<UnifiedMissionSchedule["pendingPassage"]>
-  assert.equal(mark({ pendingPassage }), "working")
-  assert.equal(mark({ pendingPassage, state: "paused" }), "paused")
-  assert.equal(mark({ pendingPassage, state: "paused" }, false, 1), "permission")
-  assert.equal(mark({ state: "paused", firstPlayedAt: null, observation: { ...doc.observation, state: "unarmed" } }), "prepared")
-  const latestResult = { id: "A", outcome: "completed" } as NonNullable<UnifiedMissionSchedule["latestResult"]>
-  assert.equal(mark({ latestResult }, false), "done")
-  assert.equal(mark({ latestResult }), "waiting")
-  const reportless = { id: "B", outcome: "ended-without-report" } as NonNullable<UnifiedMissionSchedule["latestResult"]>
-  assert.equal(mark({ latestResult: reportless }), "waiting", "a resumed schedule no longer shows its archived reportless passage")
-  assert.equal(mark({ latestResult: reportless, blockReason: "ended-without-report" }), "interrupted")
-  assert.equal(mark({ state: "finished", latestResult }, false), "done")
-  assert.equal(mark({ state: "finished", latestResult }), "idle")
-  assert.equal(mark({ state: "stopped", latestResult }, false), "idle")
 })
 
 test("filter matches titles case-insensitively", () => {

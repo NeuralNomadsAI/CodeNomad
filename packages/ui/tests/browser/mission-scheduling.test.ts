@@ -87,7 +87,7 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
     await label(page, "Criterion 1 type").selectOption("daily")
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "daily")
-    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 11)
+    assert.equal(await label(page, "Criterion 1 type").locator("option").count(), 9)
     assert.equal(await roleOf(page, 1).count(), 0, "Launch when titles the first card")
     assert.equal(await handle(page, 1).isDisabled(), true, "a single card has nothing to reorder")
     assert.equal(await schedule.locator("time, ol, input[type=datetime-local], [aria-pressed]").count(), 0, "no preview, end date or role switch")
@@ -100,25 +100,34 @@ test("the first criterion defaults to once; Add appends a daily card; connectors
     const daily = { kind: "cron", expression: "0 9 * * *", zone: "UTC" }, files = { kind: "files-changed", paths: ["src/main.ts"] }
     assert.deepEqual(await policy(page), { when: [daily, files] })
     assert.equal(await roleOf(page, 2).innerText(), "if", "an event after a schedule is its condition")
-    // Keyboard: Alt+Up on the grip moves the event first: files, else 09:00.
+    // Schedules stay above events: the event's grip moves nothing above the schedule.
     await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
-    assert.deepEqual(await policy(page), { when: [files, daily] })
-    assert.equal(await label(page, "Criterion 1 type").inputValue(), "files-changed")
-    assert.equal(await roleOf(page, 2).innerText(), "else")
+    assert.deepEqual(await policy(page), { when: [daily, files] })
+    assert.equal(await schedule.locator("[aria-live]").innerText(), "")
+    // A card added after an event is an event; once it becomes a schedule it joins the schedules above.
+    await page.getByRole("button", { name: "Add a criterion", exact: true }).click()
+    assert.equal(await label(page, "Criterion 3 type").inputValue(), "repository-activity")
+    await label(page, "Criterion 3 type").selectOption("daily")
+    const later = { kind: "cron", expression: "0 10 * * *", zone: "UTC" }
+    assert.deepEqual(await policy(page), { when: [daily, later, files] })
+    assert.deepEqual(await schedule.locator(".mission-criterion-connector").allInnerTexts(), ["or", "if"])
+    // Keyboard: Alt+Up on the grip moves the second schedule first.
+    await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
+    assert.deepEqual(await policy(page), { when: [later, daily, files] })
     await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Move criterion 1")
-    assert.equal(await schedule.locator("[aria-live]").innerText(), "Moved to position 1 of 2: Launch when.")
+    assert.equal(await schedule.locator("[aria-live]").innerText(), "Moved to position 1 of 3: Launch when.")
     await page.keyboard.press("Alt+ArrowUp")
-    assert.deepEqual(await policy(page), { when: [files, daily] }, "nothing moves past the top")
-    // Pointer: drag the event after the schedule again; it becomes its condition.
+    assert.deepEqual(await policy(page), { when: [later, daily, files] }, "nothing moves past the top")
+    // Pointer: drag it back below the other schedule.
     const heights = () => schedule.locator(".mission-criterion-slot").evaluateAll(slots => slots.map(slot => slot.getBoundingClientRect().height))
     const before = await heights()
     const drop = await drag(page, 1, 2)
-    assert.deepEqual(await heights(), before, "connectors changing while dragging never reflow the cards")
+    assert.deepEqual(await heights(), before, "connectors while dragging never reflow the cards")
     assert.equal(await schedule.locator(".mission-criterion-drop").count(), 1, "the drop target is shown while dragging")
-    assert.deepEqual(await schedule.locator(".mission-criterion-connector").allInnerTexts(), ["if"], "the connectors follow the projected order while dragging")
+    assert.deepEqual(await schedule.locator(".mission-criterion-connector").allInnerTexts(), ["or", "if"], "the connectors follow the projected order while dragging")
     await drop()
-    assert.deepEqual(await policy(page), { when: [daily, files] })
-    assert.equal(await roleOf(page, 2).innerText(), "if")
+    assert.deepEqual(await policy(page), { when: [daily, later, files] })
+    assert.equal(await roleOf(page, 3).innerText(), "if")
     assert.equal(await schedule.locator(".mission-criterion-dragging, .mission-criterion-drop").count(), 0)
     assert.deepEqual(await schedule.locator("[aria-describedby]").evaluateAll(elements => elements.flatMap(element =>
       element.getAttribute("aria-describedby")!.split(/\s+/).filter(id => !document.getElementById(id)))), [])
@@ -132,12 +141,13 @@ test("dragging and keyboard moves keep every card mounted, its typed values and 
     await rows(page, [["daily", { time: "07:30" }], ["branch-commits", { source: "refs/heads/dev" }], ["files-changed", { files: "a.ts" }]])
     const nodes = await page.locator(".mission-criterion").elementHandles()
     await handle(page, 3).focus(); await page.keyboard.press("Alt+ArrowUp"); await page.keyboard.press("Alt+ArrowUp")
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Move criterion 1")
-    assert.deepEqual(await page.locator(".mission-criterion-connector").allInnerTexts(), ["else", "if"], "files, else 07:30 if commits")
+    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "Move criterion 2")
+    assert.deepEqual(await page.locator(".mission-criterion-connector").allInnerTexts(), ["if", "or"], "07:30 if files or commits")
+    assert.equal(await label(page, "Criterion 2 file paths").inputValue(), "a.ts")
     const after = await page.locator(".mission-criterion").elementHandles()
     for (const node of nodes) assert.ok(await Promise.all(after.map(item => item.evaluate((element, other) => element === other, node))).then(found => found.includes(true)),
       "no card remounts")
-    assert.equal(await label(page, "Criterion 2 time").inputValue(), "07:30")
+    assert.equal(await label(page, "Criterion 1 time").inputValue(), "07:30")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -150,7 +160,7 @@ test("every invalid field exposes its exact translated error and keeps focus", a
       ["hours", { hours: "24" }, "Criterion 1 hours"], ["daily", { time: "" }, "Criterion 1 time"],
       ["monthly", { monthDay: "32" }, "Criterion 1 day of month"], ["cron", { expression: "invalid" }, "Criterion 1 cron expression"],
       ["daily", {}, "Saved time zone (IANA)", { zone: "invalid" }],
-      ["files-changed", { files: "../outside" }, "Criterion 1 file paths"], ["conversation-message", { source: "ses_missing" }, "Criterion 1 source"],
+      ["files-changed", { files: "../outside" }, "Criterion 1 file paths"], ["branch-commits", { source: "refs/heads/missing" }, "Criterion 1 source"],
     ] as [string, object, string, object?][]) {
       await rows(page, [[kind, fields]], { zone: "UTC", ...extra })
       const field = label(page, name)
@@ -225,7 +235,7 @@ test("the monthly skip is explained on demand and a calendar without a future sl
 test("each event row reads its own sources; an unavailable source keeps the draft and invalidates the policy", async () => {
   const { page, errors } = await setup()
   try {
-    const sources = [["schedule-success", "msn_schedule"], ["branch-commits", "refs/heads/dev"], ["mission-completed", "msn_oneoff"], ["conversation-message", "ses_followed"]]
+    const sources = [["branch-commits", "refs/heads/dev"], ["conversation-message", "ses_followed"]]
     await rows(page, sources.map(([kind]) => [kind]))
     assert.equal(await policy(page), undefined)
     for (const [index, [, source]] of sources.entries()) await selectMissionSource(page, index + 1, source)
@@ -233,7 +243,7 @@ test("each event row reads its own sources; an unavailable source keeps the draf
     assert.ok("when" in saved)
     assert.deepEqual(saved.when.map(item => item.kind), sources.map(([kind]) => kind))
     await page.evaluate(() => (window as any).schedulingFixture.sources({}))
-    assert.equal(await label(page, "Criterion 4 source").getAttribute("data-source-id"), "ses_followed")
+    assert.equal(await label(page, "Criterion 2 source").getAttribute("data-source-id"), "ses_followed")
     assert.match(await label(page, "Criterion 1 source").innerText(), /Unavailable source/)
     assert.equal(await policy(page), undefined)
     assert.deepEqual(errors, [])
@@ -280,23 +290,15 @@ for (const locale of ["fr", "he"]) test(`repository activity fits at 320px with 
   } finally { await page.close() }
 })
 
-test("H9 locks explain why; missing capability keeps a criterion-free Mission available", async () => {
+test("a started Mission's criteria are locked with the reason", async () => {
   const { page, errors } = await setup()
   try {
     await rows(page, [["daily"], ["files-changed", { files: "a.ts" }]])
-    for (const lock of ["uncertain", "passage", "launched-once", "terminal", "deleted"]) {
-      await page.evaluate(lock => (window as any).schedulingFixture.lock(lock), lock)
-      assert.equal(await label(page, "Criterion 1 type").isDisabled(), true)
-      assert.equal(await handle(page, 2).isDisabled(), true)
-      assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
-      assert.ok((await page.getByRole("status").innerText()).length > 30)
-    }
-    await page.evaluate(() => { (window as any).schedulingFixture.lock(null); (window as any).schedulingFixture.capability("missing") })
-    assert.equal(await policy(page), undefined)
+    await page.evaluate(() => (window as any).schedulingFixture.started(true))
+    assert.equal(await label(page, "Criterion 1 type").isDisabled(), true)
+    assert.equal(await handle(page, 2).isDisabled(), true)
     assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).isDisabled(), true)
-    await page.getByRole("button", { name: "Remove criterion 2", exact: true }).click()
-    await page.getByRole("button", { name: "Remove criterion 1", exact: true }).click()
-    assert.deepEqual(await policy(page), { when: [] })
+    assert.ok((await page.getByRole("status").innerText()).length > 30)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -407,8 +409,8 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
     assert.equal(await label(page, "Criterion 2 source").getAttribute("data-source-id"), "refs/heads/dev")
     assert.equal(await roleOf(page, 2).innerText(), "if")
     assert.deepEqual(await policy(page), legacy, "an unchanged reopen keeps the stored bytes, end date included")
-    await handle(page, 2).focus(); await page.keyboard.press("Alt+ArrowUp")
-    assert.deepEqual(await policy(page), { when: [legacy.condition, legacy.timing] }, "an edit saves criteria without the end date")
+    await label(page, "Criterion 1 time").fill("10:00")
+    assert.deepEqual(await policy(page), { when: [{ kind: "cron", expression: "0 10 * * *", zone: "UTC" }, legacy.condition] }, "an edit saves criteria without the end date")
     await load({ timing: { kind: "immediate" }, condition: legacy.condition, ends: { maxLaunches: null, afterMs: null, at: null } })
     assert.equal(await label(page, "Criterion 1 type").inputValue(), "repository-activity", "a condition alone reads as the trigger")
     const retired = { timing: { kind: "every", intervalMs: 5_400_000 }, condition: null, ends: { maxLaunches: 3, at: null, afterMs: null } }
@@ -416,9 +418,9 @@ test("stored policies reopen in order, legacy frequency + condition reads as a s
     assert.deepEqual(await policy(page), retired)
     assert.equal(await page.getByRole("button", { name: "Add a criterion", exact: true }).count(), 0)
     assert.match(await page.locator(".mission-scheduling pre").innerText(), /5400000/)
-    await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
+    await page.evaluate(() => (window as any).schedulingFixture.started(true))
     assert.equal(await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).isDisabled(), true)
-    await page.evaluate(() => (window as any).schedulingFixture.lock(null))
+    await page.evaluate(() => (window as any).schedulingFixture.started(false))
     await page.getByRole("button", { name: "Replace with a new scheduling policy", exact: true }).click()
     assert.deepEqual(await policy(page), { when: [{ kind: "now" }] })
     assert.deepEqual(errors, [])
@@ -465,8 +467,8 @@ test("scheduling help opens the localized guide by keyboard without reading the 
       assert.match(opened[0], new RegExp(`/${locale}/missions\\.html#native-scheduling$`))
       await page.screenshot({ path: path.join(captures, `runtime-info-${locale}.png`) })
       assert.deepEqual(supervision, [], "help never reads the login-start setting")
-      await page.evaluate(() => (window as any).schedulingFixture.lock("passage"))
-      assert.equal(await info.isVisible(), true, "a lock keeps help available")
+      await page.evaluate(() => (window as any).schedulingFixture.started(true))
+      assert.equal(await info.isVisible(), true, "a started Mission keeps help available")
       await info.focus(); await page.keyboard.press("Enter")
       await page.waitForFunction(() => (window as any).schedulingOpens.length === 2)
       assert.deepEqual(errors, [])

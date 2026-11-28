@@ -4,7 +4,7 @@ use codenomad_client::{
     Receiver, Sender, bounded,
     settings::{BinaryValidation, OpenCodeStatus, validate_opencode_binary},
 };
-use rune::{El, TextEdit, col, text};
+use rune::{El, TextEdit, col};
 use rune_theme_codenomad::{
     Space, field_kit,
     layout::{self, Layout},
@@ -382,12 +382,8 @@ impl State {
                     .key("opencode-binary-add"),
                 ));
         if let Some(error) = &self.validation_error {
-            custom_body = custom_body.child(
-                text(error)
-                    .wrap()
-                    .role("alert")
-                    .key("opencode-binary-validation-error"),
-            );
+            custom_body = custom_body
+                .child(chrome::palette::save_error(error).key("opencode-binary-validation-error"));
         }
 
         let mut list = col().full_width().separate(Space::Xs);
@@ -447,7 +443,7 @@ impl State {
             let retry_shared = shared.clone();
             card = card.child(
                 layout::action_row()
-                    .child(text(t(error)).role("alert").wrap())
+                    .child(chrome::palette::save_error(t(error)))
                     .child(layout::button(
                         t("sessionList.loadError.retry"),
                         !prefs.can_retry() || prefs.opencode_binary_pending(),

@@ -43,9 +43,6 @@ export function seedTabViewState(instanceId: string, value: RestorableTabViewSta
   if (states().has(instanceId)) return
   const normalized = normalizeTabViewState(value) ?? { version: 1 as const }
   const next = parseInstanceKey(instanceId).backendId === "local" && importSessionBrowsers([normalized]) ? tabPreviewModes(normalized) : normalized
-  const reader = next.missions?.reader
-  if (reader?.instanceId) reader.instanceId = instanceId
-  if (reader?.recurrence) reader.recurrence.instanceId = instanceId
   setStates(previous => new Map(previous).set(instanceId, next))
 }
 
