@@ -478,7 +478,7 @@ fn publish_notice(s: &mut State) {
             s,
             backend,
             crate::shell::notifications::Category::Files,
-            message,
+            message.localized(),
             !success,
         );
     }

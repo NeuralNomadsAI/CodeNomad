@@ -109,7 +109,14 @@ struct AttachProbe {
 struct MutationFlight {
     rx: Receiver<MutationReply>,
     scope: (String, String),
-    authority: u64,
+    backend: Backend,
+}
+
+fn same_mutation_server(a: &Backend, b: &Backend) -> bool {
+    a.base == b.base
+        && (a.client.same_connection(&b.client)
+            || (a.client.server_identity().is_some()
+                && a.client.server_identity() == b.client.server_identity()))
 }
 
 enum MutationReply {
@@ -347,7 +354,7 @@ impl Panel {
                 self.mutation = Some(MutationFlight {
                     rx,
                     scope: mutation_scope,
-                    authority,
+                    backend: backend.clone(),
                 });
                 platform::spawn(async move {
                     let result =
@@ -381,7 +388,7 @@ impl Panel {
                 self.mutation = Some(MutationFlight {
                     rx,
                     scope: mutation_scope,
-                    authority,
+                    backend: backend.clone(),
                 });
                 platform::spawn(async move {
                     let result = api::install_host(&backend, &workspace, &directory, &id).await;
@@ -511,7 +518,7 @@ impl Panel {
         self.mutation = Some(MutationFlight {
             rx,
             scope: (backend.base.clone(), workspace.clone()),
-            authority: self.authority,
+            backend: backend.clone(),
         });
         platform::spawn(async move {
             let result = api::detach_host(&backend, &workspace, &directory, &id, &session_id).await;
@@ -553,7 +560,7 @@ impl Panel {
             self.mutation = self
                 .mutation
                 .take()
-                .filter(|m| m.scope == ws_scope && m.authority == authority);
+                .filter(|m| m.scope == ws_scope && same_mutation_server(&m.backend, backend));
             self.wake = Some(wake.clone());
             self.scope = Some(scope);
             self.backend = Some(backend.clone());
@@ -578,7 +585,7 @@ impl Panel {
             if self
                 .mutation
                 .as_ref()
-                .is_some_and(|m| m.scope != ws_scope || m.authority != authority)
+                .is_some_and(|m| m.scope != ws_scope || !same_mutation_server(&m.backend, backend))
             {
                 self.mutation = None;
             }
@@ -1034,7 +1041,7 @@ impl Panel {
         self.mutation = Some(MutationFlight {
             rx,
             scope: (backend.base.clone(), workspace.clone()),
-            authority: self.authority,
+            backend: backend.clone(),
         });
         platform::spawn(async move {
             let result = api::attach_host(
@@ -1078,17 +1085,15 @@ impl Panel {
     }
 
     fn poll_mutation(&mut self) -> bool {
-        let Some((authority, reply)) = self
-            .mutation
-            .as_ref()
-            .and_then(|flight| flight.rx.try_recv().ok().map(|r| (flight.authority, r)))
-        else {
-            return false;
+        let reply = match self.mutation.as_ref().map(|flight| flight.rx.try_recv()) {
+            Some(Ok(reply)) => reply,
+            Some(Err(_)) if self.mutation.as_ref().is_some_and(|f| f.rx.is_closed()) => {
+                self.mutation = None;
+                return true;
+            }
+            _ => return false,
         };
         self.mutation = None;
-        if authority != self.authority {
-            return true;
-        }
         match reply {
             MutationReply::CatalogInstall(Ok(())) => {
                 self.notice = Some(Notice {

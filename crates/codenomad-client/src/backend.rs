@@ -438,6 +438,17 @@ impl Backend {
         Ok(page)
     }
 }
+#[derive(Debug)]
+pub(crate) struct OversizedResponse;
+
+impl std::fmt::Display for OversizedResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("oversized response")
+    }
+}
+
+impl std::error::Error for OversizedResponse {}
+
 pub async fn read_json(response: Response) -> Result<Value> {
     read_json_limited(response, 2 * 1024 * 1024).await
 }
@@ -447,7 +458,7 @@ pub(crate) async fn read_json_limited(response: Response, limit: usize) -> Resul
     while let Some(chunk) = chunks.next().await {
         let chunk = chunk?;
         if chunk.len() > limit.saturating_sub(bytes.len()) {
-            return Err("oversized response".into());
+            return Err(OversizedResponse.into());
         }
         bytes.extend_from_slice(&chunk);
     }

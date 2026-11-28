@@ -162,11 +162,33 @@ pub(super) enum Completed {
     Mutation(u64, Worktree, Backend, Mutation, Result<()>),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum GitMessage {
+    Key(&'static str),
+    InitErrorKey(&'static str),
+    InitErrorRaw(String),
+    Raw(String),
+}
+
+impl GitMessage {
+    pub(super) fn localized(&self) -> String {
+        match self {
+            Self::Key(key) => crate::strings::t(key).into(),
+            Self::InitErrorKey(detail_key) => crate::strings::t("filesPanel.gitInit.error")
+                .replace("{message}", crate::strings::t(detail_key)),
+            Self::InitErrorRaw(detail) => {
+                crate::strings::t("filesPanel.gitInit.error").replace("{message}", detail)
+            }
+            Self::Raw(message) => message.clone(),
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Slot {
     token: Option<Sender<()>>,
     pub dirty: bool,
-    pub error: Option<String>,
+    pub error: Option<GitMessage>,
 }
 
 impl Slot {
