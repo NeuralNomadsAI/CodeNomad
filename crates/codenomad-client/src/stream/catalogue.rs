@@ -115,6 +115,7 @@ fn workspace_event_bytes(event: &WorkspaceEvent) -> usize {
 pub(super) struct Signals {
     pending: Mutex<CatalogueChanges>,
     providers: Mutex<CatalogueChanges>,
+    provider_locations: Mutex<CatalogueChanges>,
     provider_moves: Mutex<ProviderMoves>,
     integrations: Mutex<CatalogueChanges>,
     integration_sessions: Mutex<SessionCatalogueChanges>,
@@ -144,6 +145,7 @@ impl Signals {
         let workspace = !self.workspace_overflow.swap(true, SeqCst);
         if self.mark(&self.pending, None)
             | self.mark(&self.providers, None)
+            | self.mark(&self.provider_locations, None)
             | self.mark(&self.integrations, None)
             | mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None)
             | workspace
@@ -155,6 +157,7 @@ impl Signals {
     pub(super) fn reconnected(&self) {
         self.mark(&self.pending, None);
         self.mark(&self.providers, None);
+        self.mark(&self.provider_locations, None);
         self.mark(&self.integrations, None);
         mark_session_changes(&mut self.integration_sessions.lock().unwrap(), None);
         self.generation.fetch_add(1, SeqCst);
@@ -324,8 +327,20 @@ impl Signals {
         let account_config_changed = frame["type"] == "storage.configChanged"
             && matches!(frame["owner"].as_str(), Some("providerAccounts" | "*"))
             && self.mark(&self.providers, None);
-        let provider_changed = crate::settings::provider_change(frame)
-            .is_some_and(|id| self.mark(&self.providers, Some(id)))
+        let provider_changed = crate::settings::provider_change(frame).is_some_and(|id| {
+            let mut marked = self.mark(&self.providers, Some(id));
+            if frame["type"] == "instance.eventStatus"
+                || (frame["type"] == "instance.event"
+                    && frame["event"]["type"] == "server.connected")
+            {
+                marked |= self.mark(&self.provider_locations, Some(id));
+            }
+            marked
+        }) | (frame["type"] == "instance.eventStatus"
+            && frame["instanceId"]
+                .as_str()
+                .filter(|id| valid_id(id))
+                .is_some_and(|id| self.mark(&self.provider_locations, Some(id))))
             | session_moved
             | account_config_changed;
         let integration_changed = match crate::settings::integrations::change_event(frame) {
@@ -498,6 +513,7 @@ impl CatalogueWatch {
         let signals = Arc::new(Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
@@ -650,8 +666,22 @@ impl CatalogueWatch {
         )
     }
 
+    pub fn take_provider_location_changes(&self) -> CatalogueChanges {
+        std::mem::take(&mut *self.signals.provider_locations.lock().unwrap())
+    }
+
     pub fn take_provider_moves(&self) -> ProviderMoves {
         std::mem::take(&mut *self.signals.provider_moves.lock().unwrap())
+    }
+
+    pub fn native_connected(&self, workspace: &str) -> Option<bool> {
+        self.signals
+            .stats
+            .lock()
+            .unwrap()
+            .status
+            .get(workspace)
+            .map(|(connected, _)| *connected)
     }
 
     pub fn take_integration_changes(&self) -> (CatalogueChanges, SessionCatalogueChanges) {
@@ -843,6 +873,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
@@ -923,6 +954,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
@@ -950,6 +982,42 @@ mod tests {
         assert!(
             matches!(&*signals.providers.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
         );
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"session.moved"}}),
+        );
+        assert!(matches!(
+            *signals.provider_locations.lock().unwrap(),
+            CatalogueChanges::None
+        ));
+        assert!(matches!(
+            &*signals.provider_moves.lock().unwrap(),
+            ProviderMoves::Sessions(entries) if entries.contains(&("first".into(), String::new()))
+        ));
+        *signals.provider_moves.lock().unwrap() = ProviderMoves::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"disconnected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.eventStatus","instanceId":"first","status":"connected"}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
+        *signals.provider_locations.lock().unwrap() = CatalogueChanges::None;
+        signals.observe(
+            &json!({"type":"instance.event","instanceId":"first","event":{"type":"server.connected"}}),
+        );
+        assert!(
+            matches!(&*signals.provider_locations.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["first".into()]))
+        );
         assert!(
             matches!(&*signals.stopped.lock().unwrap(), CatalogueChanges::Workspaces(ids) if ids == &HashSet::from(["second".into()]))
         );
@@ -960,6 +1028,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
@@ -1004,6 +1073,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),
@@ -1036,6 +1106,7 @@ mod tests {
         let signals = Signals {
             pending: Mutex::default(),
             providers: Mutex::default(),
+            provider_locations: Mutex::default(),
             provider_moves: Mutex::default(),
             integrations: Mutex::default(),
             integration_sessions: Mutex::default(),

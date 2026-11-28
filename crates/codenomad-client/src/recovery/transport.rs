@@ -390,6 +390,15 @@ pub(crate) async fn run_with_reading(
                 publish(
                     &out,
                     &wake,
+                    Event::Workspace(crate::transport::WorkspaceEvent::NativeStreamStatus {
+                        workspace_id: backend.workspace.clone(),
+                        connected: false,
+                    }),
+                )
+                .await;
+                publish(
+                    &out,
+                    &wake,
                     if stream_gap || reading.is_some() || reader.historical {
                         Event::ConnectionLost
                     } else {
@@ -400,6 +409,15 @@ pub(crate) async fn run_with_reading(
                 wire.inbox.advance_applied(mark);
             }
             Some(Input::Available(e, v, mark)) if e == epoch => {
+                publish(
+                    &out,
+                    &wake,
+                    Event::Workspace(crate::transport::WorkspaceEvent::NativeStreamStatus {
+                        workspace_id: backend.workspace.clone(),
+                        connected: true,
+                    }),
+                )
+                .await;
                 if reading.is_some() {
                     publish(&out, &wake, Event::UpstreamReady).await;
                     publish(&out, &wake, Event::AgentHint(true)).await;
