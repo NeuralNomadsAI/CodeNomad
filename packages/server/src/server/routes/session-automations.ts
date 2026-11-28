@@ -191,11 +191,25 @@ export function registerSessionAutomationsRoutes(app: FastifyInstance, deps: Ses
         return { status: "unavailable" } satisfies SessionAutomationsResponse
       }
       const automations: SessionAutomation[] = []
+      const ownedDirectories = new Map<string, boolean>()
       for (const raw of payload.data) {
         const projected = projectSessionAutomation(raw)
         // Skip unreadable or future trigger/action rows instead of hiding valid automations.
         if (!projected) continue
-        if (!await isOwnedAutomation(projected, owned, sessionID, request.params.id, deps.workspaceManager, signal)) continue
+        if (projected.sessionID !== sessionID || projected.projectID !== owned.projectID) continue
+        let directoryOwned = sameLocation(owned.location, { directory: projected.directory })
+          ? true
+          : ownedDirectories.get(projected.directory)
+        if (directoryOwned === undefined) {
+          directoryOwned = await deps.workspaceManager.ownsLocation(
+            request.params.id,
+            { directory: projected.directory },
+            owned.connection.client,
+            { signal },
+          )
+          ownedDirectories.set(projected.directory, directoryOwned)
+        }
+        if (!directoryOwned) continue
         automations.push(projected.automation)
       }
       await owned.revalidate()

@@ -198,6 +198,13 @@ describe("inline code candidates", () => {
     assert.deepEqual(inlineCodeCandidates("src/app.ts.").map(candidate => candidate.href), ["src/app.ts."])
   })
 
+  it("rejects numeric dates and ratios as bare paths", () => {
+    assert.deepEqual(hrefs("27/11/2026 passed 52/52 checks and 7/10 or 989/1000"), [])
+    assert.deepEqual(inlineCodeCandidates("27/11/2026"), [])
+    assert.deepEqual(inlineCodeCandidates("989/1000"), [])
+    assert.deepEqual(hrefs("see docs/2026-11-26-plan.md and 2026/notes.md"), ["docs/2026-11-26-plan.md", "2026/notes.md"])
+  })
+
   it("recognizes spans whose edges are hyphen-glued CJK segments", () => {
     assert.deepEqual(inlineCodeCandidates("前端-v2/run-测试").map(candidate => candidate.href),
       ["前端-v2/run-测试"])

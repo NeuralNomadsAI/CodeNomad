@@ -486,20 +486,30 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   let active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   // An active-only map cannot explain a run that settled during an SSE gap.
-  // Read outcomes only for inactive rows whose completion needs reconciling.
-  const outcomes = new Map(await Promise.all(Array.from(captured).flatMap(([id, baseline]) => {
-    if (Object.prototype.hasOwnProperty.call(active, id)
-      || (baseline.status === "idle" && !baseline.generationRecovery)) return []
-    return [(async () => {
-      try {
-        const info = await getRootClient(instanceId).session.get({ sessionID: id }, signal ? { signal } : undefined)
-        return [id, info] as const
-      } catch (error) {
-        if (!signal?.aborted && generationCurrent()) log.warn("Failed to refresh session outcome", { instanceId, sessionId: id, error })
-        return [id, null] as const
+  // Read outcomes only for inactive rows whose completion needs reconciling,
+  // with bounded concurrency so a large reconnect does not flood OpenCode.
+  const pendingOutcomeIds = Array.from(captured).flatMap(([id, baseline]) =>
+    Object.prototype.hasOwnProperty.call(active, id) || (baseline.status === "idle" && !baseline.generationRecovery)
+      ? []
+      : [id])
+  const outcomes = new Map<string, SDKSession | null>()
+  if (pendingOutcomeIds.length) {
+    let cursor = 0
+    const workerCount = Math.min(6, pendingOutcomeIds.length)
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (cursor < pendingOutcomeIds.length) {
+        if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+        const id = pendingOutcomeIds[cursor++]!
+        try {
+          const info = await getRootClient(instanceId).session.get({ sessionID: id }, signal ? { signal } : undefined)
+          outcomes.set(id, info)
+        } catch (error) {
+          if (!signal?.aborted && generationCurrent()) log.warn("Failed to refresh session outcome", { instanceId, sessionId: id, error })
+          outcomes.set(id, null)
+        }
       }
-    })()]
-  })))
+    }))
+  }
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
   // Outcome is historical. Work may have restarted while its read was pending,
   // including without a delivered SSE event; the later activity read wins.
