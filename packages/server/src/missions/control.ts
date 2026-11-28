@@ -335,6 +335,12 @@ export class MissionControl {
       ...(mission && !mission.document?.dormant ? { mission } : {}), cleanups: cleanups ?? [], ...damage }
   }
 
+  /** The Mission's map when it keeps its coordinator active with `/goal`, from this journal's own
+   * projection: a Mission without the option costs no copy. */
+  coordinatorGoalMission(missionID: string): Promise<MissionMap | undefined> {
+    return this.journal.readProjection(missionID, view => view.mission?.coordinatorGoal ? view.mission : undefined)
+  }
+
   /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
    * order or tasks by key, ID or report, from one read of its range alone; refused once
    * the order `request.order` names has changed (read-mostly: never a write's authority). */
@@ -542,6 +548,7 @@ export class MissionControl {
       if (!event || event.type !== "mission.created" || event.requestID !== input.requestID
         || event.objective !== input.objective || event.title !== input.title || event.notes !== input.notes
         || event.template !== input.template || Boolean(event.prepared) !== Boolean(input.prepared)
+        || Boolean(event.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || !sameMissionProfiles(event.profiles, input.profiles) || (event.taskMode ?? "native") !== (input.taskMode ?? "native")
         || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
         || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
@@ -647,6 +654,7 @@ export class MissionControl {
         || !isDeepStrictEqual(existingEvent.preparedBy, input.preparedBy)
         || !isDeepStrictEqual(existingEvent.creationDefaults, input.creationDefaults)
         || Boolean(existingEvent.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(existingEvent.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
@@ -734,6 +742,7 @@ export class MissionControl {
       ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
       ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
       ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+      ...(input.coordinatorGoal ? { coordinatorGoal: true } : {}),
       coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
       createdAt,
     })
@@ -1252,6 +1261,7 @@ export class MissionControl {
         notes: input.start.notes,
         template: input.start.template,
         taskMode: input.start.taskMode,
+        ...(input.start.coordinatorGoal ? { coordinatorGoal: true } : {}),
         ...(input.start.profiles === undefined ? {} : { profiles: input.start.profiles }),
         ...(resolved.creationDefaults === undefined ? {} : { creationDefaults: resolved.creationDefaults }),
         coordinator: {
@@ -1386,6 +1396,7 @@ export class MissionControl {
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
         || Boolean(created.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(created.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || created.preparedBy?.missionID !== source?.id || created.preparedBy?.coordinatorSessionID !== sessionID) {
         throw missionRecoveryControlError("prepare-conflict")
       }
@@ -2010,7 +2021,8 @@ export class MissionControl {
     // when a late root is now readable. GET existence cannot settle an ACK loss.
     if (ownsCreation && this.options.createManagedRoot) {
       this.assertActive()
-      return this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      const created = await this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      if (created) return created
     }
     if (actor.managed && !ownsCreation) {
       // managed is immutable cleanup provenance, not a create permit for every

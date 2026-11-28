@@ -40,12 +40,14 @@ test("public list passes only the bounded cursor and returns no mutation fallbac
   const f = await fixture(t)
   assert.equal((await f.get("?after=schedule_previous&limit=2")).statusCode, 200)
   assert.deepEqual(f.calls, [{ after: "schedule_previous", limit: 2 }])
-  for (const query of ["?limit=9", "?limit=0", "?after=../outside", "?unknown=true"])
+  assert.equal((await f.get("?limit=8&kind=schedule")).statusCode, 200)
+  assert.deepEqual(f.calls[1], { after: undefined, limit: 8, kind: "schedule" })
+  for (const query of ["?limit=9", "?limit=0", "?after=../outside", "?unknown=true", "?kind=one-time"])
     assert.equal((await f.get(query)).statusCode, 400)
-  assert.equal(f.calls.length, 1)
+  assert.equal(f.calls.length, 2)
   f.state.error = true
   assert.equal((await f.get()).statusCode, 503)
-  assert.equal(f.calls.length, 2)
+  assert.equal(f.calls.length, 3)
 })
 
 test("capability distinguishes missing API, activable OFF and explicit refusal without writing or exporting digests", async t => {

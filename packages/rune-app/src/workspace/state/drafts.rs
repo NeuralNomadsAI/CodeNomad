@@ -3929,7 +3929,9 @@ mod tests {
         // ordinary snapshots never resurrect stale A either.
         rt.state.workspace = Some(ui);
         rt.state.screen = crate::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
-        rt.update(|s, tx| super::super::restore_stashed(s, stashed, false, tx));
+        rt.update(|s, tx| {
+            let _ = super::super::restore_stashed(s, stashed, false, tx);
+        });
         let snap_after_restore = rt.state.workspace.as_ref().unwrap().snapshot();
         let restored_texts: Vec<&str> = snap_after_restore
             .tabs

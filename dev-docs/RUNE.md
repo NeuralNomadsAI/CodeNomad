@@ -35,6 +35,7 @@ Shared menus focus their container when opened by pointer—entering items direc
 - The API client is asynchronous with an interchangeable transport (native HTTP/SSE; browser `fetch`/`EventSource`). No blocking I/O or threads in shared code.
 - Desktop-only features (server launch, local files, system notifications, clipboard, windows, updates) sit behind a platform interface with a web implementation.
 - Layouts adapt to phone, tablet and desktop, with touch input.
+- The Android APK is the native application built as a library (`--example android --features android`) for Rune's Android host and packaged by `scripts/rune/bundle-android.mjs` with the Gradle project in `packages/rune-app/android`. It runs no local server.
 
 Preferences → Stats uses the captured project's backend for the service-wide aggregate, owner, and display cache. The section owns its reads and restores the period through the backend; terminal events on the existing stream invalidate the display without loading transcripts. See [Settings](SETTINGS.md) and [Stats restoration](CACHE_REFRESH_CONVENTIONS.md#stats-restoration-and-native-cost).
 

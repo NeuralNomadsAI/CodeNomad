@@ -19,7 +19,7 @@ if (!mode) {
   const legacy = { selected: "legacy-mission", selectedRecurrence: "daily", selectedScheduled: "scheduled",
     selectedTask: { missionId: "legacy-mission", taskId: "task" }, expanded: ["mission:legacy-mission"],
     reader: { missionId: "legacy-mission", kind: "report" as const, itemId: "report", instanceId: "old-backend",
-      recurrence: { instanceId: "old-backend", projectID: "project", scheduleID: "schedule", passageID: "passage" } } }
+      recurrence: { instanceId: "old-backend", projectID: "project", scheduleID: "schedule", passageID: "passage", owner: "scheduled" as const } } }
   const layout = { [projectKey]: JSON.stringify(legacy), [disclosureKey]: "-q1aEyLZiDLY,+yH2N9QrcmKE",
     "mission-project-vo6-9pq1uzw": JSON.stringify(legacy),
     ...(mode === "native-with-preview" ? {
@@ -62,7 +62,8 @@ if (!mode) {
     folder: index < 2 ? "/same" : "/explicit", occurrence: index % 2 }))
 
   test("restores selection, tree and reader with recreated instance bindings", () => {
-    assert.deepEqual(missionProjectView("first"), { ...legacy, reader: { ...legacy.reader, instanceId: "first",
+    const { selectedRecurrence: _daily, ...restored } = legacy
+    assert.deepEqual(missionProjectView("first"), { ...restored, reader: { ...legacy.reader, instanceId: "first",
       recurrence: { ...legacy.reader.recurrence, instanceId: "first" } } })
     if (mode === "native-with-preview") {
       assert.equal(getTabViewState("first").previews?.session.mode, "preview")

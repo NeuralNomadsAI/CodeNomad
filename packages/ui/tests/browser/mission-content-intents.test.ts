@@ -51,7 +51,6 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
       writes.push(input)
       return route.fulfill({ json: { mission: { ...options.list(), objective: input.objective, notes: input.notes, revision: options.list().revision + 1 } } })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: panelMissions([options.list()]),
       cleanups: [], generatedAt: 1, discardedEvents: 0, activity: { generatedAt: 1, missions: [] } } })
     if (path.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" }, capability: { minimum: 0 }, effectiveDepth: 1,

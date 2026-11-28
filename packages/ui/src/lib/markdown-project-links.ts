@@ -25,11 +25,41 @@ export function projectLinkPath(href: string): string | undefined {
     // A literal percent sign is a legal file name character; keep it.
   }
   // Decoding can reveal a scheme, a scheme-relative or a UNC value the literal
-  // form hid; such a value is a URL, not a workspace file path.
+  // form hid, including through encoded backslashes; such a value is a URL,
+  // not a workspace file path.
+  path = path.replace(/\\/g, "/")
   if (path.startsWith("//")) return undefined
   if (!WINDOWS_DRIVE.test(path) && SCHEME.test(path)) return undefined
-  path = path.replace(/^(?:\.\/)+/, "").replace(/\/+$/, "")
+  // Trailing separators go, except a filesystem root's (`/`, `C:/`); `./`
+  // alone names the base directory itself.
+  if (/^\.\/*$/.test(path)) return "."
+  path = path.replace(/^(?:\.\/)+/, "").replace(/([^/:])\/+$/, "$1")
   return path || undefined
+}
+
+// A local `file:` URL (`file:/p`, `file:///p`, `file://localhost/p`, and the
+// drive forms browsers accept, `file:C:/p` and `file://C:/p`), never a remote
+// share.
+const LOCAL_FILE_URL = /^file:(?:\/\/(?:localhost)?)?(?=\/|[A-Za-z]:[\\/])/i
+
+/** The absolute local path a `file:` URL names (`file:///C:/x` → `C:/x`), or
+ * undefined for any other href or an encoded separator, which is invalid in a
+ * file URL path. */
+export function localFileUrlPath(href: string): string | undefined {
+  const trimmed = href.trim()
+  if (!LOCAL_FILE_URL.test(trimmed)) return undefined
+  // Literal backslashes are separators (`file:///C:\x`); a UNC form they could
+  // spell (`///host`) fails the final shape check.
+  const encoded = trimmed.replace(/[?#].*$/, "").replace(LOCAL_FILE_URL, "").replace(/\\/g, "/")
+  if (/%(?:2f|5c)/i.test(encoded)) return undefined
+  let path: string
+  try {
+    path = decodeURIComponent(encoded)
+  } catch {
+    return undefined
+  }
+  path = path.replace(/^\/(?=[A-Za-z]:\/)/, "")
+  return /^(?:\/(?!\/)|[A-Za-z]:\/)/.test(path) ? path : undefined
 }
 
 const normalizeSegments = (path: string, rooted: boolean): string => {

@@ -212,6 +212,7 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
     let password = &s.direct_authentication.password;
     let account = literal_field(username)
         .label(t("authRecovery.username"))
+        .autofill(rune::Autofill::Username)
         .disabled(waiting)
         .on_edit(crate::screen::edit(
             scope,
@@ -223,6 +224,7 @@ pub(crate) fn dialog(s: &State) -> Option<El> {
         .label(t("authRecovery.password"))
         .disabled(waiting)
         .secure()
+        .autofill(rune::Autofill::CurrentPassword)
         .on_edit(crate::screen::edit(
             scope,
             crate::screen::Editor::DirectPassword,

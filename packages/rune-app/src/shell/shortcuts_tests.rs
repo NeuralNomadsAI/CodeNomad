@@ -983,3 +983,4 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
 }
 
 mod detached;
+mod help_links;

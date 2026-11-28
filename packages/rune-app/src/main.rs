@@ -389,6 +389,7 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     }
     changed
 }
+rune::android_main!(main);
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     #[cfg(feature = "test-support")]

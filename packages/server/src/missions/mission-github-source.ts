@@ -7,7 +7,7 @@ import { githubRepositorySchema, missionGithubConditionSchema, missionGithubChec
 import { stableToken } from "./receipt-identity"
 import { truncateMissionText } from "./truncate-text"
 
-const PAGE_SIZE = 50, MAX_PAGES = 4, DEADLINE_MS = 10_000
+const PAGE_SIZE = 50, MAX_PAGES = 4, DEADLINE_MS = 15_000
 const timestamp = z.string().datetime({ offset: true }).transform(value => new Date(value).toISOString())
 const identifier = z.string().min(1).max(240).regex(/^\d+$/)
 const title = z.string().min(1).max(4096).transform(value => truncateMissionText(value, 240))
@@ -144,7 +144,6 @@ export async function readMissionGithubSource(input: MissionGithubCondition, roo
       if (account.id !== viewer.id) return unavailable()
       valid = true; check()
     }
-    await revalidate()
     return { checkpoint: { key, kind: condition.kind, placementDigest, value: JSON.parse(canonicalAuthority(value, 32 * 1024)) } as MissionSourceCheckpoint,
       changed: !!previous && value.events.length > 0, current: check, revalidate }
   } catch { live.throwIfAborted(); return unavailable() }

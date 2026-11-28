@@ -25,6 +25,10 @@ export type TranscriptProjectionGates = {
   isLatestMessageWindow(instanceId: string, sessionId: string): boolean
   /** Inactive-session recovery: the next activation loads the page authoritatively. */
   invalidateInactiveLoadedSession(instanceId: string, sessionId: string): void
+  /** Authoritative reload when a watched latest-window session exhausts projection retries. */
+  reloadFailedProjection?(instanceId: string, sessionId: string): void
+  /** Synchronous authoritative resync publication (preserveOmitted=false) when no callback was registered. */
+  onResyncedPage?(instanceId: string, sessionId: string, data: Data): void
   /** Cost/token totals published after usage-affecting events. */
   onProjectedUsage(instanceId: string, sessionId: string): void
   /** Publishes a reduced page into the message store. */
@@ -38,6 +42,7 @@ type PendingProjection = {
   data: Data
   confirmPending: boolean
   updateUsage: boolean
+  retries?: number
 }
 
 /** Hidden windows pause animation frames; this timer keeps projections bounded-stale instead. */
@@ -51,10 +56,66 @@ const HIDDEN_PROJECTION_INTERVAL_MS = 250
  * other is cancelled, so a live page still projects exactly once per frame.
  */
 const FRAME_FALLBACK_MS = 32
+const PROJECTION_RETRY_DELAYS_MS = [50, 200]
 
 let gates: TranscriptProjectionGates | undefined
 const pending = new Map<string, PendingProjection>()
+const retryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 let cancelScheduledRun: (() => void) | undefined
+
+function clearRetryTimer(key: string): void {
+  const timer = retryTimers.get(key)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    retryTimers.delete(key)
+  }
+}
+
+function recoverFailedProjection(entry: PendingProjection): void {
+  if (!gates || !entry.operation.current()) return
+  if (gates.isActiveSession(entry.instanceId, entry.sessionId)
+    && gates.isLatestMessageWindow(entry.instanceId, entry.sessionId)
+    && gates.reloadFailedProjection) {
+    gates.reloadFailedProjection(entry.instanceId, entry.sessionId)
+  } else {
+    gates.invalidateInactiveLoadedSession(entry.instanceId, entry.sessionId)
+  }
+}
+
+function scheduleFailedProjectionRetry(entry: PendingProjection, immediateReload = false): void {
+  const key = projectionKey(entry.instanceId, entry.sessionId)
+  if (!gates || !entry.operation.current() || pending.has(key)) return
+  const attempt = entry.retries ?? 0
+  if (immediateReload || attempt >= PROJECTION_RETRY_DELAYS_MS.length) {
+    recoverFailedProjection(entry)
+    return
+  }
+  clearRetryTimer(key)
+  const timer = setTimeout(() => {
+    if (retryTimers.get(key) !== timer) return
+    retryTimers.delete(key)
+    if (!gates || !entry.operation.current() || pending.has(key)) return
+    pending.set(key, { ...entry, retries: attempt + 1 })
+    requestScheduledRun()
+  }, PROJECTION_RETRY_DELAYS_MS[attempt])
+  retryTimers.set(key, timer)
+}
+
+/** Publishes an authoritative resynced page through registered gates when no per-event callback was registered. */
+export function publishResyncedTranscriptPage(instanceId: string, sessionId: string, data: Data): boolean {
+  if (!gates) return false
+  if (!gates.isActiveSession(instanceId, sessionId)) {
+    gates.invalidateInactiveLoadedSession(instanceId, sessionId)
+    return true
+  }
+  if (!gates.isLatestMessageWindow(instanceId, sessionId)) return true
+  if (gates.onResyncedPage) {
+    gates.onResyncedPage(instanceId, sessionId, data)
+    return true
+  }
+  scheduleTranscriptProjection(instanceId, sessionId, data)
+  return true
+}
 
 export function setTranscriptProjectionGates(next: TranscriptProjectionGates): void {
   gates = next
@@ -90,6 +151,7 @@ export function scheduleTranscriptProjection(
   const operation = captureBackendOperation(instanceId)
   if (!operation.current()) return
   const key = projectionKey(instanceId, sessionId)
+  clearRetryTimer(key)
   const previous = pending.get(key)
   const merged = previous !== undefined && previous.operation.signal === operation.signal && previous.data === data
   pending.set(key, {
@@ -115,22 +177,28 @@ export function scheduleTranscriptProjection(
  * the active-session gate, so a retirement landing on an inactive session
  * invalidates its loaded page for the next activation read instead of
  * rewriting its display. */
-export function flushTranscriptProjections(instanceId?: string, sessionId?: string): void {
+export function flushTranscriptProjections(
+  instanceId?: string,
+  sessionId?: string,
+  options?: { final?: boolean },
+): void {
+  const immediateReload = Boolean(options?.final)
   if (instanceId === undefined) {
-    drain(true)
+    drain(true, undefined, immediateReload)
     return
   }
   const prefix = `${instanceId}\u0000`
   const matches = sessionId === undefined
     ? (key: string) => key.startsWith(prefix)
     : (key: string) => key === projectionKey(instanceId, sessionId)
-  drain(false, matches)
+  drain(false, matches, immediateReload)
 }
 
 /** Removes and returns a session's pending projection. A synchronous
  * publication takes its obligations (usage updates) over before dropping it. */
 export function takeTranscriptProjection(instanceId: string, sessionId: string): PendingProjection | undefined {
   const key = projectionKey(instanceId, sessionId)
+  clearRetryTimer(key)
   const entry = pending.get(key)
   if (entry !== undefined) disarmIfEmpty(key)
   return entry?.operation.current() ? entry : undefined
@@ -144,8 +212,13 @@ export function cancelTranscriptProjections(instanceId: string, sessionId?: stri
     for (const key of pending.keys()) {
       if (key.startsWith(prefix)) pending.delete(key)
     }
+    for (const key of retryTimers.keys()) {
+      if (key.startsWith(prefix)) clearRetryTimer(key)
+    }
   } else {
-    pending.delete(projectionKey(instanceId, sessionId))
+    const key = projectionKey(instanceId, sessionId)
+    pending.delete(key)
+    clearRetryTimer(key)
   }
   if (!pending.size) disarm()
 }
@@ -162,7 +235,7 @@ function disarm(): void {
   }
 }
 
-function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): void {
+function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean, immediateReload = false): void {
   if (!pending.size || !gates) {
     disarm()
     return
@@ -183,6 +256,7 @@ function drain(bypassActiveGate: boolean, matches?: (key: string) => boolean): v
         log.error("Failed to project coalesced transcript page", {
           instanceId: entry.instanceId, sessionId: entry.sessionId, error,
         })
+        scheduleFailedProjectionRetry(entry, immediateReload)
       }
     }
   })

@@ -5,6 +5,7 @@ import { isBrowserUrlAllowed } from "./browser-webview-security"
 import { setBrowserEmulation } from "./browser-emulation"
 import { executeCdpOperation } from "../../../server/src/automation/page/cdp-driver"
 import { parsePageOperation, pageEnvelope } from "../../../server/src/automation/page/operations"
+import { DIAGNOSTICS, DiagnosticEventBuffer } from "../../../server/src/automation/page/diagnostic-events"
 import { PAGE_DRIVER_VERSION } from "../../../server/src/automation/page/protocol"
 import { setBrowserLogicalAddress } from "./browser-presentation"
 import { BrowserPreviewOwners, type PreviewOwner } from "./browser-preview-owners"
@@ -50,6 +51,7 @@ interface OpenClaim {
 type BrowserCommand =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
+  | { action: "back" | "forward" | "reload" }
   | { action: "screenshot" }
 
 const noTarget = "No visible local browser target for this session"
@@ -76,6 +78,9 @@ export class BrowserController {
   private readonly pageLeases = new Map<string, PageLease>()
   private readonly controlledDetach = new WeakSet<WebContents>()
   private readonly documentWatches = new WeakMap<WebContents, boolean>()
+  /** Console and network events of a watched preview's current document. */
+  private readonly diagnostics = new WeakMap<WebContents, DiagnosticEventBuffer>()
+  private readonly recording = new WeakSet<WebContents>()
   private readonly commandQueues = new WeakMap<WebContents, Promise<void>>()
   private readonly navigationVersions = new WeakMap<WebContents, number>()
   private readonly documentRoots = new WeakMap<WebContents, number>()
@@ -174,6 +179,13 @@ export class BrowserController {
 
   guestCreated(guest: WebContents): void {
     if (guest.getType() !== "webview") return
+    // Before the first page loads, so its own requests and startup console output are kept.
+    try { if (!guest.debugger.isAttached()) guest.debugger.attach("1.3") } catch { /* diagnostics start with the document watch */ }
+    if (guest.debugger.isAttached()) {
+      // Page events too, so a document.open() before the first probe still restarts the diagnostics.
+      void guest.debugger.sendCommand("Page.enable").catch(() => undefined)
+      void this.enableDiagnostics(guest, Number.POSITIVE_INFINITY)
+    }
     const owner = guest.hostWebContents
     const session = owner && this.attaching.get(owner)
     if (!session || !owner) return
@@ -204,13 +216,20 @@ export class BrowserController {
       this.releaseTarget(guest)
     })
     guest.debugger.on("message", (_event, method, params, sessionId) => {
-      if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) invalidate()
+      if (!sessionId && method === "Page.documentOpened" && params?.frame?.id && !params.frame.parentId) {
+        // document.open() replaces the document without a navigation: its diagnostics restart too.
+        this.diagnostics.get(guest)?.restart()
+        invalidate()
+      }
     })
     guest.debugger.on("detach", () => {
       this.documentWatches.delete(guest)
+      this.diagnostics.delete(guest)
       if (!this.controlledDetach.has(guest)) invalidate()
     })
-    guest.on("did-start-navigation", (_event, _url, _isInPlace, isMainFrame) => {
+    guest.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      // A new document's diagnostics start with its own request, as in OpenCode's browser.
+      if (isMainFrame && !isInPlace) this.diagnostics.get(guest)?.restart()
       if (isMainFrame) invalidateNavigation()
     })
     guest.once("destroyed", () => {
@@ -387,44 +406,89 @@ export class BrowserController {
     for (const [requestID, claim] of this.openClaims) if (claim.owner === owner) this.releaseOpen(owner, requestID)
   }
 
-  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {}): Promise<{ available: true; target: string }> {
+  /** Keeps the guest's console and network events from now on. Diagnostics are an extra: a preview whose
+   * domains cannot be enabled still serves the page channel. */
+  private async enableDiagnostics(guest: WebContents, deadline: number): Promise<void> {
+    if (this.diagnostics.has(guest)) return
+    const buffer = new DiagnosticEventBuffer()
+    this.diagnostics.set(guest, buffer)
+    if (!this.recording.has(guest)) {
+      this.recording.add(guest)
+      guest.debugger.on("message", (_event, method, params, sessionId) => {
+        if (method === "Target.attachedToTarget" && typeof params?.sessionId === "string") this.startChild(guest, params)
+        this.diagnostics.get(guest)?.record(method, params, sessionId || undefined)
+      })
+    }
+    try {
+      // Sent together, so the domains are on before the guest's first request.
+      await Promise.all(DIAGNOSTICS.enable.map(([method, params]) => withDeadline(() => guest.debugger.sendCommand(method, params), deadline)))
+    } catch {
+      if (this.diagnostics.get(guest) === buffer) this.diagnostics.delete(guest)
+    }
+  }
+
+  /** A child target paused at start by the auto-attach, as in OpenCode's browser: a worker runs and is left; a page
+   * frame gets the diagnostic domains first; an extension frame only runs. Every one is resumed, even when its
+   * domains fail or diagnostics are off, so no frame or worker stays paused. */
+  private startChild(guest: WebContents, params: { sessionId: string; targetInfo?: { type?: unknown; url?: unknown } }): void {
+    const session = params.sessionId
+    const send = (method: string, options: Record<string, unknown> = {}) => guest.debugger.sendCommand(method, options, session)
+    const resume = () => send("Runtime.runIfWaitingForDebugger")
+    const type = params.targetInfo?.type
+    const extension = /^[a-z-]*extension:/i.test(String(params.targetInfo?.url ?? ""))
+    const started = type === "worker"
+      ? resume().then(() => guest.debugger.sendCommand("Target.detachFromTarget", { sessionId: session }))
+      : type === "iframe" && !extension && this.diagnostics.has(guest)
+        ? Promise.allSettled(DIAGNOSTICS.enable.map(([method, options]) => send(method, options))).then(resume)
+        : resume()
+    void started.catch(() => undefined)
+  }
+
+  /** Observes the renderer even between page leases, with the console and network domains of its diagnostics. */
+  private async watchDocument(guest: WebContents, deadline: number, check: () => void): Promise<void> {
+    if (this.documentWatches.has(guest)) return
+    const ownsDebugger = !guest.debugger.isAttached()
+    if (ownsDebugger) guest.debugger.attach("1.3")
+    try {
+      await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
+      check()
+      if (!guest.debugger.isAttached()) throw new Error(staleTarget)
+      this.documentWatches.set(guest, ownsDebugger)
+      await this.enableDiagnostics(guest, deadline)
+      check()
+    } catch (error) {
+      if (ownsDebugger) this.detachDebugger(guest)
+      throw error
+    }
+  }
+
+  /** `workspaceIDs` are the project tabs whose views may serve the session: another tab's preview is no target. */
+  async probe(sessionID: string, deadline = Number.POSITIVE_INFINITY, checkAdmission: () => void = () => {},
+    workspaceIDs?: readonly string[]): Promise<{ available: true; target: string; loading: boolean; registration: string }> {
     ensureDeadline(deadline)
     checkAdmission()
-    const registration = this.resolve(sessionID)
+    const registration = this.resolve(sessionID, workspaceIDs)
     const { guest } = registration
     const generation = this.pageGeneration(registration)
     const target = await this.enqueue(guest, async () => {
       const check = () => {
         ensureDeadline(deadline)
         checkAdmission()
-        if (this.resolveWitness(sessionID) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
+        if (this.resolveWitness(sessionID, undefined, workspaceIDs) !== registration || this.pageGeneration(registration) !== generation) throw new Error(staleTarget)
       }
       check()
-      if (!this.documentWatches.has(guest)) {
-        const ownsDebugger = !guest.debugger.isAttached()
-        if (ownsDebugger) guest.debugger.attach("1.3")
-        try {
-          // Observe the renderer even between page leases.
-          await withDeadline(() => guest.debugger.sendCommand("Page.enable"), deadline)
-          check()
-          if (!guest.debugger.isAttached()) throw new Error(staleTarget)
-          this.documentWatches.set(guest, ownsDebugger)
-        } catch (error) {
-          if (ownsDebugger) this.detachDebugger(guest)
-          throw error
-        }
-      }
+      await this.watchDocument(guest, deadline, check)
       await this.refreshDocument(guest, deadline, check)
       return this.pageGeneration(registration)
     }, deadline)
     ensureDeadline(deadline)
     checkAdmission()
     this.resolveWitness(sessionID, target)
-    return { available: true, target }
+    return { available: true, target, loading: guest.isLoading(), registration: registration.generation }
   }
 
   async execute(sessionID: string, command: Exclude<BrowserCommand, { action: "open" }>, deadline = Number.POSITIVE_INFINITY, target?: unknown, checkAdmission: () => void = () => {}): Promise<unknown> {
-    if (command.action !== "navigate" && command.action !== "screenshot") throw new Error("Invalid browser command")
+    if (!["navigate", "back", "forward", "reload", "screenshot"].includes(command.action)) throw new Error("Invalid browser command")
     const registration = this.resolveWitness(sessionID, requireWitness(target))
     const { guest, visibilityVersion } = registration
     const document = this.pageGeneration(registration)
@@ -441,7 +505,28 @@ export class BrowserController {
       switch (command.action) {
         case "navigate": {
           if (!isBrowserUrlAllowed(command.url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
-          return loadNavigation(guest, command.url, deadline, () => check(false))
+          return { ...await loadNavigation(guest, command.url, deadline, () => check(false)), registration: registration.generation }
+        }
+        case "back":
+        case "forward": {
+          const history = await withDeadline(() => guest.debugger.sendCommand("Page.getNavigationHistory"), deadline) as {
+            currentIndex?: number
+            entries?: Array<{ id: number; url: string }>
+          }
+          checkDocument()
+          const index = typeof history.currentIndex === "number" ? history.currentIndex : -1
+          const entries = Array.isArray(history.entries) ? history.entries : []
+          const next = entries[command.action === "back" ? index - 1 : index + 1]
+          if (!next) throw new Error(command.action === "back" ? "No previous page in browser history" : "No next page in browser history")
+          if (!isBrowserUrlAllowed(next.url)) throw new Error("Browser history entry requires a credential-free HTTP(S) URL")
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, next.url, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.navigateToHistoryEntry", { entryId: next.id }).then(() => undefined)) }
+        }
+        case "reload": {
+          const currentUrl = guest.getURL()
+          if (!isBrowserUrlAllowed(currentUrl)) throw new Error("Browser reload requires a credential-free HTTP(S) URL")
+          return { registration: registration.generation, ...await loadTriggeredNavigation(guest, currentUrl, deadline, () => check(false),
+            () => guest.debugger.sendCommand("Page.reload", {}).then(() => undefined)) }
         }
         case "screenshot": {
           const result = await withDeadline(() => guest.debugger.sendCommand("Page.captureScreenshot", {
@@ -458,7 +543,7 @@ export class BrowserController {
     }, deadline)
   }
 
-  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string }> {
+  async open(sessionID: string, url: string, deadline: number, workspaceIDs: readonly string[], checkAdmission: () => void = () => {}): Promise<{ url: string; registration?: string }> {
     if (!isBrowserUrlAllowed(url)) throw new Error("Browser navigation requires a credential-free HTTP(S) URL")
     const registrationDeadline = Math.min(deadline, Date.now() + 10_000)
     const existingOwner = this.previewOwners.get(sessionID)
@@ -507,13 +592,15 @@ export class BrowserController {
             return await this.enqueue(guest, async () => {
               checkRegistration()
               claim.dispatched = true
+              // A fragment-only open keeps the document: restarting here drops old-page events fired before dispatch.
+              this.diagnostics.get(guest)?.restart()
               const committed = await loadNavigation(guest, url, deadline, checkRegistration).catch(error => {
                 if (error instanceof MainNavigationSuperseded) this.releaseOpen(owner, requestID, undefined, true, error.successorUrl)
                 throw error
               })
               checkRegistration()
               this.releaseOpen(owner, requestID, committed.url)
-              return committed
+              return { ...committed, registration: expected.generation }
             }, deadline, claim.retirement.signal)
           }
           await new Promise(resolve => setTimeout(resolve, 25))
@@ -537,16 +624,17 @@ export class BrowserController {
       && this.openWindowVisible(owner)
   }
 
-  private resolve(sessionID: string): Registration {
-    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration))
+  private resolve(sessionID: string, workspaceIDs?: readonly string[]): Registration {
+    const matches = [...this.registrations.values()].filter(registration => registration.sessionId === sessionID && this.registrationVisible(registration)
+      && (!workspaceIDs || (registration.instanceId !== undefined && workspaceIDs.includes(registration.instanceId))))
     if (matches.length === 0) throw new Error(noTarget)
     if (matches.length > 1) throw new Error("Multiple visible browser targets exist for this session")
     return matches[0]
   }
 
-  private resolveWitness(sessionID: string, target?: string): Registration {
+  private resolveWitness(sessionID: string, target?: string, workspaceIDs?: readonly string[]): Registration {
     try {
-      const registration = this.resolve(sessionID)
+      const registration = this.resolve(sessionID, workspaceIDs)
       if (target !== undefined && (target !== this.pageGeneration(registration)
         || !this.documentWatches.has(registration.guest) || !registration.guest.debugger.isAttached())) throw new Error(staleTarget)
       return registration
@@ -595,6 +683,11 @@ export class BrowserController {
           }
           await this.refreshDocument(registration.guest, Math.min(deadline, lease.expires), check)
           check()
+          // Agent page operations never open a native file picker on the person's screen.
+          const intercept = (params: Record<string, unknown>) => withDeadline(
+            () => registration.guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", params), Math.min(deadline, lease.expires))
+          await intercept({ enabled: true, cancel: true }).catch(() => intercept({ enabled: true }))
+          check()
           const url = this.checkLease(lease, deadline, checkAdmission)
           return { generation: lease.generation, url, driver: "cdp", contractVersion: PAGE_DRIVER_VERSION }
         }, deadline)
@@ -616,7 +709,7 @@ export class BrowserController {
       try {
         await this.refreshDocument(guest, stopAt, check)
         if (!operation) return { url: check() }
-        const result = await executeCdpOperation({ send: async (command, params = {}) => {
+        const result = await executeCdpOperation({ send: async (command, params = {}, sessionId) => {
           check()
           // Electron's native insertion reaches the guest's focused frame even
           // when CDP Input.insertText is ignored in an embedded/background view.
@@ -624,11 +717,16 @@ export class BrowserController {
             () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
               ? guest.insertText((params as { text: string }).text).then(() => ({}))
               : command === "Input.dispatchKeyEvent" ? sendGuestKey(guest, params as Record<string, unknown>)
-              : guest.debugger.sendCommand(command, params), stopAt,
+              : guest.debugger.sendCommand(command, params, sessionId), stopAt,
           )
           check()
           if (Buffer.byteLength(JSON.stringify(response ?? null)) > 4 * 1024 * 1024) throw new Error("Browser page response is too large")
           return response as Record<string, unknown>
+        }, diagnostics: async after => {
+          check()
+          const buffer = this.diagnostics.get(guest)
+          if (!buffer) throw new Error("Browser diagnostics are unavailable for this preview")
+          return buffer.read(after) as unknown as Record<string, unknown>
         } }, operation)
         await this.refreshDocument(guest, stopAt, check)
         check()
@@ -696,6 +794,9 @@ export class BrowserController {
     if (this.pageLeases.get(lease.operationID) !== lease) return
     this.pageLeases.delete(lease.operationID)
     clearTimeout(lease.timer)
+    const { guest } = lease.registration
+    if (!guest.isDestroyed() && guest.debugger.isAttached())
+      void guest.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => undefined)
   }
 
   private detachDebugger(guest: WebContents): void {
@@ -736,7 +837,13 @@ export class BrowserController {
 export async function handleNativeBrowserRequest(controller: BrowserController, method: string, params: unknown, deadline = Number.POSITIVE_INFINITY, checkAdmission?: () => void): Promise<unknown> {
   const input = params as { sessionID?: unknown; command?: unknown; target?: unknown; workspaceIDs?: unknown } | undefined
   if (!input || typeof input.sessionID !== "string") throw new Error("Invalid browser request")
-  if (method === "browser.probe") return controller.probe(input.sessionID, deadline, checkAdmission)
+  if (method === "browser.probe") {
+    const workspaces = input.workspaceIDs
+    if (workspaces !== undefined && (!Array.isArray(workspaces) || workspaces.length > 1024 || !workspaces.every(id => validId(id, 256)))) {
+      throw new Error("Invalid browser request")
+    }
+    return controller.probe(input.sessionID, deadline, checkAdmission, workspaces as string[] | undefined)
+  }
   if (["browser.page.begin", "browser.page.send", "browser.page.check", "browser.page.end"].includes(method)) {
     return controller.page(method, input as Record<string, unknown>, deadline, checkAdmission)
   }
@@ -820,6 +927,17 @@ class MainNavigationSuperseded extends Error {
 
 async function loadNavigation(guest: WebContents, url: string, deadline: number, check: () => void): Promise<{ url: string }> {
   const expected = new URL(url).href
+  return loadTriggeredNavigation(guest, expected, deadline, check, () => guest.loadURL(expected))
+}
+
+async function loadTriggeredNavigation(
+  guest: WebContents,
+  url: string,
+  deadline: number,
+  check: () => void,
+  trigger: () => Promise<void>,
+): Promise<{ url: string }> {
+  const expected = new URL(url).href
   let started = false
   let sameDocument = false
   let committed: string | undefined
@@ -873,7 +991,7 @@ async function loadNavigation(guest: WebContents, url: string, deadline: number,
   guest.on("did-finish-load", finished)
   guest.on("did-fail-load", failed)
   try {
-    await Promise.race([Promise.all([guest.loadURL(expected), completed]), revoked])
+    await Promise.race([Promise.all([trigger(), completed]), revoked])
     validate()
     if (!started || superseded) throw new Error("Browser navigation changed")
     if (!committed || !isBrowserUrlAllowed(committed)) throw new Error("Browser document is unavailable")

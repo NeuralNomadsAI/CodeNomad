@@ -43,6 +43,18 @@ impl StashedTemporary {
         }
         self.project.temporary = false;
     }
+
+    pub(crate) fn clear_dead_binding(&mut self) {
+        let dead_id = self.project.id.clone();
+        self.entry.project = None;
+        self.entry.binding = None;
+        if let Tab::Workspace(w) = &mut self.entry.saved {
+            w.workspace_id = None;
+        }
+        if let Some(cache) = &mut self.entry.cache {
+            cache.disconnect_dead_workspace(&dead_id);
+        }
+    }
 }
 
 pub(crate) fn stashed_has_in_memory_state(s: &State, stashed: &StashedTemporary) -> bool {
@@ -52,7 +64,7 @@ pub(crate) fn stashed_has_in_memory_state(s: &State, stashed: &StashedTemporary)
             .entry
             .cache
             .as_ref()
-            .is_some_and(super::Cache::navigation_blocked)
+            .is_some_and(|cache| cache.navigation_blocked() || cache.has_unsaved_form_drafts())
 }
 
 pub(crate) fn has_temporary_tabs(s: &State) -> bool {
@@ -245,12 +257,17 @@ pub(crate) fn stash_for_discard(
     })
 }
 
+/// Restores a stashed temporary tab into the tab strip.
+///
+/// Returns `true` when the active neighbour is idle (so follow-up modal prompts
+/// may open safely), or `false` when the active neighbour is busy and must not
+/// be interrupted.
 pub(crate) fn restore_stashed(
     s: &mut State,
     stashed: StashedTemporary,
     restore_focus: bool,
     tx: &mut Tx,
-) {
+) -> bool {
     if stashed.was_active {
         // Cancel only a neighbour restore triggered when yielding to an unopened neighbour.
         let _ = crate::launcher::cancel_pending_restore(s);
@@ -263,24 +280,33 @@ pub(crate) fn restore_stashed(
     let activate_restored = stashed.was_active && !active_busy;
     if activate_restored {
         // Avoid stashing an empty cache onto an unopened neighbour so selecting it later
-        // still runs launcher::restore cleanly.
-        let active_opened = s
+        // still runs launcher::restore cleanly, while still preserving live in-memory state
+        // on a tab whose dead server binding was detached.
+        let active_should_stash = s
             .workspace
             .as_ref()
             .and_then(|ui| ui.entries.get(ui.active))
-            .is_some_and(|entry| entry.project.is_some());
-        if active_opened {
+            .is_some_and(|entry| {
+                entry.project.is_some()
+                    || !s.screen.is_launcher()
+                    || !s.draft.text.is_empty()
+                    || !s.composer.draft.attachments.is_empty()
+                    || s.agent
+                        .as_ref()
+                        .is_some_and(crate::agent::Ui::has_unsaved_form_drafts)
+            });
+        if active_should_stash {
             tabs::stash(s);
         }
     }
-    let focus_target = (restore_focus && activate_restored).then(|| {
+    let focus_target = (restore_focus && !active_busy).then(|| {
         stashed
             .return_focus
             .clone()
             .unwrap_or_else(|| format!("t-{}", stashed.tab_key))
     });
     let Some(ui) = &mut s.workspace else {
-        return;
+        return false;
     };
     if activate_restored
         && let Some(blank_key) = &stashed.created_blank_key
@@ -321,9 +347,12 @@ pub(crate) fn restore_stashed(
         tx.instant();
     }
     capture(s);
-    if let Some(target) = focus_target {
+    if let Some(target) = focus_target
+        && tx.focused().is_none()
+    {
         tx.return_focus(target, tx.focus_visible());
     }
+    !active_busy
 }
 
 pub(crate) fn finish_discarded(

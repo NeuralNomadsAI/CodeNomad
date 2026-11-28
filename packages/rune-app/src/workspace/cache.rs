@@ -472,6 +472,50 @@ impl Cache {
             .as_ref()
             .is_some_and(agent::Ui::has_unsaved_form_drafts)
     }
+
+    pub(super) fn disconnect_dead_workspace(&mut self, workspace_id: &str) {
+        if let Some(commands) = self.commands.take() {
+            commands.close();
+        }
+        self.incoming = None;
+        self.reader = None;
+        self.conversation_client_id = None;
+        self.conversation_stream_connected = false;
+        self.stream_offline = true;
+        self.paging = false;
+        self.status_permissions.online(false);
+        self.status_services.online(false);
+        self.status_usage.disconnect();
+        if let Some(agent) = &mut self.agent {
+            agent.mark_scope_missing();
+        }
+        let stopped = codenomad_client::transport::WorkspaceEvent::Stopped {
+            workspace_id: workspace_id.to_owned(),
+            deleted: false,
+            temporary_retained: false,
+        };
+        if let Some(git) = &mut self.git.owner
+            && git.workspace_id() == workspace_id
+        {
+            git.event(&stopped);
+        }
+        if let Some(files) = &mut self.files
+            && files.workspace_id() == workspace_id
+        {
+            files.event(stopped.clone());
+        }
+        if self.status_services.workspace_id() == Some(workspace_id) {
+            self.status_services.event(&stopped);
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.phase = Phase::WorkspaceMissing;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.phase = Phase::Failed;
+        }
+    }
     pub fn status(&self) -> Option<rune_theme_codenomad::tabs::Status> {
         status(&self.phase, self.agent.as_ref())
     }

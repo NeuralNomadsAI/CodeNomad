@@ -144,20 +144,19 @@ test("a persistent filesystem failure naming a fresh lease or temporary file eac
     ["error", "error", "debug", "debug"])
 })
 
-for (const role of ["runtime", "provider"] as const) test(`Missions ${role} publication failures use shared recovery notices and re-arm after repair`, async t => {
+test("Missions runtime publication failures use shared recovery notices and re-arm after repair", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provisioning-carrier-"))
   t.after(() => rm(root, { recursive: true, force: true }))
   const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
-  const runtime = Buffer.from("runtime"), provider = Buffer.from("provider")
-  const bytes = role === "runtime" ? runtime : provider
-  const file = path.join(paths.data, "missions", `${createHash("sha256").update(bytes).digest("hex")}${role === "provider" ? ".provider" : ""}.mjs`)
+  const runtime = Buffer.from("runtime")
+  const file = path.join(paths.data, "missions", `${createHash("sha256").update(runtime).digest("hex")}.mjs`)
   await mkdir(file, { recursive: true })
   await writeFile(path.join(file, "sentinel"), "keep")
   const { calls, logger } = recordingLogger(), reported = new Set<string>()
   const provision = () => provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
     resolvePaths: async () => paths,
     install: async resolved => {
-      const stop = await installDesktopPluginPresence("missions", runtime, resolved, () => {}, () => "", provider)
+      const stop = await installDesktopPluginPresence("missions", runtime, resolved)
       await stop()
     } })
   assert.equal(await provision(), false)
@@ -170,7 +169,7 @@ for (const role of ["runtime", "provider"] as const) test(`Missions ${role} publ
   // The owner clears the refused ordinary directory; the normal connection path retries.
   await rm(file, { recursive: true })
   assert.equal(await provision(), true)
-  assert.deepEqual(await readFile(file), bytes)
+  assert.deepEqual(await readFile(file), runtime)
   assert.equal(reported.size, 0)
   await rm(file)
   await mkdir(file)

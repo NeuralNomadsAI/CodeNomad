@@ -57,6 +57,19 @@ struct PendingReconcile {
     rx: Receiver<Result<Vec<String>, TemporaryError>>,
 }
 
+struct QueuedAbandon {
+    backend: Backend,
+    path: String,
+    request_id: Option<String>,
+}
+
+struct InFlightAbandon {
+    backend: Backend,
+    path: String,
+    request_id: Option<String>,
+    rx: Receiver<Result<(), TemporaryError>>,
+}
+
 #[derive(Default)]
 pub(crate) struct Host {
     dialog: Option<Box<CloseDialog>>,
@@ -66,7 +79,8 @@ pub(crate) struct Host {
     pending_return_focus: Option<String>,
     creating: Option<Box<PendingCreate>>,
     stale_creates: Vec<PendingCreate>,
-    pending_abandons: Vec<(Backend, String, Option<String>)>,
+    pending_abandons: Vec<QueuedAbandon>,
+    in_flight_abandons: Vec<InFlightAbandon>,
     keeping: Option<Box<PendingKeep>>,
     discarding: Option<Box<PendingDiscard>>,
     pending_restore: Option<Box<StashedTemporary>>,
@@ -360,7 +374,7 @@ pub(crate) fn request_close(s: &mut State, tab_key: &str, tx: &mut Tx) {
     if info.untouched {
         start_discard(s, tab_key, true, None, tx);
     } else {
-        open_dialog(s, tab_key, None, tx);
+        let _ = open_dialog(s, tab_key, None, tx);
     }
 }
 
@@ -382,6 +396,39 @@ fn capture_return_focus(s: &mut State, tab_key: &str, tx: &Tx) -> Option<String>
         .or_else(|| Some(format!("t-{tab_key}")))
 }
 
+fn same_abandon_target(current: &Backend, orig: &Backend) -> bool {
+    current.base == orig.base
+        && matches!(
+            (
+                current.client.server_identity(),
+                orig.client.server_identity(),
+            ),
+            (Some(a), Some(b)) if a == b
+        )
+}
+
+fn spawn_abandon(s: &mut State, backend: Backend, path: String, request_id: Option<String>) {
+    let (out, rx) = bounded(1);
+    let wake = s.wake.clone();
+    let req_backend = backend.clone();
+    let req_path = path.clone();
+    let req_id = request_id.clone();
+    platform::spawn(async move {
+        let result = req_backend
+            .abandon_temporary_folder(&req_path, req_id.as_deref())
+            .await;
+        if out.try_send(result).is_ok() {
+            wake();
+        }
+    });
+    s.temporary.in_flight_abandons.push(InFlightAbandon {
+        backend,
+        path,
+        request_id,
+        rx,
+    });
+}
+
 pub(crate) fn queue_abandon(
     s: &mut State,
     backend: Backend,
@@ -389,34 +436,40 @@ pub(crate) fn queue_abandon(
     request_id: Option<String>,
 ) {
     if let Some(l) = s.screen.launcher() {
-        if l.authentication_required {
+        if l.authentication_required || s.temporary.in_flight_abandons.len() >= 16 {
             if s.temporary.pending_abandons.len() < 16 {
-                s.temporary
-                    .pending_abandons
-                    .push((backend, path, request_id));
+                s.temporary.pending_abandons.push(QueuedAbandon {
+                    backend,
+                    path,
+                    request_id,
+                });
             }
             return;
         }
-        if let Some(conn) = l.connection.as_ref().filter(|c| c.base == backend.base) {
+        if let Some(conn) = l
+            .connection
+            .as_ref()
+            .filter(|c| same_abandon_target(c, &backend))
+        {
             let cleanup = conn.clone();
-            platform::spawn(async move {
-                let _ = cleanup
-                    .abandon_temporary_folder(&path, request_id.as_deref())
-                    .await;
-            });
+            spawn_abandon(s, cleanup, path, request_id);
             return;
         }
     }
-    platform::spawn(async move {
-        let _ = backend
-            .abandon_temporary_folder(&path, request_id.as_deref())
-            .await;
-    });
+    if s.temporary.in_flight_abandons.len() < 16 {
+        spawn_abandon(s, backend, path, request_id);
+    } else if s.temporary.pending_abandons.len() < 16 {
+        s.temporary.pending_abandons.push(QueuedAbandon {
+            backend,
+            path,
+            request_id,
+        });
+    }
 }
 
-fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx: &mut Tx) {
+fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx: &mut Tx) -> bool {
     if is_open(s) || blocked_by_higher_modal(s) {
-        return;
+        return false;
     }
     let return_focus = captured_focus.or_else(|| capture_return_focus(s, tab_key, tx));
     super::Panels::dismiss_outside(s, tx);
@@ -429,6 +482,7 @@ fn open_dialog(s: &mut State, tab_key: &str, captured_focus: Option<String>, tx:
     }));
     tx.focus_when_shown(theme::CANCEL, true);
     tx.instant();
+    true
 }
 
 fn close_dialog_with_focus(s: &mut State, tx: &mut Tx) {
@@ -623,6 +677,36 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         s.temporary.stale_creates = remaining;
     }
+    if !s.temporary.in_flight_abandons.is_empty() {
+        let mut remaining = Vec::new();
+        for pending in std::mem::take(&mut s.temporary.in_flight_abandons) {
+            match pending.rx.try_recv() {
+                Ok(Err(TemporaryError::Unauthorized)) => {
+                    changed = true;
+                    let _ = crate::settings::authentication_required(s, &pending.backend);
+                    let should_requeue = s.screen.launcher().is_some_and(|l| {
+                        l.authentication_required
+                            || l.connection.as_ref().is_some_and(|conn| {
+                                same_abandon_target(conn, &pending.backend)
+                                    && !conn.client.same_connection(&pending.backend.client)
+                            })
+                    });
+                    if should_requeue && s.temporary.pending_abandons.len() < 16 {
+                        s.temporary.pending_abandons.push(QueuedAbandon {
+                            backend: pending.backend,
+                            path: pending.path,
+                            request_id: pending.request_id,
+                        });
+                    }
+                }
+                Ok(_) | Err(codenomad_client::TryRecvError::Closed) => {
+                    changed = true;
+                }
+                Err(codenomad_client::TryRecvError::Empty) => remaining.push(pending),
+            }
+        }
+        s.temporary.in_flight_abandons = remaining;
+    }
     if !s.temporary.pending_abandons.is_empty()
         && let Some(conn) = s
             .screen
@@ -630,20 +714,23 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             .filter(|l| !l.authentication_required)
             .and_then(|l| l.connection.clone())
     {
-        for (orig, path, req_id) in std::mem::take(&mut s.temporary.pending_abandons) {
-            if conn.base == orig.base {
-                let cleanup = conn.clone();
-                platform::spawn(async move {
-                    let _ = cleanup
-                        .abandon_temporary_folder(&path, req_id.as_deref())
-                        .await;
-                });
+        let mut keep = Vec::new();
+        let mut dispatched = false;
+        for item in std::mem::take(&mut s.temporary.pending_abandons) {
+            if same_abandon_target(&conn, &item.backend)
+                && s.temporary.in_flight_abandons.len() < 16
+            {
+                spawn_abandon(s, conn.clone(), item.path, item.request_id);
+                dispatched = true;
+            } else if keep.len() < 16 {
+                keep.push(item);
             }
         }
-        changed = true;
+        s.temporary.pending_abandons = keep;
+        changed |= dispatched;
     }
     if let Some(stashed) = s.temporary.pending_restore.take() {
-        workspace::restore_stashed(s, *stashed, false, tx);
+        let _ = workspace::restore_stashed(s, *stashed, false, tx);
         changed = true;
     }
     if !s.temporary.stopped_queue.is_empty() {
@@ -783,7 +870,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 }
                 Err(TemporaryError::Unauthorized) => {
                     let backend = pending.stashed.backend.clone();
-                    workspace::restore_stashed(s, *pending.stashed, true, tx);
+                    let _ = workspace::restore_stashed(s, *pending.stashed, true, tx);
                     let _ = crate::settings::authentication_required(s, &backend);
                 }
                 Err(err) if err.is_not_temporary() => {
@@ -803,7 +890,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let mut stashed = pending.stashed;
                     stashed.clear_temporary();
                     if workspace::stashed_has_in_memory_state(s, &stashed) {
-                        workspace::restore_stashed(s, *stashed, !pending.quiet, tx);
+                        let _ = workspace::restore_stashed(s, *stashed, !pending.quiet, tx);
                     } else {
                         workspace::finish_discarded(s, *stashed, true, true, tx);
                     }
@@ -811,14 +898,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 Err(err) if err.is_not_found() => {
                     // The workspace occurrence is gone on the server (404 proves the occurrence is
                     // absent, not the folder). Preserve any in-memory-only drafts/attachments or
-                    // unsaved file edits by restoring the tab; otherwise detach locally without
-                    // sending a duplicate DELETE or stripping sibling marks.
+                    // unsaved file edits by restoring the tab without its dead server binding;
+                    // otherwise detach locally without sending a duplicate DELETE or stripping
+                    // sibling marks.
                     if !pending.quiet || workspace::stashed_has_in_memory_state(s, &pending.stashed)
                     {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
                     if workspace::stashed_has_in_memory_state(s, &pending.stashed) {
-                        workspace::restore_stashed(s, *pending.stashed, !pending.quiet, tx);
+                        let mut stashed = pending.stashed;
+                        stashed.clear_dead_binding();
+                        let _ = workspace::restore_stashed(s, *stashed, !pending.quiet, tx);
                     } else {
                         workspace::finish_discarded(s, *pending.stashed, true, false, tx);
                     }
@@ -827,15 +917,18 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                     let tab_key = pending.stashed.tab_key.clone();
                     let return_focus = pending.stashed.return_focus.clone();
                     let still_temporary = pending.stashed.is_temporary();
-                    workspace::restore_stashed(
+                    let neighbour_idle = workspace::restore_stashed(
                         s,
                         *pending.stashed,
                         !pending.quiet || !still_temporary,
                         tx,
                     );
-                    if pending.quiet && still_temporary {
-                        open_dialog(s, &tab_key, return_focus, tx);
-                    } else {
+                    if !pending.quiet
+                        || !still_temporary
+                        || !neighbour_idle
+                        || shortcuts::modal_open(s)
+                        || !open_dialog(s, &tab_key, return_focus, tx)
+                    {
                         emit_temporary_error(s, "temporaryInstance.discard.failedTitle", &err);
                     }
                 }

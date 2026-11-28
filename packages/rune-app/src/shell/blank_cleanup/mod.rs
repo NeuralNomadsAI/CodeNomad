@@ -489,8 +489,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !active.deleting
         && workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id)
     {
-        // Cancel HTTP preflight and close `rx` atomically before reading any queued outcome so
-        // no producer can race a 401 in and a completed preflight never triggers POST.
+        // Drop `active.cancel` to abort the HTTP preflight, then close `rx` (only `rx.close()` is
+        // atomic with respect to the producer) before draining any already-queued outcome so no
+        // late 401 can race in and a completed preflight never triggers POST.
         active.cancel = None;
         active.rx.close();
         active.aborted = true;

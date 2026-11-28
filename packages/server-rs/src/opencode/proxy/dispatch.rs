@@ -74,15 +74,33 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
     } = ctx;
     let dispatched_mutation = mutation.is_some();
     let observer = principal.0.clone();
+    let self_invalidated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let self_invalidated_dispatch = Arc::clone(&self_invalidated);
+    let observer_app = app.clone();
+    let observer_endpoint = endpoint.clone();
+    let observer_id = id.clone();
+    let observer_workspace = workspace.clone();
     let dispatch = move |detached: tokio_util::sync::CancellationToken,
                          gate: crate::opencode::proxy_write::DispatchGate| {
         Box::pin(async move {
             if principal.0.is_cancelled() {
                 return Ok(crate::auth::unauthorized_before_dispatch());
             }
-            for loc in &account_verified_locs {
-                if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
-                    return Err(foreign());
+            if !account_verified_locs.is_empty() {
+                let pre_dispatch = async {
+                    for loc in &account_verified_locs {
+                        if !super::mutation::verify_account_location_live(&app, &workspace, loc).await {
+                            return Err(foreign());
+                        }
+                    }
+                    Ok(())
+                };
+                tokio::select! {
+                    biased;
+                    _ = detached.cancelled() => return Err(upstream_error()),
+                    _ = principal.0.cancelled() => return Ok(crate::auth::unauthorized_before_dispatch()),
+                    _ = app.native.wait_retired(&endpoint) => return Err(upstream_error()),
+                    res = pre_dispatch => res?,
                 }
             }
             if principal.0.is_cancelled() {
@@ -177,7 +195,9 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
                     return Err(upstream_error());
                 }
                 if unauthorized {
-                    app.native.invalidate(&endpoint);
+                    app.native.invalidate_if_current_with(&endpoint, || {
+                        self_invalidated_dispatch.store(true, std::sync::atomic::Ordering::Release);
+                    });
                 }
                 return Ok((
                     status,
@@ -416,13 +436,21 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
             struct InvalidateOnDrop {
                 app: Shared,
                 endpoint: std::sync::Arc<Endpoint>,
+                self_invalidated: Arc<std::sync::atomic::AtomicBool>,
             }
             impl Drop for InvalidateOnDrop {
                 fn drop(&mut self) {
-                    self.app.native.invalidate(&self.endpoint);
+                    let flag = &self.self_invalidated;
+                    self.app.native.invalidate_if_current_with(&self.endpoint, || {
+                        flag.store(true, std::sync::atomic::Ordering::Release);
+                    });
                 }
             }
-            let invalidate = unauthorized.then(|| InvalidateOnDrop { app: app.clone(), endpoint: endpoint.clone() });
+            let invalidate = unauthorized.then(|| InvalidateOnDrop {
+                app: app.clone(),
+                endpoint: endpoint.clone(),
+                self_invalidated: Arc::clone(&self_invalidated_dispatch),
+            });
             let bytes = futures_util::stream::unfold(
                 (
                     response.bytes_stream(),
@@ -529,7 +557,30 @@ pub(super) async fn dispatch_upstream(ctx: DispatchContext) -> Result<Response, 
         })
     };
     if let Some(permit) = mutation {
-        crate::opencode::proxy_write::forward(permit, rules_lock, observer, dispatch).await
+        let retire_app = observer_app.clone();
+        let retire_ep = observer_endpoint.clone();
+        let guards = crate::opencode::proxy_write::ObserverGuards {
+            principal: observer,
+            retired: Box::pin(async move {
+                retire_app.native.wait_retired(&retire_ep).await;
+                if self_invalidated.load(std::sync::atomic::Ordering::Acquire) {
+                    std::future::pending::<()>().await;
+                }
+            }),
+            closed: Box::pin(async move {
+                loop {
+                    let notified = observer_app.workspace_closed.notified();
+                    if !observer_app.workspace(&observer_id).is_ok_and(|current| {
+                        current.id == observer_workspace.id && current.path == observer_workspace.path
+                    }) {
+                        return;
+                    }
+                    notified.await;
+                }
+            }),
+            send_input,
+        };
+        crate::opencode::proxy_write::forward(permit, rules_lock, guards, dispatch).await
     } else {
         dispatch(tokio_util::sync::CancellationToken::new(), crate::opencode::proxy_write::DispatchGate::new()).await
     }

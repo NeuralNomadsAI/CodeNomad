@@ -8,7 +8,7 @@ const fixture = {
   inventories: [] as any[], calls: [] as { backend: string; method: string; args: any[] }[],
   signals: new Map<string, AbortSignal>(), instances: new Map<string, any>(),
   read: async (_backend: string, method: string, _args: any[]): Promise<any> => {
-    if (method === "fetchMissionSchedules" || method === "fetchMissionRecurrence") return { version: 1, projectID: "project", schedules: [] }
+    if (method === "fetchMissionSchedules") return { version: 1, projectID: "project", schedules: [] }
     if (method === "fetchMissionSchedule") return { pending: false, document: null }
     if (method === "fetchMissionCurrentPassage") return { version: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", source: { missionID: "execution" } }
     return { available: false }
@@ -50,7 +50,7 @@ const { createRoot } = await import("solid-js")
 await import("./missions")
 const { missionContent } = await import("./mission-content")
 const { useMissionSchedules } = await import("./mission-schedules")
-const { useMissionRecurrence, useMissionCurrentPassage } = await import("./mission-recurrence")
+const { useMissionCurrentPassage } = await import("./mission-recurrence")
 const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 const setup = (id: string) => {
   const attachment = new AbortController()
@@ -72,7 +72,7 @@ test("every Mission store adapter selects the owning backend and sends only the 
     let dispose!: () => void
     createRoot(cleanup => {
       dispose = cleanup
-      useMissionSchedules({ ...props(id), selected: () => "selected" }); useMissionRecurrence(props(id))
+      useMissionSchedules({ ...props(id), selected: () => "selected" })
       useMissionCurrentPassage({ ...props(id), scheduleID: () => "schedule" })
     })
     await flush()
@@ -85,7 +85,7 @@ test("every Mission store adapter selects the owning backend and sends only the 
     const calls = fixture.calls.filter(call => call.backend === backend)
     assert.deepEqual(new Set(calls.map(call => call.method)), new Set([
       "fetchMissionPanel", "fetchMissionTasks", "fetchMissionContent", "fetchMissionCurrentBody",
-      "fetchMissionSchedules", "fetchMissionSchedule", "fetchMissionRecurrence", "fetchMissionCurrentPassage",
+      "fetchMissionSchedules", "fetchMissionSchedule", "fetchMissionCurrentPassage",
       "fetchMissionCurrentPanel", "fetchMissionCurrentTasks",
     ]))
     for (const call of calls) assert.equal(call.args[0], "workspace", `${backend}/${call.method}`)
@@ -99,7 +99,7 @@ test("an unknown owner fails closed without dispatching to another backend", asy
   let dispose!: () => void
   const stores = createRoot(cleanup => {
     dispose = cleanup
-    return [useMissionSchedules(props("missing~workspace")), useMissionRecurrence(props("missing~workspace"))]
+    return [useMissionSchedules(props("missing~workspace")), useMissionCurrentPassage({ ...props("missing~workspace"), scheduleID: () => "schedule" })]
   })
   await flush()
   assert.ok(stores.every(store => store.error()))

@@ -9,8 +9,7 @@ import { acquireNativeMissionDocumentStore } from "./native-mission-document-sto
 import { acquireNativeScheduleCalendarService } from "./native-schedule-calendar-service"
 import { NativeScheduleCalendarOwner } from "./native-schedule-owner"
 import { nativeScheduleOwnerBindings } from "./native-schedule-owner-bindings"
-import { assertNativeScheduleProviderAvailable } from "./native-schedule-provider-registration"
-import type { NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
+import { type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { acquireMissionNativeService, type MissionNativeRunner } from "./native-service-adapter"
 import type { AutonomousProfileSource } from "./autonomous-environment"
 import { acquireNativeMissionConditionReader, assertMissionSourceAcyclic } from "./native-mission-condition-reader"
@@ -34,8 +33,7 @@ export const acquireNativeMissionScheduleOwner = Effect.fn("missions.acquireSche
     ?? agents.data.find(agent => !agent.hidden && agent.mode !== "subagent")
   if (!carrier) throw new Error("Mission schedule carrier agent unavailable")
   const store = yield* acquireNativeMissionDocumentStore(ctx, run)
-  const native = yield* acquireNativeScheduleCalendarService(ctx, carrier.id, current, run,
-    () => assertNativeScheduleProviderAvailable(ctx, selectedInstallation))
+  const native = yield* acquireNativeScheduleCalendarService(ctx, carrier.id, current, run)
   const service = yield* acquireMissionNativeService(current, run)
   const fence = yield* acquireNativeSourceFence(current)
   const signal = new AbortController().signal

@@ -850,6 +850,7 @@ impl DirectAccess {
                 layout::hinted_field(&self.password, t("remoteAccess.password.form.placeholder"))
                     .label(new_label)
                     .secure()
+                    .autofill(rune::Autofill::NewPassword)
                     .disabled(saving)
                     .on_edit(move |s: &mut S| &mut edit(s).direct.password)
                     .build(&field_kit(layout::dark()))
@@ -858,6 +859,7 @@ impl DirectAccess {
             let confirm_input = layout::literal_field(&self.confirm)
                 .label(confirm_label)
                 .secure()
+                .autofill(rune::Autofill::NewPassword)
                 .disabled(saving)
                 .on_edit(move |s: &mut S| &mut edit(s).direct.confirm)
                 .on_submit(move |s: &mut S, _| {

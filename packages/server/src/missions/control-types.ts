@@ -56,8 +56,9 @@ export interface MissionProject {
   location: { directory: string; workspaceID?: string }
 }
 
+/** `undefined` when no backend owns the coordinator: the control then creates the root natively. */
 export type MissionManagedRootCreation = (coordinatorID: string,
-  input: { missionID: string; taskKey: string }) => Promise<NativeMissionSession>
+  input: { missionID: string; taskKey: string }) => Promise<NativeMissionSession | undefined>
 
 export interface MissionStartInput {
   objective: string
@@ -67,6 +68,8 @@ export interface MissionStartInput {
   notes?: string
   profiles?: MissionProfiles
   taskMode?: MissionTaskMode
+  /** Keep the coordinator active with OpenCode's `/goal` across turns and daemon restarts. */
+  coordinatorGoal?: boolean
 }
 
 export interface MissionInspectInput {

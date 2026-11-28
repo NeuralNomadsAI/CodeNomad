@@ -30,7 +30,18 @@ fn runtime(ui: crate::files::Ui) -> Runtime<State> {
     rt
 }
 
-fn shell_runtime(mut ui: crate::files::Ui) -> Runtime<State> {
+fn shell_runtime(ui: crate::files::Ui) -> Runtime<State> {
+    shell_runtime_with(ui, english)
+}
+
+fn shell_runtime_localized(ui: crate::files::Ui) -> Runtime<State> {
+    shell_runtime_with(ui, crate::view)
+}
+
+fn shell_runtime_with(
+    mut ui: crate::files::Ui,
+    view: fn(&State, &mut rune::Cx<State>) -> El,
+) -> Runtime<State> {
     let mut s = crate::init();
     crate::gallery::shell::fixture(&mut s);
     let backend = ui.backend.clone();
@@ -48,7 +59,7 @@ fn shell_runtime(mut ui: crate::files::Ui) -> Runtime<State> {
     ui.shell_managed = true;
     s.files = Some(ui);
     crate::git::connected(&mut s, &backend);
-    let mut rt = Runtime::new(s, english, (1000.0, 700.0), Env::new(false, 1.0));
+    let mut rt = Runtime::new(s, view, (1000.0, 700.0), Env::new(false, 1.0));
     for _ in 0..30 {
         rt.frame(0.02);
         rt.update(|s, _| crate::shell::sync(s));

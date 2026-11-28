@@ -1,10 +1,10 @@
-// Isolated retained-product qualification: private service, storage and local provider.
+// Isolated retained-product qualification: private service, storage and fixture business provider.
 // node --import tsx scripts/test-native-mission-schedule-product.mjs <cli> <fresh-scratch> --parent-ready --kinds=at,in
 // --kinds=every --natural-every uses the real >=15-minute product interval.
 import assert from "node:assert/strict"
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
@@ -29,10 +29,7 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   "diagnose-product-stop": { type: "boolean" },
   "convert-preparation": { type: "boolean" },
   "existing-coordinator": { type: "boolean" },
-  // Absolute plugin.mjs of an earlier release: arm with it, then wake on the current bundle.
-  "legacy-bundle": { type: "string" },
 } })
-assert(!values["legacy-bundle"] || path.isAbsolute(values["legacy-bundle"]) && existsSync(values["legacy-bundle"]), "Legacy bundle must be an absolute existing plugin.mjs")
 assert(values["parent-ready"], "Explicit product qualification requires --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
 const approved = [path.resolve(process.env.TEMP, "opencode")]
@@ -81,7 +78,7 @@ async function journey(kind) {
     { WorkspaceManager }, { EventBus }, { rememberRuntime }, { DesktopPluginLifecycle }, { resolveDesktopPluginPaths },
     { createAutomationBridgeRegistration, publishAutomationBridge }, { registerAutomationPluginRoute }, { registerMissionRoutes },
     { WorktreeDeletionFence }, { PluginControls }, { NativeScheduleSettingsActivation }, { missionDocumentPassage },
-    { NativeScheduleTransportRpc, nativeScheduleWakeKey }, { readNativeScheduleIncarnation }, { nativeScheduleCarrierLookupKey }, experimentalEditor] = await Promise.all([
+    { NativeScheduleTransportRpc, nativeScheduleWakeKey }, { readNativeScheduleIncarnation }, { nativeScheduleCarrierLookupKey }, { editNativeSetting }, { readNativeScheduleFlag }] = await Promise.all([
     import("fastify"), import("pino"), import("@opencode/client"), import("@opencode/client/service"),
     import("../packages/server/src/workspaces/manager.ts"), import("../packages/server/src/events/bus.ts"),
     import("../packages/server/src/opencode/compatibility/runtime.ts"), import("../packages/server/src/opencode/desktop-plugin-lifecycle.ts"),
@@ -91,11 +88,10 @@ async function journey(kind) {
     import("../packages/server/src/opencode/native-schedule-settings-activation.ts"), import("../packages/server/src/missions/mission-document-passage-storage.ts"),
     import("../packages/server/src/opencode/missions/native-schedule-transport-contract.ts"), import("../packages/server/src/opencode/missions/native-schedule-transport-identity.ts"),
     import("../packages/server/src/opencode/missions/native-schedule-carrier-binding.ts"),
-    import("../packages/server/src/opencode/native-experimental-settings.ts"),
+    import("../packages/server/src/opencode/native-setting-document.ts"), import("../packages/server/src/opencode/native-schedule-flag.ts"),
   ])
   const bundled = new URL("../packages/server/dist/plugins/missions/plugin.mjs", import.meta.url)
-  const providerBundle = new URL("../packages/server/dist/plugins/missions/provider.mjs", import.meta.url)
-  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(values["legacy-bundle"] ?? bundled)), providerBundleSHA256: hash(await readFile(providerBundle)), serviceStarts: [], http: [] }
+  const result = { kind, root, status: "running", armOnly: !!values["arm-only"], firstAdmissionRaceMode: !!values["first-admission-race"], crashPendingMode: !!values["crash-pending"], productBundleSHA256: hash(await readFile(bundled)), serviceStarts: [], http: [] }
   if (values["diagnose-stop"]) assert.equal(result.productBundleSHA256, "3578b0357396e1834221a0f37159a8fe2d6a8a63f81fcad11b3d364b1dca0c10", "Diagnostic requires the unchanged failing qualification bundle")
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
@@ -501,13 +497,11 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     app.post("/fixture/native-schedules", async (request, reply) => {
       if (!auth.getSessionFromRequest(request) || typeof request.body?.enabled !== "boolean") return reply.code(403).send({ code: "fixture-config-refused" })
       try {
-        await controls.editConfigDocuments(workspace.id, { directory: project }, view => {
-          const target = view.documents.find(item => item.scope === "global"), relative = target && path.relative(root, target.document.writePath)
-          assert(target && relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-          return [{ scope: "global", path: target.path, expectation: experimentalEditor.nativeSettingExpectation(target.document),
-            updated: experimentalEditor.editMissionExperimental(target.document, "automations", request.body.enabled,
-              experimentalEditor.inheritedMissionExperimental(view.entries, target.path, view.location.directory), "global") }]
-        }, { beforeWrite: async () => {}, afterWrite: async () => {} })
+        await controls.editConfigDocument(workspace.id, { directory: project }, "global", document => {
+          const relative = path.relative(root, document.writePath)
+          assert(relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+          return editNativeSetting(document, ["automations"], request.body.enabled)
+        })
         return { enabled: request.body.enabled }
       } catch { return reply.code(503).send({ code: "fixture-config-unconfirmed" }) }
     })
@@ -517,9 +511,10 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     await app.listen({ host: "127.0.0.1", port: 0 }); baseURL = `http://127.0.0.1:${app.server.address().port}`; assert.notEqual(app.server.address().port, 28894)
     appFetch = createAttestedFetch(baseURL, app.server.address().port, process.pid)
     registration.url = `${baseURL}/api/opencode-plugin/automation`; removeBridge = await publishAutomationBridge(registration)
-    const legacy = values["legacy-bundle"]
-    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file))
-      : legacy ? new DesktopPluginLifecycle("missions", () => readFile(legacy)) : new DesktopPluginLifecycle("missions"); await plugin.start(paths)
+    plugin = controlTrace ? new DesktopPluginLifecycle("missions", () => readFile(controlTrace.file)) : new DesktopPluginLifecycle("missions")
+    await plugin.start(paths)
+    const files = await readdir(path.join(paths.data, "missions"))
+    assert.equal(files.some(name => name.endsWith(".provider.mjs")), false, "Missions installs only the runtime payload")
     await until(async () => (await client.plugin.list({ location: { directory: project } })).data.some(item => item.id === "codenomad.missions" && item.state.status === "active"))
     if (controlsKinds.includes(kind)) {
       if (kind === "paused-manual" && values["existing-coordinator"]) {
@@ -542,7 +537,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
         nativeFlag: async enabled => {
           const response = await appFetch(`${baseURL}/fixture/native-schedules`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ enabled }), signal: AbortSignal.timeout(15000) })
           assert.equal(response.status, 200, "Owned fixture config API failed")
-          await until(async () => experimentalEditor.effectiveMissionExperimental(await client.config.get({ location: { directory: project } })).automations === enabled)
+          await until(async () => (await readNativeScheduleFlag(connection, { directory: project })).enabled === enabled)
         } })
       result.calls = calls; result.status = values["diagnose-stop"] || controlTrace ? "diagnostic-only" : "passed"; result.stage = "completed"; return result
     }
@@ -587,14 +582,6 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       assert(result.arming.activationReady && result.arming.noBusinessAdmission)
       result.status = "passed"
       return result // finally closes backend/leases/bridge and waits for every owned child.
-    }
-    const actionTypes = () => readSQL(db => db.prepare("SELECT json_extract(action,'$.type') AS type FROM automation").all().map(row => row.type))
-    if (values["legacy-bundle"]) {
-      // Calendars armed by an earlier bundle keep their prompt rows; the current bundle must serve them to their end.
-      assert(actionTypes().length && actionTypes().every(type => type === "prompt"), "The legacy bundle arms prompt rows")
-      await plugin.stop(); plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths)
-      result.upgradedBundleSHA256 = hash(await readFile(bundled))
-      assert.notEqual(result.upgradedBundleSHA256, result.productBundleSHA256)
     }
     await closeBackend(); if (!values.live) await stop()
     result.initialWakeMode = values.live ? "live-same-process" : "cold-restart"
@@ -739,8 +726,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     // A code row counts its run only once its program returns a valid result; a failure would pause it.
     const nativeRows = readSQL(db => db.prepare("SELECT id,status,run_count,last_outcome,json_extract(action,'$.type') AS type FROM automation").all())
     result.nativeRows = nativeRows
-    const expectedType = values["legacy-bundle"] ? "prompt" : "code"
-    assert(nativeRows.length && nativeRows.every(row => row.type === expectedType && row.last_outcome !== "failed"), `Every calendar runs its ${expectedType} wake without failure`)
+    assert(nativeRows.length && nativeRows.every(row => row.type === "code" && row.last_outcome !== "failed"), "Every calendar runs its Code Mode wake without failure")
     assert(nativeRows.some(row => row.id === principal.id && row.run_count >= 1), "The principal counted its admitted run")
     await save("second-cold-reboot", rebooted)
     // Natural no-client proof is already saved. Authenticated exact replay is a
@@ -760,26 +746,10 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
       const settled = await until(() => { const state = snapshot(id); return state.document.pending === null && state.document.settledCount === 1 ? state : false })
       assert.equal(settled.document.history[0].outcome, "completed"); assert.equal(settled.document.launchedCount, 1)
       result.controlledSettlement = { usedNativeEffectClockOnly: !!beforeMaintenance.document.pending, osClockUnchanged: true }; await save("controlled-settled", settled)
-      result.stage = "after-idle-maintenance"
-      // No fixture maintenance call and no replay may perform this cleanup.
-      // Observe the real terminal hint -> fixed product HTTP RPC -> exact row removal.
-      // A code auxiliary has no carrier turn: its own wake settles and cleans up, within its run.
-      if (!values["legacy-bundle"]) {
-        const cleaned = await until(() => { const rows = technicalRows(); return rows.every(item => !item.sessionPresent && !item.schedulePresent && !item.reverseIndexPresent) ? { rows, observedAt: Date.now() } : false })
-        result.codeWakeCleanup = true; await save("code-wake-cleanup", cleaned)
-      } else {
-      const afterIdle = await until(async () => {
-        const rows = technicalRows(), events = await maintenanceEvents(), settledAt = settled.document.history[0].settledAt
-        const terminal = events.find(event => event.kind === "terminal" && event.sessionID === auxiliary.session_id && event.at >= settledAt)
-        const request = terminal && events.find(event => event.kind === "maintenance-http-request" && event.sessionID === auxiliary.session_id
-          && event.pid === terminal.pid && event.at >= terminal.at)
-        const response = request && events.find(event => event.kind === "maintenance-http-response" && event.requestID === request.requestID
-          && event.pid === request.pid && event.status === 200)
-        return terminal && request && response && rows.every(item => !item.sessionPresent && !item.schedulePresent && !item.reverseIndexPresent)
-          ? { rows, terminal, request, response, observedAt: Date.now() } : false
-      })
-      result.afterIdleMaintenance = true; await save("after-idle-maintenance", afterIdle)
-      }
+      result.stage = "code-wake-cleanup"
+      // The auxiliary's own Code Mode wake settles the passage and cleans up.
+      const cleaned = await until(() => { const rows = technicalRows(); return rows.every(item => !item.sessionPresent && !item.schedulePresent && !item.reverseIndexPresent) ? { rows, observedAt: Date.now() } : false })
+      result.codeWakeCleanup = true; await save("code-wake-cleanup", cleaned)
     } else if (kind === "every") {
       // Two successive real due times, each admitted once and settled by natural wakes only,
       // with the backend connected but never asked to wake or reconcile.

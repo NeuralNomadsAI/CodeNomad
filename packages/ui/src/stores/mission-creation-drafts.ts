@@ -19,6 +19,7 @@ export interface UncertainMissionCreation {
   watchedConversationIDs?: readonly string[]
   /** Display-only draft choice; recovered creation never continues Play. */
   startOnCreation?: boolean
+  coordinatorGoal?: boolean
 }
 
 export type MissionCreationHoldState = "pending" | "uncertain"
@@ -137,7 +138,7 @@ export function missionCreationPayloadIdentity(operation: Omit<UncertainMissionC
     value.model ? [value.model.providerID, value.model.id, value.model.variant ?? null] : null]
   const profiles = operation.profiles
   return JSON.stringify([operation.title ?? null, operation.objective, operation.notes, operation.template, operation.directory ?? null, operation.taskMode ?? null,
-    operation.watchedConversationIDs ?? null,
+    operation.watchedConversationIDs ?? null, Boolean(operation.coordinatorGoal),
     profiles === undefined ? null : [execution(profiles.coordinator), profiles.roles === undefined ? null
       : Object.keys(profiles.roles).sort().map(role => [role, execution(profiles.roles![role])])]])
 }

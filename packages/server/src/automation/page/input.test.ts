@@ -15,8 +15,9 @@ function clickFixture(
   overlay = false,
   layout: unknown = { cssLayoutViewport: { clientWidth: 100, clientHeight: 100 } },
 ) {
-  const inputs: string[] = []
+  const inputs: string[] = [], hits: unknown[] = []
   const session = cdpSession({ send: async (method, params = {}) => {
+    if (method === "DOM.getNodeForLocation") hits.push([params.x, params.y])
     if (method === "DOM.resolveNode") return { object: { objectId: String(params.backendNodeId) } }
     if (method === "DOM.getContentQuads") {
       if (quads instanceof Error) throw quads
@@ -38,8 +39,16 @@ function clickFixture(
     if (method.startsWith("Input.")) inputs.push(String(params.type))
     return { result: { value: 1_700_000_000 } }
   } }, async () => {}, true)
-  return { session, inputs }
+  return { session, inputs, hits }
 }
+
+test("the hit test looks where the scrolled document shows the aimed point", async () => {
+  const { session, inputs, hits } = clickFixture([[10, 10, 30, 10, 30, 30, 10, 30]], undefined, false,
+    { cssLayoutViewport: { clientWidth: 100, clientHeight: 100, pageX: 5, pageY: 2900 } })
+  await performAction(session, click)
+  assert.deepEqual(hits, [[25, 2920]])
+  assert.deepEqual(inputs, ["mouseMoved", "mousePressed", "mouseReleased"])
+})
 
 test("a failed geometry read never falls back to programmatic or native input", async () => {
   for (const failure of [
@@ -66,7 +75,7 @@ test("invalid geometry, invalid layout, and a clipped box never authorize a clic
     assert.deepEqual(fixture.inputs, [])
   }
   const missingLayout = clickFixture([], undefined, false, {})
-  await assert.rejects(performAction(missingLayout.session, { kind: "scroll", direction: "down", amount: 1 }), /invalid/i)
+  await assert.rejects(performAction(missingLayout.session, { kind: "scroll", delta: { x: 0, y: 1 } }), /invalid/i)
   assert.deepEqual(missingLayout.inputs, [])
 })
 

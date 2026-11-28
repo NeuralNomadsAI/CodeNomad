@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionMark, scheduleMark, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
-import type { RecurrenceSchedule } from "../stores/mission-recurrence"
+import { filterMissionPickerEntries, missionMark, unifiedScheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
-const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
+const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark, activityAt: 0 })
 
 test("a mission's mark: an answer first, then resumable stops, observed work, and unseen completion", () => {
   const unseen = { openRequests: 0, seen: false }, seen = { openRequests: 0, seen: true }
@@ -25,31 +24,7 @@ test("a mission's mark: an answer first, then resumable stops, observed work, an
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["unknown"], coordinatorState: "unknown" }), "idle")
 })
 
-test("schedule mark: an answer first, then the schedule's state, the live passage and a retryable failure", () => {
-  const schedule = (state: RecurrenceSchedule["state"], pending: { status: NonNullable<RecurrenceSchedule["pending"]>["status"] } | null,
-    outcome?: NonNullable<RecurrenceSchedule["latestResult"]>["outcome"]): RecurrenceSchedule =>
-    ({ id: "daily", revision: 1, title: "Daily", clock: { time: "09:00", zone: "UTC" }, history: [], actions: [],
-      state, pending: pending ? { ...pending, passageID: "pending" } : null,
-      latestResult: outcome ? { outcome, passageID: "last", dueAt: 1, settledAt: 2 } : null, controls: [], nextDueAt: Date.now() + 60_000 })
-  assert.equal(scheduleMark(schedule("running", { status: "running" }), 1), "permission")
-  assert.equal(scheduleMark(schedule("running", { status: "running" }, "failed")), "working")
-  assert.equal(scheduleMark(schedule("running", { status: "uncertain" })), "unconfirmed")
-  assert.equal(scheduleMark(schedule("running", null, "failed")), "interrupted", "Run now retries a failed run")
-  assert.equal(scheduleMark(schedule("interrupted", null, "completed")), "interrupted")
-  assert.equal(scheduleMark(schedule("paused", null, "completed")), "paused")
-  assert.equal(scheduleMark(schedule("paused", null, "failed")), "paused", "a pause is the user's own choice")
-  assert.equal(scheduleMark(schedule("stopped", null, "failed")), "idle", "a stopped schedule offers nothing to continue")
-  assert.equal(scheduleMark(schedule("running", null, "completed")), "waiting")
-  assert.equal(scheduleMark(schedule("running", null, "ended-without-report")), "waiting",
-    "an archived reportless passage does not interrupt the positively running daily scheduler")
-  assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false), "done")
-  assert.equal(scheduleMark(schedule("running", null, "completed"), 0, false, false), "unconfirmed")
-  assert.equal(scheduleMark({ ...schedule("running", null), nextDueAt: null }), "unconfirmed")
-  assert.equal(scheduleMark({ ...schedule("running", null), nextDueAt: 5 }, 0, true, true, 10), "unconfirmed")
-  assert.equal(scheduleMark({ ...schedule("running", null), lastError: { code: "wake-failed", at: 1 } }), "unconfirmed")
-})
-
-test("unified documents share daily priorities and require current positive calendar observation", () => {
+test("schedule mark: an answer first, then the schedule's state, and a current positive calendar observation", () => {
   const doc = { state: "running", firstPlayedAt: 1, timeGeneration: 3, blockReason: null, control: null, pendingPassage: null,
     latestResult: null, observation: { state: "known", nativeStatus: "active", timeGeneration: 3, nextDueAt: 100 } } as UnifiedMissionSchedule
   const mark = (patch: Partial<UnifiedMissionSchedule> = {}, seen = true, requests = 0, fresh = true) =>

@@ -1,5 +1,5 @@
 use super::{
-    Attention, BodyDescriptor, ControlReceipt, RunState, Status,
+    Attention, BodyDescriptor, ControlReceipt, RunState, Status, TaskMode, Template,
     codec::{RevisionChanged, decode_row},
     directory::{DirectoryChanged, PageRead, Source, Verified, digest_id, panel_id},
 };
@@ -182,8 +182,11 @@ pub struct Header {
     pub(super) project_canonical: String,
     pub(super) coordinator_session_id: String,
     version: u8,
-    #[serde(rename = "template")]
-    _template: Template,
+    template: Template,
+    #[serde(default)]
+    task_mode: Option<TaskMode>,
+    #[serde(default)]
+    coordinator_goal: Option<bool>,
     created_at: f64,
     updated_at: f64,
     #[serde(rename = "historyTruncated")]
@@ -198,19 +201,21 @@ impl Header {
         &self.project
     }
 
+    pub fn template(&self) -> Template {
+        self.template
+    }
+
+    pub fn task_mode(&self) -> Option<TaskMode> {
+        self.task_mode
+    }
+
+    pub fn coordinator_goal(&self) -> bool {
+        self.coordinator_goal.unwrap_or(false)
+    }
+
     pub fn body(&self, field: &str) -> Option<&BodyDescriptor> {
         self.bodies.get(field)
     }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum Template {
-    Custom,
-    Debug,
-    Wayfinder,
-    Delivery,
-    Compare,
 }
 
 #[derive(Deserialize)]

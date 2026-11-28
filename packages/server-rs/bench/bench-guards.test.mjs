@@ -8,7 +8,7 @@ import path from "node:path"
 import { test } from "node:test"
 import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
-import { buildHardeningGitEnv } from "./hardening.mjs"
+import { buildHardeningChildEnv, buildHardeningGitEnv } from "./hardening.mjs"
 import {
   assertPrivateHost,
   assertPrivateOpenCodeExecutable,
@@ -498,6 +498,16 @@ test("hardening.mjs and fixtures.mjs strip inherited GIT_* variables before runn
     assert.equal(clean.GIT_COMMITTER_EMAIL, "a@a")
     for (const key of strippedKeys) {
       assert.equal(Object.hasOwn(clean, key), false, `hardening: expected ${key} to be stripped`)
+    }
+
+    const child = buildHardeningChildEnv(poisoned, { CNRS_FIXTURE_INGRESS: "1" }, platform)
+    assert.equal(child.PATH, poisoned.PATH)
+    assert.equal(child.SYSTEMROOT, poisoned.SYSTEMROOT)
+    assert.equal(child.CNRS_FIXTURE_INGRESS, "1")
+    assert.equal(child.GIT_CONFIG_GLOBAL, expectedGlobal)
+    assert.equal(child.GIT_CONFIG_NOSYSTEM, "1")
+    for (const key of strippedKeys) {
+      assert.equal(Object.hasOwn(child, key), false, `hardening child: expected ${key} to be stripped`)
     }
   }
 

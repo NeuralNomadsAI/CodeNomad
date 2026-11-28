@@ -59,6 +59,7 @@ export const missionConfigurationWire = { type: "object", properties: {
   profileID: { type: ["string", "null"] }, executionHost: { type: ["string", "null"] },
   coordinatorSessionID: text,
   coordinatorSelectionAuthor: { type: "object", properties: { coordinatorSessionID: text }, required: ["coordinatorSessionID"], additionalProperties: false },
+  coordinatorGoal: { type: "boolean" },
   roots: { type: "array", minItems: 1, maxItems: 32, items: root },
   watchedConversationIDs: { type: "array", maxItems: 64, items: text }, launch: missionDocumentSummaryWire.properties.launch,
 }, required: ["title", "objective", "template", "taskMode", "profileID", "executionHost", "roots", "watchedConversationIDs", "launch"], additionalProperties: false } as const
@@ -99,7 +100,7 @@ const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumen
       sessionID: text, scheduleID: { type: ["string", "null"] }, retiring: { type: "boolean" }, cleanupPending: { type: "boolean" } },
     required: ["role", "slot", "timeGeneration", "sessionID", "scheduleID", "retiring", "cleanupPending"], additionalProperties: false } } },
     required: ["cleanupPending", "carriers"], additionalProperties: false },
-  blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
+  blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "schedule-calendar-requires-code", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
   oneShotAt: { type: ["integer", "null"], minimum: 0 }, slotEndsAt: { type: ["integer", "null"], minimum: 0 }, successfulCount: counter,
   checks: { type: ["object", "null"], properties: { count: counter, since: counter }, required: ["count", "since"], additionalProperties: false },
   pendingPassage: { type: ["object", "null"], properties: { id: text, missionID: text, coordinatorSessionID: text,
@@ -123,6 +124,8 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
     required: ["missionID", "requestID", "expectedRevision", "action", "payloadDigest", "reason"], additionalProperties: false },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
     required: ["id", "requestID", "expectedRevision", "deleteManagedSessions"], additionalProperties: false },
+  checkReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, action: { const: "check" } },
+    required: ["id", "requestID", "expectedRevision", "action"], additionalProperties: false },
 }, required: ["document", "pending"], additionalProperties: false } as const
 
 /** Native RPC validates the wire first; the strict domain codec and signed action
@@ -138,16 +141,16 @@ export const missionScheduleRpcMethods = {
       required: [], additionalProperties: false } },
   scheduleFlag: { input: { type: "object", properties: {}, additionalProperties: false },
     output: { type: "object", properties: { enabled: { type: "boolean" },
-      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default"] } },
+      provenance: { type: "string", enum: ["environment", "experimental-block", "channel-default"] } },
       required: ["enabled", "provenance"], additionalProperties: false } },
   // scheduleFlag plus the deciding source and hidden OFF layers; backends fall back to scheduleFlag.
   scheduleSetting: { input: { type: "object", properties: {}, additionalProperties: false },
     output: { type: "object", properties: { enabled: { type: "boolean" },
-      provenance: { type: "string", enum: ["environment", "experimental-block", "all-flags", "channel-default", "automations-setting"] },
+      provenance: { type: "string", enum: ["environment", "experimental-block", "channel-default", "automations-setting"] },
       path: { type: "string", minLength: 1, maxLength: 4096 },
       hiddenOff: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 4096 } } },
       required: ["enabled", "provenance", "hiddenOff"], additionalProperties: false } },
-  scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
+  scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX }, kind: { enum: ["schedule"] } }, additionalProperties: false },
     output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,
       schedules: { type: "array", maxItems: MISSION_SCHEDULE_PAGE_MAX, items: summary } }, required: ["version", "projectID", "schedules"], additionalProperties: false } },
   scheduleRead: { input: { type: "object", properties: { missionID: text, requestID: text }, required: ["missionID"], additionalProperties: false }, output: result },

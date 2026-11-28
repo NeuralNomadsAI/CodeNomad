@@ -1,6 +1,6 @@
 use super::version as fingerprint;
 use super::{Editor, Error, Intent, Pending, Reader, Snapshot, disk_text, lock, platform};
-use codenomad_client::files::{MAX_FILE_BYTES, WriteResult};
+use codenomad_client::files::{FileError, MAX_FILE_BYTES, WriteResult};
 
 impl Editor {
     pub fn save(&mut self, scope: u64, reader: &mut Reader) {
@@ -139,13 +139,22 @@ impl Editor {
                         draft.uncertain = None;
                         draft.error = None;
                     }
-                    Ok(WriteResult::Conflict(reason)) => {
-                        draft.error = Some(Error::Conflict(reason))
+                    Ok(WriteResult::Conflict(conflict)) => {
+                        draft.error = Some(Error::Conflict(conflict))
                     }
-                    Err(_) => {
-                        draft.uncertain = Some(text);
-                        draft.error = Some(Error::Uncertain);
-                    }
+                    Err(error) => match error.downcast_ref::<FileError>() {
+                        Some(FileError::TooLarge) => draft.error = Some(Error::TooLarge),
+                        Some(FileError::AccessDenied) => draft.error = Some(Error::AccessDenied),
+                        Some(FileError::Unauthorized) => draft.error = Some(Error::Unauthorized),
+                        Some(FileError::NotFound) => draft.error = Some(Error::NotFound),
+                        Some(FileError::WorkspaceUnavailable) => {
+                            draft.error = Some(Error::WorkspaceUnavailable);
+                        }
+                        _ => {
+                            draft.uncertain = Some(text);
+                            draft.error = Some(Error::Uncertain);
+                        }
+                    },
                 }
             }
             store.sync_saved(&key, saved_key.as_ref(), &shared);

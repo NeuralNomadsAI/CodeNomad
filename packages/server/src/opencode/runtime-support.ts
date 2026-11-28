@@ -10,13 +10,15 @@
  * CodeNomad qualifies only the 2.3 subagent contract: every subagent runs in the
  * background and delivers synthetic `<subagent>` reports to its parent
  * (scripts/test-missions-native-trajectory.mjs, scripts/test-subagent-nesting-native.mjs).
- * The native Automation contract backs Mission calendars. OpenCode 2.3.2
- * also fixes cached system prompts for GPT-6.2 Responses routes. See
+ * The native Automation contract backs Mission calendars. OpenCode 2.4.0 adds the
+ * browser tools' permission hook: 2.3 accepts the same `experimental.browser`
+ * attachment, but its blanket session grant overrides a configured `browser` deny,
+ * so the session preview would serve agents their rules refuse. See
  * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.3.2"
+export const MINIMUM_OPENCODE_VERSION = "2.4.0"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.3.2"
+export const RECOMMENDED_OPENCODE_VERSION = "2.4.1"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -40,7 +42,7 @@ export class UnsupportedOpenCodeError extends Error {
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
   constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "native_contract") {
     super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "native_contract"
-      ? `requires the background subagent report contract, native image generation, replay, Code Mode job ordering and Mission Automations of ${MINIMUM_OPENCODE_VERSION}`
+      ? `requires the background subagent report contract, native image generation, replay, Code Mode job ordering, Mission Automations and the browser permission check of ${MINIMUM_OPENCODE_VERSION}`
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

@@ -8,8 +8,7 @@ import { registerMissionRecurrenceCurrent } from "../../server/routes/mission-re
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { passageFixture } from "./native-passage-test-fixture"
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent, readNativeRecurrenceCurrentPage } from "./native-recurrence-current"
-import { observeNativePassageSettlement } from "./native-recurrence-settlement"
-import { readNativeRecurrencePage } from "./native-recurrence-reader"
+import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { contentDigest } from "../../missions/content-digest"
 import { readMissionContent } from "../../missions/mission-content"
 import type { MissionPanelPageRequest, MissionPanelPageResult } from "../../missions/mission-panel-wire"
@@ -35,51 +34,49 @@ async function rows(read: (cursor?: { digest: string; index: number; offset: num
 
 test("current reader uses pending identity and real passage journal, with no signed ledger or writes", async () => {
   const f = await passageFixture()
-  try {
-    const location = Schema.decodeUnknownSync(Location.Info)({ directory: f.root, project: { id: "project", directory: f.root, canonical: f.root } })
-    const tag = (name: string) => Context.Service<never, unknown>(name)
-    const client = Object.assign(() => {}, { unsafe: () => { throw new Error("Reader cannot query session or signer") } })
-    const graph = Context.make(tag("@opencode/storage/Database"), { db: { $client: client, transaction: () => Effect.die("Reader cannot transact") } })
-      .pipe(Context.add(tag("@opencode/Location"), location))
-    let mutateDuringScan = false, writes = 0
-    const ctx = { location, storage: {
-      get: (key: string) => Effect.promise(() => f.storage.get(key)),
-      set: () => Effect.sync(() => { writes++; throw new Error("Reader cannot write") }),
-      scan: (input: Parameters<typeof f.storage.scan>[0]) => Effect.promise(async () => {
-        const page = await f.storage.scan(input)
-        if (mutateDuringScan) { mutateDuringScan = false; const doc = (await f.calendar.read("schedule"))!; await f.calendar.setState(doc.id, doc.revision, "paused", () => true) }
-        return page
-      }),
-    } } as unknown as Parameters<typeof readNativeRecurrenceCurrent>[0]
-    const read = () => Effect.runPromise(readNativeRecurrenceCurrent(ctx, { scheduleID: "schedule" }).pipe(Effect.provide(graph)))
-    const content = (passageID = f.passage.passageID) => Effect.runPromise(readNativeRecurrenceCurrentContent(ctx,
-      { scheduleID: "schedule", passageID, kind: "overview", section: "summary" }).pipe(Effect.provide(graph)))
-    const reserved = await read()
-    assert.equal(reserved.passageID, f.passage.passageID)
-    assert.equal("mission" in reserved, false)
-    assert.equal(reserved.source, undefined, "a passage awaiting admission has no readable content yet")
-    await f.start()
-    await f.finish()
-    const result = await read()
-    assert.equal("mission" in result, false)
-    assert.equal(result.source?.missionID, f.passage.missionID)
-    for (const field of ["digest", "projectID", "passageID"] as const) await assert.rejects(Effect.runPromise(readNativeRecurrenceCurrentPage(ctx, {
-      source: { ...result.source, [field]: field === "digest" ? "x".repeat(43) : "foreign" }, selector: { source: "mission", missionID: f.passage.missionID, header: true },
-    }).pipe(Effect.provide(graph))), /passage changed|selector differs/)
-    const page = await content()
-    assert("sourceText" in page)
-    assert.equal(page.sourceText, "Finished via real mission tool")
-    await assert.rejects(content("rcp_foreign"), /passage changed/)
-    mutateDuringScan = true
-    await assert.rejects(Effect.runPromise(readNativeRecurrenceCurrentPage(ctx, { source: result.source,
-      selector: { source: "mission", missionID: f.passage.missionID, header: true } }).pipe(Effect.provide(graph))), /passage changed/)
-    const settled = await observeNativePassageSettlement({ document: (await f.calendar.read("schedule"))!, storage: f.storage,
-      native: f.observation, directory: f.root, current: () => true, signal: new AbortController().signal })
-    await f.calendar.finish("schedule", settled!.result, 30, () => true, settled!.expectedRevision)
-    assert.equal((await read()).passageID, null)
-    await assert.rejects(content(), /content unavailable|passage changed/)
-    assert.equal(writes, 0)
-  } finally { await f.dispose() }
+  const location = Schema.decodeUnknownSync(Location.Info)({ directory: f.root, project: { id: "project", directory: f.root, canonical: f.root } })
+  const tag = (name: string) => Context.Service<never, unknown>(name)
+  const client = Object.assign(() => {}, { unsafe: () => { throw new Error("Reader cannot query session or signer") } })
+  const graph = Context.make(tag("@opencode/storage/Database"), { db: { $client: client, transaction: () => Effect.die("Reader cannot transact") } })
+    .pipe(Context.add(tag("@opencode/Location"), location))
+  let mutateDuringScan = false, writes = 0
+  const ctx = { location, storage: {
+    get: (key: string) => Effect.promise(() => f.storage.get(key)),
+    set: () => Effect.sync(() => { writes++; throw new Error("Reader cannot write") }),
+    scan: (input: Parameters<typeof f.storage.scan>[0]) => Effect.promise(async () => {
+      const page = await f.storage.scan(input)
+      if (mutateDuringScan) { mutateDuringScan = false; const doc = await f.document()
+        await f.store.change(doc.id, doc.revision, () => true, next => changes.configure(next, { ...next.configuration, notes: "Later instructions" }, f.at + 10)) }
+      return page
+    }),
+  } } as unknown as Parameters<typeof readNativeRecurrenceCurrent>[0]
+  const read = () => Effect.runPromise(readNativeRecurrenceCurrent(ctx, { scheduleID: "schedule" }).pipe(Effect.provide(graph)))
+  const content = (passageID = f.passage.passageID) => Effect.runPromise(readNativeRecurrenceCurrentContent(ctx,
+    { scheduleID: "schedule", passageID, kind: "overview", section: "summary" }).pipe(Effect.provide(graph)))
+  const reserved = await read()
+  assert.equal(reserved.passageID, f.passage.passageID)
+  assert.equal("mission" in reserved, false)
+  assert.equal(reserved.source, undefined, "a passage awaiting admission has no readable content yet")
+  await f.start()
+  await f.finish()
+  const result = await read()
+  assert.equal("mission" in result, false)
+  assert.equal(result.source?.missionID, f.passage.missionID)
+  for (const field of ["digest", "projectID", "passageID"] as const) await assert.rejects(Effect.runPromise(readNativeRecurrenceCurrentPage(ctx, {
+    source: { ...result.source, [field]: field === "digest" ? "x".repeat(43) : "foreign" }, selector: { source: "mission", missionID: f.passage.missionID, header: true },
+  }).pipe(Effect.provide(graph))), /passage changed|selector differs/)
+  const page = await content()
+  assert("sourceText" in page)
+  assert.equal(page.sourceText, "Finished through the passage business")
+  await assert.rejects(content("rcp_foreign"), /passage changed/)
+  mutateDuringScan = true
+  await assert.rejects(Effect.runPromise(readNativeRecurrenceCurrentPage(ctx, { source: result.source,
+    selector: { source: "mission", missionID: f.passage.missionID, header: true } }).pipe(Effect.provide(graph))), /passage changed/)
+  const settled = (await f.observe())!, doc = await f.document()
+  await f.store.change(doc.id, doc.revision, () => true, next => changes.settle(next, f.passage.passageID, settled.outcome, f.at + 2000))
+  assert.equal((await read()).passageID, null)
+  await assert.rejects(content(), /content unavailable|passage changed/)
+  assert.equal(writes, 0)
 })
 
 for (const revisions of [72, 144]) test(`current display stays byte bounded for ${revisions * 12} maximum-brief tasks without a cumulative journal cap`, { timeout: 900_000 }, async t => {
@@ -186,16 +183,5 @@ for (const revisions of [72, 144]) test(`current display stays byte bounded for 
     const content = await app.inject({ method: "GET", url: `${url}/${f.passage.passageID}/content?kind=overview&section=objective` })
     assert.equal(content.statusCode, 200, content.body.slice(0, 200))
     assert.equal(rangeObservations - beforeContent, 1)
-    const doc = (await f.calendar.read("schedule"))!
-    await f.calendar.finish(doc.id, { passageID: f.passage.passageID, messageID: f.passage.messageID, missionID: mission.id,
-      conversationID: mission.coordinatorSessionId, outcome: "ended-without-report", artifactMessageIDs: [], cursors: [] }, Date.now(), () => true, doc.revision)
-    const beforeArchive = rangeObservations, archived = []
-    for (let page = 0; page < 3; page++) {
-      const answer = await run(readNativeRecurrencePage(ctx, { scheduleID: doc.id, passageID: f.passage.passageID, section: mission.tasks.length, page }))
-      assert.equal(answer.missionID, mission.id); assert.ok(Buffer.byteLength(JSON.stringify(answer)) <= 65536)
-      archived.push(answer.sourceText)
-    }
-    assert.equal(rangeObservations - beforeArchive, 3, "one accepted range per archived page, never snapshot plus events")
-    assert.equal(archived.join(""), mission.tasks.at(-1)!.brief)
-  } finally { await app?.close(); await f.dispose() }
+  } finally { await app?.close() }
 })

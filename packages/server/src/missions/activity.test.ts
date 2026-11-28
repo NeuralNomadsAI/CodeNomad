@@ -735,3 +735,47 @@ test("a deleted actor session is read once, then shown missing without native re
   assert.equal(state(await observe()), "missing")
   assert.equal(counts.get, reads + 1, "only the live actor is read again")
 })
+
+test("completed missions skip recursive session.list family walks while preserving own activity and active-descendant probes; session.updated keeps cached trees", async () => {
+  const cache = new MissionActivityCache()
+  const sessions = { coord: {}, child: { parentID: "coord" }, live: {} }
+  const client = native({ sessions, active: { child: { type: "running" } } })
+  const counts = counted(client)
+  const done = snapshot([actor("coord", "coordinator")])
+  done.missions[0].status = "completed"
+  const result = await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: done })
+  assert.equal(counts.list, 0, "completed mission without open reports never walks session.list")
+  assert.equal(result.missions[0].actors[0].state, "background")
+  const active = snapshot([actor("live", "coordinator")])
+  await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: active })
+  const afterWarm = counts.list
+  assert.ok(afterWarm > 0)
+  cache.observeEvent({ type: "session.updated" })
+  await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: active })
+  assert.equal(counts.list, afterWarm, "session.updated does not flush cached family trees")
+})
+
+test("a completed mission walks its family once a pending request descends from its actor", async () => {
+  const sessions = { coord: {}, child: { parentID: "coord" }, grandchild: { parentID: "child" }, stranger: {} }
+  const done = () => { const value = snapshot([actor("coord", "coordinator")]); value.missions[0].status = "completed"; return value }
+  const read = async (options: Parameters<typeof native>[0]) => {
+    const client = native({ sessions, ...options }), counts = counted(client)
+    const result = await projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, snapshot: done() })
+    return { counts, mission: result.missions[0] }
+  }
+  const asked = await read({ permissions: [{ sessionID: "grandchild" }] })
+  assert.equal(asked.mission.actors[0].state, "permission")
+  assert.equal(asked.mission.family?.state, "observed")
+  assert.deepEqual(asked.mission.family?.members.map(member => member.sessionId).sort(), ["child", "coord", "grandchild"])
+  const form = await read({ forms: [{ sessionID: "child" }] })
+  assert.equal(form.mission.actors[0].state, "form")
+  // Another conversation's request, or the actor's own, leaves the family unwalked.
+  for (const sessionID of ["stranger", "coord"]) assert.equal((await read({ permissions: [{ sessionID }] })).counts.list, 0, sessionID)
+  // A request's ancestry is read once between observations, not at each of them.
+  const cache = new MissionActivityCache(), client = native({ sessions, permissions: [{ sessionID: "stranger" }] }), counts = counted(client)
+  const observe = () => projectMissionActivity({ client, workspaceID: "workspace-1", ownsLocation: async () => true, isCurrent: () => true, cache, snapshot: done() })
+  await observe()
+  const first = counts.get
+  await observe()
+  assert.equal(counts.get, first + 1, "only the actor is read again")
+})

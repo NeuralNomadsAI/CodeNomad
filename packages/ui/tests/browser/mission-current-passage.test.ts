@@ -10,14 +10,10 @@ import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
-import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
-/** The plugin wire also carries project identity, which the HTTP route does not project. */
-type RecurrenceWireSnapshot = MissionRecurrenceSnapshot & { projectCanonical: string; location: { directory: string } }
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
-import { inlineMissionEntry, missionMenuTrigger, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
+import { expandRow, inlineMissionEntry, missionRow, missionToolbar, missionToolbarAction, openTaskReader, selectMission, selectTaskMission,
   selectedMissionTitle } from "./mission-actions"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import { NativeMissionDocumentStore } from "../../../server/src/missions/mission-document-store"
@@ -86,10 +82,14 @@ async function setupReaderFollow(page: Page, nativePending = true, attention = f
   }
   if (nativePending) startNative()
   const passages = {
-    rec_daily: { ...structuredClone(ordinary), id: "msn_daily_passage", objective: "Daily passage instructions" },
     msn_native: { ...structuredClone(ordinary), id: doc.pending?.missionID ?? "msn_native_passage", objective: "Native passage instructions" },
   }
-  const passageID = (id: keyof typeof passages) => id === "rec_daily" ? "pas_daily" : doc.pending!.id
+  const passageID = (_id: keyof typeof passages) => doc.pending!.id
+  // The pending passage runs under the fixture's coordinator, whose loaded family holds the asking child.
+  const scheduleView = () => {
+    const view = missionScheduleView(doc).document
+    return view.pendingPassage ? { ...view, pendingPassage: { ...view.pendingPassage, coordinatorSessionID: "ses_coordinator" } } : view
+  }
   const held = new Map<string, { started: ReturnType<typeof deferred>; release: ReturnType<typeof deferred>; settled: ReturnType<typeof deferred> }>()
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:JSON.parse(localStorage.getItem('passage-native')??'null')}),
@@ -101,28 +101,24 @@ async function setupReaderFollow(page: Page, nativePending = true, attention = f
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([ordinary]), generatedAt: 1, discardedEvents: 0 } })
     const content = missionContentFixture(request.url(), request.method(), [ordinary])
     if (content) return route.fulfill({ json: content })
-    if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [missionScheduleView(doc).document] } })
-    if (path.endsWith("/schedule")) return route.fulfill({ json: missionScheduleView(path.includes("/msn_native/") ? doc : undefined) })
+    if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [scheduleView()] } })
+    if (path.endsWith("/schedule")) return route.fulfill({ json: path.includes("/msn_native/") ? { ...missionScheduleView(doc), document: scheduleView() } : missionScheduleView(undefined) })
     if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true,
       origin: null, activation: { available: true, targets: [] } } })
-    if (path.endsWith("/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture",
-      location: { directory: "/fixture" }, schedules: [{ id: "rec_daily", title: "Daily review", revision: 2, state: "paused", clock: { time: "08:15", zone: "UTC" },
-         nextDueAt: null, actions: [], controls: [], pending: { passageID: "pas_daily", status: "running", missionID: passages.rec_daily.id,
-           conversationID: "ses_coordinator" }, latestResult: null, history: [] }] }) })
-    const id = path.match(/\/recurrence\/(rec_daily|msn_native)\/current/)?.[1] as keyof typeof passages | undefined
+    const id = path.match(/\/recurrence\/(msn_native)\/current/)?.[1] as keyof typeof passages | undefined
     if (id) {
-      const value = passages[id], scheduled = id === "msn_native"
+      const value = passages[id]
       if (path.endsWith("/current")) {
-        assert.equal(link.searchParams.get("owner"), scheduled ? "scheduled" : null)
+        assert.equal(link.searchParams.get("owner"), "scheduled")
         const gate = held.get(id)
         gate?.started.resolve()
         if (gate) await gate.release.promise
         try {
-          if (scheduled && !doc.pending) return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision,
+          if (!doc.pending) return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision,
             projectID: "project", scheduleID: id, passageID: null } }).catch(() => {})
           return await route.fulfill({ json: { version: 1, ownerRevision: doc.revision, projectID: "project", scheduleID: id, passageID: passageID(id),
-          source: { owner: scheduled ? "scheduled" : "daily", projectID: "project", scheduleID: id, passageID: passageID(id), missionID: value.id,
-            digest: "a".repeat(43), ...(scheduled ? { configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration } : {}) } } }) }
+          source: { owner: "scheduled", projectID: "project", scheduleID: id, passageID: passageID(id), missionID: value.id,
+            digest: "a".repeat(43), configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration } } }) }
         finally { gate?.settled.resolve() }
       }
       if (path.endsWith("/page")) {
@@ -181,15 +177,17 @@ for (const mode of ["reader", "answer", "reader and answer"]) test(`deferred sch
       await selectMission(page, "One-time review"); await eye(page).click()
       await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
     }
-    passage = f.hold("rec_daily")
-    const row = await inlineMissionEntry(page, "Daily review")
+    passage = f.hold("msn_native")
+    const row = await inlineMissionEntry(page, "Native scheduled review")
     if (answer) await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.click(); await passage.started.promise
     web = await holdBrowser(page)
     passage.release.resolve(); await passage.settled.promise
-    await page.locator('.mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
+    // The selected schedule's tree mounts while its row is expanded.
+    await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
+    await page.locator('section.mission-detail[aria-label="Native scheduled review"] .mission-tree-node[data-task-key="second"]').waitFor({ state: "attached" }); await paint(page)
     assert.equal(await page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), undefined)
-    if (mode !== "answer") assert.equal((await readerTarget(page))?.missionId, "msn_daily_passage", "passive passage discovery retargets immediately")
+    if (mode !== "answer") assert.equal((await readerTarget(page))?.missionId, f.passages.msn_native.id, "passive passage discovery retargets immediately")
     web.release(); assert.equal(await web.finish(), "opened")
     assert.deepEqual(f.errors, []); assert.deepEqual(f.writes, [])
   } finally { passage?.release.resolve(); web?.release(); await page.close() }
@@ -199,7 +197,7 @@ test("an admitted red schedule click discovers and opens its asking descendant",
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   try {
     const f = await setupReaderFollow(page, true, true)
-    const row = await inlineMissionEntry(page, "Daily review")
+    const row = await inlineMissionEntry(page, "Native scheduled review")
     await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.click()
     const active = () => page.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture"))
@@ -214,7 +212,7 @@ test("a pressed task reader hands its loaded schedule's answer to cold hydration
   try {
     const f = await setupReaderFollow(page, true, true)
     await page.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
-    await selectMission(page, "Daily review")
+    await selectMission(page, "Native scheduled review")
     await page.locator('.mission-tree-node[data-task-key="second"] .mission-tree-task').click()
     await eye(page).click()
     await page.locator(".mission-reader").getByRole("heading", { name: "Next task has no actor", exact: true }).waitFor()
@@ -230,7 +228,7 @@ test("a pressed task reader hands its loaded schedule's answer to cold hydration
     })
     await page.route("**/instance/api/session/ses_child", route => route.fulfill({ json: { data: { id: "ses_child", parentID: "ses_task",
       projectID: "project", title: "Cold asking child", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } }))
-    const row = await inlineMissionEntry(page, "Daily review")
+    const row = await inlineMissionEntry(page, "Native scheduled review")
     await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     const hydration = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/session/ses_child"))
     await row.click(); await hydration
@@ -249,8 +247,8 @@ test("a discovered schedule answer retains its original intent through cold acto
   let passage: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
   try {
     const f = await setupReaderFollow(page, true, true)
-    passage = f.hold("rec_daily")
-    const row = await inlineMissionEntry(page, "Daily review")
+    passage = f.hold("msn_native")
+    const row = await inlineMissionEntry(page, "Native scheduled review")
     await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.click(); await passage.started.promise
     await page.evaluate(async () => {
@@ -335,18 +333,18 @@ test("Mission deletion clears its reader immediately and preserves a newer held 
   } finally { deletion.resolve(); web?.release(); await page.close() }
 })
 
-test("pressed eye follows one-time → daily passage → native scheduled passage → one-time task", async () => {
+test("pressed eye follows one-time → scheduled passage → one-time task", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
   try {
     const f = await setupReaderFollow(page)
     await selectMission(page, "One-time review"); await eye(page).click()
     await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
-    for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native scheduled review"]] as const) {
+    for (const [id, title] of [["msn_native", "Native scheduled review"]] as const) {
       await (await inlineMissionEntry(page, title)).click()
       await page.locator(".mission-reader").getByText(f.passages[id].objective, { exact: true }).waitFor()
       assert.equal(await eye(page).getAttribute("aria-pressed"), "true")
       assert.deepEqual(await readerTarget(page), { missionId: f.passages[id].id, kind: "overview", recurrence: {
-        instanceId: "fixture", projectID: "project", scheduleID: id, passageID: f.passageID(id), ...(id === "msn_native" ? { owner: "scheduled" } : {}) } })
+        instanceId: "fixture", projectID: "project", scheduleID: id, passageID: f.passageID(id), owner: "scheduled" } })
     }
     await selectMission(page, "One-time review")
     await page.locator(".mission-reader").getByText("One-time review", { exact: true }).waitFor()
@@ -359,7 +357,7 @@ test("pressed eye follows one-time → daily passage → native scheduled passag
   } finally { await page.close() }
 })
 
-for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native scheduled review"]] as const) {
+for (const [id, title] of [["msn_native", "Native scheduled review"]] as const) {
   for (const close of [false, true]) test(`held ${id} current response cannot ${close ? "reopen the released eye" : "follow after switching selection"}`, async () => {
     const page = await browser.newPage({ viewport: { width: 1200, height: 950 } })
     let gate: ReturnType<Awaited<ReturnType<typeof setupReaderFollow>>["hold"]> | undefined
@@ -380,6 +378,7 @@ for (const [id, title] of [["rec_daily", "Daily review"], ["msn_native", "Native
       gate.release.resolve(); await gate.settled.promise; await paint(page)
       if (close) {
         // The selected schedule still demands its passage: prove it rendered after release.
+        await expandRow(page.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await page.locator(`section.mission-detail[aria-label="${title}"] .mission-tree .mission-tree-node[data-task-key="second"]`).waitFor({ state: "attached" })
         assert.equal(await readerTarget(page), undefined)
         assert.equal(await eye(page).getAttribute("aria-pressed"), "false")
@@ -483,10 +482,30 @@ test("actual MissionControl reuses the current task tree and attention, with bri
   const init = `Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`
   await page.addInitScript(init)
+  const values = new Map<string, MissionJsonValue>()
+  const doc = await new NativeMissionDocumentStore({ get: async key => values.get(key),
+    compareAndSet: async (key, value) => { values.set(key, structuredClone(value)) } }, "project", "/fixture").create("rec_current", {
+    title: "Daily commit review", objective: "Saved instructions", template: "custom",
+    profiles: { coordinator: { agent: "build", model: { providerID: "fixture", id: "fixture" } },
+      roles: { specialist: { agent: "build", model: { providerID: "fixture", id: "fixture" } } } },
+    taskMode: "native", profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory: "/fixture" }],
+    watchedConversationIDs: [], launch: { when: [{ kind: "cron", expression: "15 8 * * *", zone: "UTC" }] } }, Date.now(), () => true)
+  missionDocumentChanges.play(doc, "play_current", Date.now(), [])
+  doc.synchronization = null
+  missionDocumentChanges.reserve(doc, { kind: "manual", requestID: "run_current" }, Date.now(), [])
+  missionDocumentChanges.admitted(doc, doc.pending!.id, Date.now())
+  // The served passage carries the fixture's own identities: its Mission and its loaded coordinator.
+  const scheduleView = () => {
+    const view = missionScheduleView(doc).document
+    return view.pendingPassage ? { ...view, pendingPassage: { ...view.pendingPassage, id: "pas_current", missionID: mission.id, coordinatorSessionID: "ses_coordinator" } } : view
+  }
   const api = async (route: Route) => {
     const path = new URL(route.request().url()).pathname
     if (hold && path.endsWith("/rec_current/current")) await hold
-    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [scheduleView()] } })
+    if (path.endsWith("/rec_current/schedule")) return route.fulfill({ json: { ...missionScheduleView(doc), document: scheduleView() } })
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true,
+      origin: null, activation: { available: true, targets: [] } } })
     if (path === "/api/events") return route.continue()
     if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
     if (/\/rec_current\/current\/[^/]+\/page$/.test(path)) {
@@ -522,16 +541,12 @@ test("actual MissionControl reuses the current task tree and attention, with bri
       }
       return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(ordinary ? [ordinary] : []), generatedAt: 1, discardedEvents: 0 } })
     }
-    if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [{ id: "rec_current", title: "Daily commit review", revision: 2,
-      state: "interrupted", interruptionReason: "service-restart", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],
-      pending: passageID ? { passageID, status: "running", missionID: mission.id, conversationID: "ses_coordinator" } : null,
-      latestResult: passageID ? null : { passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" },
-      history: passageID ? [] : [{ passageID: "pas_current", dueAt: 1, settledAt: 4, outcome: "completed" }] }] } satisfies RecurrenceWireSnapshot) })
     if (path.endsWith("/rec_current/current")) {
       reads++
       if (!passageID) return route.fulfill({ json: { version: 1, ownerRevision: 4, projectID: "project", scheduleID: "rec_current", passageID: null } })
       return fail ? route.fulfill({ status: 503, json: { error: "Unknown coverage" } }) : route.fulfill({ json: { version: 1, ownerRevision: 4, projectID: "project", scheduleID: "rec_current", passageID,
-        source: { owner: "daily", projectID: "project", scheduleID: "rec_current", passageID, missionID: mission.id, digest: "a".repeat(43) } } })
+        source: { owner: "scheduled", projectID: "project", scheduleID: "rec_current", passageID, missionID: mission.id, digest: "a".repeat(43),
+          configurationGeneration: doc.configurationGeneration, timeGeneration: doc.timeGeneration } } })
     }
     if (path.endsWith(`/rec_current/current/${passageID}/content`)) {
       const query = Object.fromEntries(new URL(route.request().url()).searchParams)
@@ -564,6 +579,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).navigateMissionProjectView("fixture", { reader: { missionId: "custom", kind: "playbook", taskMode: "native" } }))
         release(); hold = undefined
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         assert.notEqual(await probe.evaluate(async () => (await import("/src/stores/sessions.ts" as string)).activeSessionId().get("fixture")), "ses_child")
@@ -585,6 +601,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await row.click()
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).removeFormFromQueue("fixture", "form_child"))
         release(); hold = undefined
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.waitForTimeout(500)
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
@@ -618,6 +635,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         await probe.evaluate(async () => (await import("/src/stores/forms.ts" as string)).addFormToQueue("fixture", { id: "form_later", sessionID: "ses_child",
           location: { directory: "/fixture" }, title: "Later question", tool: { name: "question" }, fields: [], time: { created: 2 } } as never))
         await probe.evaluate(() => (window as any).passageFixture.invalidate())
+        await expandRow(probe.locator(".mission-rows button.mission-row-select[aria-current=true]"))
         await probe.locator(".mission-tree").getByText("Review commits", { exact: true }).waitFor({ state: "attached" })
         await probe.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
         await probe.waitForTimeout(500)
@@ -637,16 +655,9 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // The passage's open child request shows on the schedule's row; the question opens in the dock.
     await page.locator('.mission-row-select[aria-current=true] .mission-row-flag[data-mark="permission"]').waitFor()
     assert.equal(await card.getByText("Real child request", { exact: true }).count(), 0)
-    // Schedule controls name their schedule; the isolated passage never offers one-time Mission mutations.
-    // Toolbar buttons stay in place; a schedule without actions keeps them all disabled.
-    const mutations = await page.getByRole("button", { name: /^(Start|Pause|Resume|Stop|Run|Send|Request an update)/ })
-      .evaluateAll(nodes => nodes.map(node => [node.getAttribute("aria-label"), (node as HTMLButtonElement).disabled]))
-    assert.deepEqual(mutations, [["Start", true], ["Stop schedule Daily commit review", true], ["Run Daily commit review now", true]],
-      "isolated read never opens ordinary mutations")
-    assert.equal(await missionToolbarAction(page, "Delete selected mission…").isDisabled(), true, "Delete stays disabled for a schedule")
+    // The isolated passage never offers one-time Mission mutations.
+    assert.equal(await page.getByRole("button", { name: /^(Send|Request an update)/ }).count(), 0, "isolated read never opens ordinary mutations")
     assert.equal(await card.locator("form, textarea").count(), 0, "no coordinator field in the panel")
-    assert.equal(await missionMenuTrigger(page).isDisabled(), true, "the overflow menu (Edit included) has nothing to offer")
-    assert.equal(await card.getByRole("button", { name: /Technical details|More|Conversations/ }).count(), 0, "no secondary disclosures in the panel")
     await captureMissionView(page, "current-tracking-desktop")
     if (process.env.CODENOMAD_MISSION_VIEW_EVIDENCE) {
       await page.setViewportSize({ width: 390, height: 850 })
@@ -678,7 +689,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(await page.locator(".mission-reader").getByText("Newer result must not replace the historical body", { exact: true }).count(), 0)
     mission.tasks[0].report = historical
     const target = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").reader)
-    assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current" })
+    assert.deepEqual(target?.recurrence, { instanceId: "fixture", projectID: "project", scheduleID: "rec_current", passageID: "pas_current", owner: "scheduled" })
     assert.ok(sourceReads.some(input => input.kind === "report" && input.reportId === "rpt_first" && input.field === "summary"), "result reader reads the exact isolated report body")
     assert.ok(sourceReads.every(input => input.scheduleID === "rec_current" && input.passageID === "pas_current" && input.missionID === mission.id))
     const evidence = page.locator(".mission-reader article").filter({ has: page.getByRole("heading", { name: "Evidence", exact: true }) })
@@ -706,7 +717,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await selectTaskMission(page)
     const savedBriefing = mission.briefing
     mission.briefing = undefined
-    const withoutBriefing = page.waitForResponse(response => response.url().endsWith("/rec_current/current"))
+    const withoutBriefing = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/rec_current/current"))
     await page.evaluate(() => (window as any).passageFixture.invalidate())
     await withoutBriefing
     // Let the refreshed snapshot reach Solid before the reader chooses its sections.
@@ -732,7 +743,6 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     const taskPositions = await positions()
     assert.equal(await toolbar.getByRole("button", { name: "Run now", exact: true }).isDisabled(), true)
     assert.equal(await toolbar.count(), 1, "the schedule's toolbar yields the line")
-    assert.equal(await toolbar.getByRole("button", { name: /^Stop schedule/ }).count(), 0)
     assert.equal(await toolbar.locator("button").first().isDisabled(), true, "a passage task is never recovered from the panel")
     assert.equal(await toolbar.locator(".mission-overview-toggle").getAttribute("aria-pressed"), "true")
     // Its eye closes the task's reader; the task keeps the toolbar until the schedule row is selected.
@@ -740,7 +750,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     await page.locator(".mission-reader").waitFor({ state: "detached" })
     assert.equal(await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).count(), 1)
     await selectTaskMission(page)
-    await toolbar.getByRole("button", { name: /^Stop schedule/ }).waitFor()
+    await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor({ state: "detached" })
     assert.deepEqual(await positions(), taskPositions, "the hand-off moves no button")
     await openTaskReader(firstTask)
     await toolbar.getByRole("button", { name: "Open the task's conversation", exact: true }).waitFor()
@@ -773,16 +783,16 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     assert.equal(reads, beforeHidden, "hidden panel and closed reader do not read or poll")
     fail = false; observed = false
     await page.evaluate(() => (window as any).passageFixture.activate(true))
-    await page.waitForResponse(response => response.url().endsWith("/rec_current/current"))
+    await page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/rec_current/current"))
     assert.ok(reads > beforeHidden)
     assert.equal(writes.length, 0)
-    passageID = null
+    passageID = null; missionDocumentChanges.settle(doc, doc.pending!.id, "completed", Date.now())
     // The list and the current passage revalidate independently from the same
     // native event; bind the tree assertion to the passage read it triggers.
-    const settledPassage = page.waitForResponse(async response => response.url().endsWith("/rec_current/current")
+    const settledPassage = page.waitForResponse(async response => new URL(response.url()).pathname.endsWith("/rec_current/current")
       && (await response.json()).passageID === null)
     await page.evaluate(() => (window as any).passageFixture.settled())
-    await card.locator("button.mission-past-run").getByText(/Completed$/).waitFor()
+    await card.locator(".mission-past-runs li").getByText(/Completed$/).waitFor()
     await settledPassage
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
     assert.equal(await page.locator(".mission-tree").count(), 0, "settlement after the final session event removes the former passage tree through native invalidation")
@@ -794,8 +804,8 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     // Its plan holds no task yet: the row has no chevron, so its detail stays folded.
     await page.locator('section.mission-detail[aria-label="One-shot from recurring"]').waitFor({ state: "attached" })
     assert.equal(await missionRow(page, "One-shot from recurring").locator("button.session-item-expander").count(), 0)
-    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").selectedRecurrence)
-    assert.equal(selected, undefined, "successful one-shot creation clears overriding recurrence selection")
+    const selected = await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).missionProjectView("fixture").selectedScheduled)
+    assert.equal(selected, undefined, "successful one-shot creation clears the schedule selection")
     assert.deepEqual(writes, ["/api/workspaces/fixture/missions"], "only the explicit creation uses a mock mutation")
     assert.deepEqual(errors, [])
   } catch (error) {
