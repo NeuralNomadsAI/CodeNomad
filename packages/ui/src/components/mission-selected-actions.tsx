@@ -32,8 +32,8 @@ export function MissionSelectedActions(props: {
    task?: MissionTaskSelection; taskPending?: boolean; taskReading?: boolean; onToggleTask?: () => void; onOpenTask?: (sessionId: string) => void
   /** Unfolds the selection's detail, where Save as brief opens its name field. */
   onRevealDetail?: () => void
-  /** A programmed Mission's programming. While no launch is under way (`between`) the toolbar commands it: Play resumes it,
-   * Pause suspends it and Stop ends it for good; during a launch the toolbar commands that launch and the overflow menu suspends or resumes it. */
+  /** A programmed Mission's programming. A programmed Mission has one pause: Pause holds its launch under way and its programming,
+   * and Play resumes both. Stop ends the launch under way; while none is (`between`), it ends the programming for good. */
   programming?: { paused: boolean; between: boolean; act(action: "pause" | "resume" | "delete"): Promise<void> }
 }) {
   const { t } = useI18n()
@@ -56,7 +56,7 @@ export function MissionSelectedActions(props: {
     setProgramming(true)
     try { await props.programming?.act(action) } finally { setProgramming(false) }
   }
-  /** Suspends or resumes the programming: the toolbar's Play/Pause between launches, a menu entry during one. */
+  /** Pauses or resumes the programming alone: the toolbar's Play/Pause while no launch is under way. */
   const toggleProgramming = (): MissionPrimaryAction | undefined => {
     const value = props.programming
     if (!value) return undefined
@@ -70,7 +70,15 @@ export function MissionSelectedActions(props: {
     } })
   const primary = (): MissionPrimaryAction | undefined => {
     if (props.programming?.between) return toggleProgramming()
-    const current = lifecycle.primary(), recover = recovery.action()
+    const launch = lifecycle.primary(), held = props.programming
+    // Pausing a launch pauses the programmed Mission whole, and resuming it resumes the whole: the programming goes first into the pause and last out of it.
+    const current: MissionPrimaryAction | undefined = !launch || !held || launch.key === "pause" && held.paused || launch.key === "resume" && !held.paused
+      || launch.key !== "pause" && launch.key !== "resume" ? launch : { ...launch, onSelect: async () => {
+        if (launch.key === "pause") await held.act("pause")
+        await launch.onSelect()
+        if (launch.key === "resume") await held.act("resume")
+      } }
+    const recover = recovery.action()
     const resumable = props.mission.status === "failed" ? !current : current?.key === "pause" && props.interrupted
     if (!recover || !resumable) return current
     return { key: "recover", label: t("missionsPanel.action.recover"), ariaLabel: t("missionsPanel.action.recover"),
@@ -98,7 +106,7 @@ export function MissionSelectedActions(props: {
   const feedback = <>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>
   return <Show when={props.task?.task.key} keyed fallback={
      <Show when={!props.taskPending} fallback={<MissionActionBar task label={t("missionsPanel.picker.actions")} reading={false} feedback={feedback} />}><MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
-      primary={primary()} stop={props.programming?.between ? stopProgramming() : lifecycle.stop()} programming={props.programming?.between ? undefined : toggleProgramming()}
+      primary={primary()} stop={props.programming?.between ? stopProgramming() : lifecycle.stop()}
       interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
       onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
       saveBrief={briefTrigger() && { disabled: briefTrigger()!.disabled, open: returnFocus => { props.onRevealDetail?.(); briefTrigger()!.open(returnFocus) } }}
