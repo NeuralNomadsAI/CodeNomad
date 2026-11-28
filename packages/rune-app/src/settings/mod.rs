@@ -17,6 +17,7 @@ mod palettes;
 mod preferences;
 mod providers;
 mod remote;
+mod responsive;
 mod speech;
 pub(crate) mod startup_state;
 mod stats;
@@ -73,6 +74,9 @@ pub(crate) use shortcuts::{
 };
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
+#[allow(unused_imports)]
+// Consumed by shell/workspace status strip in the companion shell branch.
+pub(crate) use window::open_remote;
 pub(crate) use window::{
     close, close_request, direct_entry, entries, open_preferences, open_providers,
 };
