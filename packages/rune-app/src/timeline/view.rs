@@ -8,7 +8,9 @@ use crate::{
 };
 use rune::El;
 use rune_theme_codenomad::{
-    layout,
+    Space,
+    layout::{self, Layout},
+    settings,
     timeline::{self, icons},
 };
 
@@ -445,10 +447,11 @@ pub(crate) fn view(
     area = area.children(threshold_probe);
     let notice = match notice_key(s) {
         Some("timeline-destination-filtered") => Some(
-            rune::text(crate::strings::t("history.destinationFiltered"))
-                .key("timeline-destination-filtered")
-                .role("alert")
-                .wrap(),
+            settings::palette::save_error(crate::strings::t("history.destinationFiltered"))
+                .full_width()
+                .inset_surface()
+                .pad(Space::Xs)
+                .key("timeline-destination-filtered"),
         ),
         Some(key) => {
             let (label, action) = if key == "timeline-jump-retry" {
@@ -465,7 +468,9 @@ pub(crate) fn view(
             Some(
                 layout::action_row()
                     .key(key)
-                    .child(rune::text(crate::strings::t(label)))
+                    .role("status")
+                    .inset_surface()
+                    .child(settings::stats::caption(crate::strings::t(label)).remaining())
                     .child(layout::button_tx(
                         crate::strings::t("messageSection.search.retry"),
                         false,
@@ -508,7 +513,11 @@ fn glyph(s: &State, index: usize) -> timeline::Marker<'_> {
         Tool => (
             "messageTimeline.tool.fallbackLabel",
             &icons::LAYOUT_GRID,
-            "message-tool-border",
+            if m.pending {
+                "session-status-permission-fg"
+            } else {
+                "message-tool-border"
+            },
         ),
         Compaction => (
             "messageTimeline.segment.compaction.label",

@@ -6,8 +6,9 @@ use crate::{
 use codenomad_client::search::{Kind, Ranked};
 use rune::{Cx, El, Tx};
 use rune_theme_codenomad::{
-    TextRole, catalogue, field_kit,
+    Space, TextRole, attachment, catalogue, field_kit, git_panel,
     layout::{self, Layout},
+    settings,
     timeline::search,
 };
 
@@ -150,6 +151,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                     tx.focus("history-search-toggle", true);
                 }),
             )
+            .help(t("messageSection.search.closeAriaLabel"))
             .key("history-search-close"),
         );
     let change = screen::action_tx(&scope, super::query_changed);
@@ -177,9 +179,27 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
         })
         .build(&field_kit(layout::dark()))
         .key(super::FIELD);
+    let count = model
+        .page()
+        .filter(|page| !page.hits.is_empty())
+        .map(|page| {
+            let current = model.selected.map_or(0, |i| i + 1).to_string();
+            let total = page.hits.len().to_string();
+            let text = catalogue::format(
+                locale(),
+                "messageSection.search.count.matches",
+                &[("current", &current), ("total", &total)],
+            );
+            attachment::status_badge(&text).key("history-search-count")
+        })
+        .or_else(|| {
+            model
+                .minimum_hint()
+                .map(|hint| git_panel::count(hint).key("history-search-min-chars"))
+        });
     let header = layout::action_row()
         .child(input.remaining())
-        .children(model.minimum_hint().map(rune::text));
+        .children(count);
     let body_scroll = model.body_scroll.0.clone();
     let mut frame = crate::chat::reading::track_other_scroller_hover(
         search::body()
@@ -193,26 +213,40 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     .child(header)
     .children(model.page().filter(|p| !p.hits.is_empty()).map(|_| {
         layout::action_row()
-            .child(button(
-                s,
-                "history-search-prev",
-                "messageSection.search.previousAriaLabel",
-                |s, tx| super::move_match(s, tx, false),
-            ))
-            .child(button(
-                s,
-                "history-search-next",
-                "messageSection.search.nextAriaLabel",
-                |s, tx| super::move_match(s, tx, true),
-            ))
+            .child(
+                button(
+                    s,
+                    "history-search-prev",
+                    "messageSection.search.previousAriaLabel",
+                    |s, tx| super::move_match(s, tx, false),
+                )
+                .help(t("messageSection.search.previousAriaLabel")),
+            )
+            .child(
+                button(
+                    s,
+                    "history-search-next",
+                    "messageSection.search.nextAriaLabel",
+                    |s, tx| super::move_match(s, tx, true),
+                )
+                .help(t("messageSection.search.nextAriaLabel")),
+            )
     }));
     if model.flight.is_some() {
-        frame = frame.child(rune::text(t("messageSection.search.searching")).role("status"));
+        frame = frame.child(
+            git_panel::note(t("messageSection.search.searching"), "status")
+                .key("history-search-searching"),
+        );
     }
     if model.error {
         frame = frame.child(
             layout::action_row()
-                .child(rune::text(t("messageSection.search.failed")).role("alert"))
+                .key("history-search-error-row")
+                .child(
+                    settings::palette::save_error(t("messageSection.search.failed"))
+                        .key("history-search-error")
+                        .remaining(),
+                )
                 .child(button(
                     s,
                     "history-search-retry",
@@ -223,19 +257,29 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
     }
     if s.transcript_display.timeline.jump.filtered {
         frame = frame.child(
-            rune::text(t("history.destinationFiltered"))
-                .role("alert")
-                .wrap(),
+            settings::palette::save_error(t("history.destinationFiltered"))
+                .key("history-search-filtered"),
         );
     }
     match &model.results {
         Some(Ranked::Unsupported) => {
-            frame = frame.child(rune::text(t("history.rankedUnsupported")).role("status"))
+            frame = frame.child(
+                git_panel::note(t("history.rankedUnsupported"), "status")
+                    .key("history-search-unsupported"),
+            )
         }
         Some(Ranked::RestartRequired) => {
             frame = frame.child(
                 layout::action_row()
-                    .child(rune::text(t("history.rankedRestart")).role("status"))
+                    .key("history-search-restart-row")
+                    .inset_surface()
+                    .pad(Space::Sm)
+                    .child(
+                        settings::stats::caption(t("history.rankedRestart"))
+                            .role("status")
+                            .key("history-search-restart")
+                            .remaining(),
+                    )
                     .child(button(
                         s,
                         "history-search-fresh",
@@ -252,7 +296,7 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
             ..
         }) => {
             frame = frame.child(
-                rune::text(catalogue::format(
+                settings::stats::caption(catalogue::format(
                     locale(),
                     if model.ranked {
                         "history.rankedProgress"
@@ -264,7 +308,8 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                         ("messages", &page.scanned.to_string()),
                     ],
                 ))
-                .role("status"),
+                .role("status")
+                .key("history-search-progress"),
             );
             if model.ranked {
                 let note = if page.scanned == 0 {
@@ -274,31 +319,46 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                 } else {
                     "history.rankedRange"
                 };
-                frame = frame.child(rune::text(catalogue::format(
-                    locale(),
-                    note,
-                    &[
-                        ("messages", &page.scanned.to_string()),
-                        ("start", &(examined_before + 1).to_string()),
-                        ("end", &(examined_before + page.scanned).to_string()),
-                    ],
-                )));
+                frame = frame.child(
+                    settings::stats::caption(catalogue::format(
+                        locale(),
+                        note,
+                        &[
+                            ("messages", &page.scanned.to_string()),
+                            ("start", &(examined_before + 1).to_string()),
+                            ("end", &(examined_before + page.scanned).to_string()),
+                        ],
+                    ))
+                    .key("history-search-window"),
+                );
             }
             if *capped {
-                frame = frame.child(rune::text(t("history.rankedCapped")));
+                frame = frame.child(
+                    settings::stats::caption(t("history.rankedCapped"))
+                        .key("history-search-capped"),
+                );
             }
             if !exclusions.is_empty() {
-                frame = frame.child(rune::text(t("history.rankedExcluded")));
+                frame = frame.child(
+                    settings::stats::caption(t("history.rankedExcluded"))
+                        .key("history-search-excluded"),
+                );
             }
             if page.skipped > 0 {
-                frame = frame.child(rune::text(catalogue::format(
-                    locale(),
-                    "history.skipped",
-                    &[("count", &page.skipped.to_string())],
-                )));
+                frame = frame.child(
+                    settings::stats::caption(catalogue::format(
+                        locale(),
+                        "history.skipped",
+                        &[("count", &page.skipped.to_string())],
+                    ))
+                    .key("history-search-skipped"),
+                );
             }
             if page.hits.is_empty() && model.flight.is_none() {
-                frame = frame.child(rune::text(t("messageSection.search.count.none")));
+                frame = frame.child(
+                    git_panel::note(t("messageSection.search.count.none"), "status")
+                        .key("history-search-empty"),
+                );
             }
             let terms = if model.ranked {
                 search::terms(&model.text)
@@ -328,11 +388,24 @@ fn panel(s: &State, layers: &mut Vec<El>) -> Option<El> {
                             let title = if title.is_empty() { untitled } else { title };
                             let worktree =
                                 slug.and_then(|slug| crate::git::history_worktree(s, slug));
-                            rune::text(worktree.map_or_else(
-                                || title.to_owned(),
-                                |label| format!("{title} · {label}"),
-                            ))
-                            .text_role(TextRole::Label)
+                            let label = worktree
+                                .as_ref()
+                                .map_or_else(|| title.to_owned(), |wt| format!("{title} · {wt}"));
+                            layout::action_row()
+                                .role("heading")
+                                .label(label)
+                                .child(git_panel::clipped(title, TextRole::Label).remaining())
+                                .children(worktree.map(|wt| {
+                                    let tip = catalogue::format(
+                                        locale(),
+                                        "sessionList.worktree.tooltip",
+                                        &[("worktree", wt)],
+                                    );
+                                    attachment::status_badge(wt)
+                                        .role("note")
+                                        .key(format!("history-result-worktree-{}", groups[i]))
+                                        .help(tip)
+                                }))
                         })
                         .map(|header| header.key(group.clone()));
                     let kind = t(match hit.kind {
@@ -439,23 +512,18 @@ fn preview(
         .and_then(|data| data.created)
         .map(|created| super::preview::age(created, crate::platform::storage::unix_millis()));
     let body = search::results()
-        .children(
-            model
-                .preview
-                .pending()
-                .then(|| rune::text(t("messageSection.search.searching")).role("status")),
-        )
-        .children(
-            model
-                .preview
-                .failed
-                .then(|| rune::text(t("messageSection.search.failed")).role("alert")),
-        )
-        .children(
-            model
-                .open_error
-                .then(|| rune::text(t("history.openFailed")).role("alert")),
-        )
+        .children(model.preview.pending().then(|| {
+            settings::stats::caption(t("messageSection.search.searching"))
+                .role("status")
+                .key("history-preview-searching")
+        }))
+        .children(model.preview.failed.then(|| {
+            settings::palette::save_error(t("messageSection.search.failed"))
+                .key("history-preview-error")
+        }))
+        .children(model.open_error.then(|| {
+            settings::palette::save_error(t("history.openFailed")).key("history-preview-open-error")
+        }))
         .children(
             super::preview::blocks(hit, data.map_or(&[], |data| data.blocks.as_slice()))
                 .map(|block| search::excerpt(block, terms)),
@@ -481,7 +549,10 @@ fn preview(
             true
         })
     };
-    search::preview(title, worktree.as_deref(), age, open, body)
+    search::preview(title, worktree, age, open, body)
+        .inset_surface()
+        .pad(Space::Sm)
+        .separate(Space::Xs)
         .key("history-inter-session-preview")
 }
 
