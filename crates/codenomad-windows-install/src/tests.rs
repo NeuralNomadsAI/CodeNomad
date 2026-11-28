@@ -1,6 +1,7 @@
 //! Each test installs under an identity and folders of its own, so none touches the user's Start
 //! menu or an install's entry.
 
+use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -215,4 +216,58 @@ fn close_running_ends_a_copy_started_from_the_install_and_nothing_else() {
     other.wait().ok();
     assert!(other_still_runs);
     assert!(running_under(&s.root()).is_empty());
+}
+
+#[test]
+fn only_an_install_folder_can_be_removed() {
+    let s = Scratch::new();
+    assert_eq!(uninstall::check_root(&s.root()), Ok(()));
+
+    let refused = |path: &Path| uninstall::check_root(path).is_err();
+    let profile = folders::profile().unwrap();
+    std::fs::create_dir_all(s.dir.join("empty")).unwrap();
+    assert!(refused(&s.dir.join("empty")), "no application in it");
+    assert!(refused(&profile), "the user's profile");
+    assert!(refused(profile.parent().unwrap()), "holds the profile");
+    assert!(refused(Path::new(r"C:\")), "a drive");
+    assert!(refused(Path::new(r"C:\Windows")), "at a drive's top");
+    assert!(refused(Path::new(r"relative\root")), "not absolute");
+
+    let junction = s.dir.join("junction");
+    let made = std::process::Command::new("cmd.exe")
+        .args(["/d", "/c", "mklink", "/J"])
+        .args([&junction, &s.root()])
+        .stdout(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .unwrap();
+    assert!(made.success() && junction.join(EXE).is_file());
+    assert!(refused(&junction), "a junction to an install");
+    std::fs::remove_dir(&junction).unwrap();
+}
+
+#[test]
+fn the_install_folder_goes_once_nothing_holds_it_and_its_siblings_stay() {
+    let s = Scratch::new();
+    let root = s.dir.join("Code & Nomad ^ 100% !ok! (x)");
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+    std::fs::write(root.join(EXE), b"").unwrap();
+    // Opened without sharing, as Windows holds a running program's file.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(root.join(EXE))
+        .unwrap();
+
+    uninstall::remove_after_exit(&root).unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(root.join(EXE).exists(), "a held file stays");
+    drop(held);
+
+    let gone = (0..80).any(|_| {
+        std::thread::sleep(Duration::from_millis(250));
+        !root.exists()
+    });
+    assert!(gone);
+    assert!(s.root().join(EXE).is_file() && s.dir.join("links").is_dir());
 }

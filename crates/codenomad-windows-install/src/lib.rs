@@ -27,8 +27,10 @@ mod registry;
 mod shortcut;
 #[cfg(test)]
 mod tests;
+mod uninstall;
 
 pub use process::{close_running, running_under};
+pub use uninstall::run_if_asked as run_uninstall_if_asked;
 
 /// The application's executable in the install root.
 pub const EXE: &str = "codenomad-rune.exe";
@@ -46,6 +48,19 @@ pub struct Product {
     /// The AppUserModelID and the key of the Apps & features entry.
     pub id: String,
     pub version: String,
+}
+
+impl Product {
+    /// What a release installs as. The name differs from the Tauri application's `CodeNomad`
+    /// while both can be installed, so each keeps its Start menu entry and install folder; it
+    /// becomes `CodeNomad` when the Tauri application is retired.
+    pub fn release(version: &str) -> Product {
+        Product {
+            name: "CodeNomad Rune".into(),
+            id: APP_ID.into(),
+            version: version.into(),
+        }
+    }
 }
 
 /// Where the setup installs `p` by default: `%LOCALAPPDATA%\Programs\<name>`.

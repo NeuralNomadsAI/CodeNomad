@@ -87,7 +87,7 @@ SOFTWARE.
 
 ## OpenCode (Rune)
 
-`crates/codenomad-windows-install` is derived from `crates/win-install` of OpenCode (Rune):
+`crates/codenomad-windows-install` and `crates/codenomad-rune-setup` are derived from `crates/win-install`, `apps/installer` and the uninstaller of OpenCode (Rune):
 https://github.com/anomalyco/opencode-rune
 
 MIT License
