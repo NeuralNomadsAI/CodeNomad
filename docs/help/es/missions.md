@@ -96,7 +96,7 @@ Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la re
 
 ### Contadores e historial {#scheduling-limits}
 
-**Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial.
+**Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial. La conversación debe usar el agente, el modelo y el razonamiento del coordinador: de lo contrario, no se guarda, y un lanzamiento que los encuentre cambiados usa otra sesión.
 
 Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
 

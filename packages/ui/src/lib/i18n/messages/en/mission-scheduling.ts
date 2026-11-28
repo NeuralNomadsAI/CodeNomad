@@ -184,4 +184,5 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "This calendar has no future slot.",
   "missions.scheduling.error.capability": "Scheduling is unavailable. Keep the draft or remove the launch criteria.",
   "missions.scheduling.error.unsupported": "These launch criteria cannot be scheduled.",
+  "missions.scheduling.error.coordinatorProfile": "The existing conversation does not use the coordinator's agent, model and thinking. Make them match, or use a new session.",
 }
