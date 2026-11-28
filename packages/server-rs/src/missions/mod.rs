@@ -8,6 +8,10 @@ mod bridge;
 #[cfg(test)]
 mod bridge_m8_tests;
 pub mod calendar;
+pub mod calendars;
+mod calendars_native;
+#[cfg(test)]
+mod calendars_tests;
 mod cleanup;
 pub mod configuration;
 pub mod creation_admission;
@@ -31,7 +35,7 @@ pub mod time_zone;
 use axum::{
     Router,
     extract::DefaultBodyLimit,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 
 use crate::Shared;
@@ -64,6 +68,9 @@ pub fn routes() -> Router<Shared> {
         .route("/api/workspaces/{id}/missions/scheduled", get(calendar::list).post(calendar::create))
         .route("/api/workspaces/{id}/missions/scheduled/capabilities", get(calendar::capabilities))
         .route("/api/workspaces/{id}/missions/scheduled/requests/{request}", get(calendar::request_read))
+        .route("/api/workspaces/{id}/missions/calendars", get(calendars::list))
+        .route("/api/workspaces/{id}/missions/calendars/{calendar}", put(calendars::save).delete(calendars::delete))
+        .route("/api/workspaces/{id}/missions/calendars/{calendar}/{action}", post(calendars::action))
         .route("/api/workspaces/{id}/missions/{mission}/schedule", get(calendar::read).post(calendar::control))
         .route(
             "/api/workspaces/{id}/missions/{mission}/schedule-settings",
