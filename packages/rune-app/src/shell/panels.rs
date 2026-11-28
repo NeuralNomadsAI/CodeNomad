@@ -526,19 +526,53 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
     } else {
         &s.chat_title
     };
-    let left_docked = project && docked[0].is_some();
+    let left_open = project && s.shell.visible(0);
     let active_conversation = crate::workspace::active_session(s).is_some()
         || s.agent.is_some()
         || !s.chat_title.is_empty();
-    let meter = (project || active_conversation).then(|| context_meter(s));
-    let center_title = (!left_docked && !title.is_empty())
-        .then(|| shell::panel_title(title).key("chat-title").role("heading"));
+    let reserve = |i: usize| project && docked[i].is_none();
+    let reserve_left = reserve(0);
+    let reserve_right = reserve(1);
     let center_width = if s.shell.width > 0.0 {
         (s.shell.width - docked[0].unwrap_or(0.0) - docked[1].unwrap_or(0.0)).max(0.0)
     } else {
         0.0
     };
-    let show_connection_label = !touch && (center_width == 0.0 || center_width >= 420.0);
+    let inset_w = |reserved: bool| {
+        if reserved {
+            if touch { 56.0 } else { 44.0 }
+        } else {
+            12.0
+        }
+    };
+    let row_budget = if center_width > 0.0 {
+        (center_width - inset_w(reserve_left) - inset_w(reserve_right)).max(0.0)
+    } else {
+        0.0
+    };
+    let (meter_density, show_connection_label) = if row_budget == 0.0 {
+        if touch {
+            (shell::ContextMeterDensity::DialOnly, false)
+        } else {
+            (shell::ContextMeterDensity::Full, true)
+        }
+    } else if row_budget >= 410.0 && !touch {
+        (shell::ContextMeterDensity::Full, true)
+    } else if row_budget >= 340.0 {
+        (shell::ContextMeterDensity::Full, false)
+    } else if row_budget >= 290.0 {
+        (shell::ContextMeterDensity::Compact, false)
+    } else {
+        (shell::ContextMeterDensity::DialOnly, false)
+    };
+    let meter = (project || active_conversation).then(|| context_meter(s, meter_density));
+    let show_center_title =
+        !left_open && !title.is_empty() && (row_budget == 0.0 || row_budget >= 320.0);
+    let center_title =
+        show_center_title.then(|| shell::panel_title(title).key("chat-title").role("heading"));
+    let retry = connection_retry(s);
+    let compact_actions =
+        row_budget > 0.0 && (row_budget < 220.0 || (retry.is_some() && row_budget < 270.0));
     let mut actions = Vec::with_capacity(9);
     if let Some(meter) = meter {
         actions.push(meter);
@@ -548,7 +582,7 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         actions.push(heading);
         actions.push(shell::spacer());
     }
-    if let Some(rename) = super::tab_rename::trigger(s, touch) {
+    if !compact_actions && let Some(rename) = super::tab_rename::trigger(s, touch) {
         actions.push(rename);
     }
     actions.push(super::command_palette::trigger(s, touch));
@@ -561,14 +595,13 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
         connection(s),
         show_connection_label,
     ));
-    if let Some(retry) = connection_retry(s) {
+    if let Some(retry) = retry {
         actions.push(retry);
     }
-    let reserve = |i: usize| project && docked[i].is_none();
-    shell::header(reserve(0), reserve(1), touch, actions).key("session-header")
+    shell::header(reserve_left, reserve_right, touch, actions).key("session-header")
 }
 
-fn context_meter(s: &State) -> El {
+fn context_meter(s: &State, density: shell::ContextMeterDensity) -> El {
     let usage = s
         .messages
         .iter()
@@ -582,17 +615,23 @@ fn context_meter(s: &State) -> El {
             .saturating_add(u.output)
             .saturating_add(u.reasoning)
     });
+    // Shortcut bounded by the B2/B10 file frontier: codenomad-client::agent_api::Model does not
+    // yet decode /api/model limit.{input,context}. Upgrade by adding limit decoding on Model and
+    // looking up agent.current in agent.models, keeping limit.input preferred over limit.context.
     let avail = s
         .agent
         .as_ref()
         .and_then(|agent| agent.current.as_ref())
         .and_then(|model| {
-            model["limit"]["context"]
+            model["limit"]["input"]
                 .as_u64()
-                .or_else(|| model["contextWindow"].as_u64())
-                .or_else(|| model["context_limit"].as_u64())
-        })
-        .filter(|limit| *limit > 0);
+                .filter(|limit| *limit > 0)
+                .or_else(|| {
+                    model["limit"]["context"]
+                        .as_u64()
+                        .filter(|limit| *limit > 0)
+                })
+        });
     let locale = strings::locale();
     let used_label = strings::t("instanceShell.metrics.usedLabel");
     let avail_label = strings::t("instanceShell.metrics.availableLabel");
@@ -613,13 +652,20 @@ fn context_meter(s: &State) -> El {
         };
         (used as f32 / denom.max(1) as f32).clamp(0.0, 1.0)
     });
-    let tooltip = format!("{used_label}: {used_exact} / {avail_label}: {avail_exact}");
+    let tooltip = match ratio {
+        Some(value) => format!(
+            "{used_label}: {used_exact} / {avail_label}: {avail_exact} ({}%)",
+            (value * 100.0).round() as u32
+        ),
+        None => format!("{used_label}: {used_exact} / {avail_label}: {avail_exact}"),
+    };
     shell::context_meter(
         used_label,
         &used_compact,
         avail_label,
         &avail_compact,
         ratio,
+        density,
         &tooltip,
     )
 }
