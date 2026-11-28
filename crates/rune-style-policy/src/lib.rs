@@ -40,6 +40,7 @@ fn forbidden(name: &str) -> bool {
             "set_window_manager_state",
             "set_renderer_kind",
             "set_safe_area",
+            "set_keyboard_inset",
         ]
         .contains(&name)
 }
@@ -442,9 +443,25 @@ mod tests {
             "fn v(rt: &mut rune::Runtime<()>) { rt.set_window_manager_state(Default::default()); }",
             "fn v(rt: &mut rune::Runtime<()>) { rt.set_renderer_kind(Default::default()); }",
             "fn v(rt: &mut rune::Runtime<()>) { rt.set_safe_area([1., 2., 3., 4.]); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_keyboard_inset(240.); }",
             "fn v(){ el.on_edge_drag(edge, 24., handler); }",
         ] {
             assert!(!check(source).unwrap().is_empty(), "accepted {source}");
+        }
+    }
+    #[test]
+    fn rejects_set_keyboard_inset() {
+        for source in [
+            "fn v(rt: &mut rune::Runtime<()>) { rt.set_keyboard_inset(240.); }",
+            "fn v(rt: &mut rune::Runtime<()>) { rune::Runtime::set_keyboard_inset(rt, 240.); }",
+        ] {
+            let violations = check(source).unwrap();
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.message.contains("set_keyboard_inset")),
+                "expected set_keyboard_inset violation for {source}, got {violations:?}"
+            );
         }
     }
     #[test]
