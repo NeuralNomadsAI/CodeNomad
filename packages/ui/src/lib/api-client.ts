@@ -891,18 +891,6 @@ export function createServerApi(ctx: BackendHttp) {
     fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
       return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
     },
-    fetchMissionSchedules(instanceId: string, input: { after?: string; limit?: number; directory?: string; kind?: "schedule" } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleList> {
-      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
-      return missionRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled?${query}`, { signal }))
-    },
-    fetchMissionScheduleCapability(instanceId: string, directory?: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleCapability> {
-      const query = new URLSearchParams(directory === undefined ? {} : { directory })
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/scheduled/capabilities?${query}`, { signal }))
-    },
-    fetchMissionSchedule(instanceId: string, missionID: string, input: { directory?: string; requestID?: string } = {}, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionScheduleRead> {
-      const query = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined) as [string, string][])
-      return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(parseInstanceKey(instanceId).workspaceId)}/missions/${encodeURIComponent(missionID)}/schedule?${query}`, { signal }))
-    },
     /** The directory's programmed Missions. With `calendar`, saves it (`configuration`), pauses, resumes or deletes it first. */
     missionCalendars(instanceId: string, input: { directory?: string; calendar?: string; action?: "pause" | "resume" | "delete"; configuration?: unknown; paused?: boolean } = {},
       signal?: AbortSignal): Promise<{ calendars: import("../../../server/src/opencode/mission-calendars").MissionCalendarView[] }> {

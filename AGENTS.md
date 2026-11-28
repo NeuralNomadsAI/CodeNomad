@@ -27,7 +27,7 @@ Before changing code in an area listed under [Area conventions](#area-convention
 ## Area conventions
 Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 
-- **Missions** (`missions/`, `opencode/missions-plugin.ts`, `server/routes/mission-*`, `host-lifetime/`; UI `components/mission-*`, `components/settings/missions-settings-section.tsx`, `stores/mission-*`, `styles/panels/mission-*`): `dev-docs/MISSIONS.md`; recurring schedules and Wayfinder human gates (its "Wayfinder human decision mark" section) `dev-docs/MISSIONS_RECURRING.md`.
+- **Missions** (`missions/`, `opencode/missions-plugin.ts`, `server/routes/mission-*`, `host-lifetime/`; UI `components/mission-*`, `components/settings/missions-settings-section.tsx`, `stores/mission-*`, `styles/panels/mission-*`): `dev-docs/MISSIONS.md`; launch criteria, documents and Wayfinder human gates (its "Wayfinder human decision mark" section) `dev-docs/MISSIONS_RECURRING.md`.
 - **Questions, permissions and pending-request recovery** (interruption dock, conversation permission modes and receipts, `question-data.ts`, `permissions/`, `server/routes/session-permission-mode.ts`, `server/routes/pending-requests.ts`, `workspaces/pending-discovery.ts`, `stores/pending-recovery-*`): `dev-docs/NATIVE_INTERRUPTION_UX.md`.
 - **Composer** (`components/prompt-input*`, `prompt-input/`, `PromptContextControls`, `/btw`): `dev-docs/COMPOSER.md`.
 - **Transcript** (message rendering, Message content and presets, token lines, tool renderers, `stores/message-v2/`, `stores/opencode-data.ts`, `lib/native-execution-events.ts`): `dev-docs/TRANSCRIPT.md`; long-text bounds `dev-docs/TEXT_DISPLAY_BOUNDS.md`.

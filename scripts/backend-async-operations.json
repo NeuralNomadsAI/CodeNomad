@@ -135,7 +135,7 @@
   "components/workspace-file-view.tsx": ["api-client:previewWorkspaceFile x1","continuation:delegated x2","continuation:on x3","continuation:then x1","delegated:backend x13"],
   "components/worktree-selector.tsx": ["delegated:backend x9"],
   "lib/agent-memory-api.ts": ["delegated:backend x9","network:fetch x1"],
-  "lib/api-client.ts": ["continuation:delegated x14","delegated:backend x138","network:fetch x5"],
+  "lib/api-client.ts": ["continuation:delegated x11","delegated:backend x135","network:fetch x5"],
   "lib/auth-recovery.ts": ["delegated:backend x2","network:fetch x6"],
   "lib/backend-client.ts": ["delegated:backend x2"],
   "lib/backend-events.ts": ["backend-events:on x1","backend-events:onOpen x1","backend-events:onTransportStatus x1","server-events:on x1","server-events:onDispose x1","server-events:onOpen x1","server-events:onTransportStatus x1"],

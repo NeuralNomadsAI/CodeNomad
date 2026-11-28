@@ -55,7 +55,6 @@ async function open(page: Page, data: Data, windowContext: "local" | "remote" = 
     const request = route.request(), path = new URL(request.url()).pathname
     const content = missionContentFixture(request.url(), request.method(), data.missions)
     if (content) return route.fulfill({ json: content })
-    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } })
     // Pause is refused: the mission changed first.
     if (path.endsWith("/control")) return route.fulfill({ status: 409, json: { code: "revision-conflict" } })

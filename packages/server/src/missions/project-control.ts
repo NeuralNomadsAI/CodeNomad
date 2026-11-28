@@ -20,7 +20,7 @@ type Receipt = z.infer<typeof receiptSchema>
 export function projectControlResult(result: { receipt?: Receipt }) {
   const receipt = result.receipt
   if (!receipt || receipt.command.tool !== "configure") return result
-  const { objective: _objective, notes: _notes, configuration: _configuration, ...fields } = receipt.command.input
+  const { objective: _objective, notes: _notes, ...fields } = receipt.command.input
   return { ...result, receipt: { ...receipt, command: { tool: "configure", input: fields },
     payloadDigest: createHash("sha256").update(canonicalAuthority(receipt.command, 512 * 1024)).digest("hex") } }
 }
@@ -173,7 +173,7 @@ export function projectMissionController(input: {
             expectedRevision: request.expectedRevision!, deleteManagedSessions: command.input.deleteManagedSessions })
           result = { deleted: deleted.deleted }
         } else if (command.tool === "configure") {
-          if (!command.input.objective || command.input.configuration) throw new Error("Use the structural configuration admission")
+          if (!command.input.objective) throw new Error("Mission text required")
           const edited = await control.update({ missionID: request.missionID, requestID: request.requestID!,
             expectedRevision: request.expectedRevision!, objective: command.input.objective, notes: command.input.notes })
           result = projectMissionState(edited.mission)

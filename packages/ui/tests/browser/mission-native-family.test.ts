@@ -139,8 +139,6 @@ async function setup(label: string, narrow = false, independent = false, task = 
     requests.push({ method: request.method(), path: pathname, source: new URL(request.url()).searchParams.get("panelSource"), ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
-    if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
     if (pathname === "/api/workspaces/native-family/integrations") return route.fulfill({ json: { location, catalog: { state: "fresh" }, integrations: [] } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.

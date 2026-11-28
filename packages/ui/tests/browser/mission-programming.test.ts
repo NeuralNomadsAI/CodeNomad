@@ -45,8 +45,6 @@ async function setup() {
     if (method !== "GET") writes.push(`${method} ${pathname.slice(pathname.indexOf("/missions"))}`)
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     const calendar = /\/missions\/calendars(?:\/([^/]+)(?:\/(pause|resume))?)?$/.exec(pathname)
-    if (pathname.endsWith("/missions/scheduled/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (calendar) {
       if (method === "PUT") {
         const body = request.postDataJSON(); saved.push(body)

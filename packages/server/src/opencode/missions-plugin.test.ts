@@ -87,40 +87,6 @@ test("mission.program reaches the bridge under its own key, and prepare leaves r
   assert.deepEqual(refused, { outcome: "refused", phase: "creation", code: "use-mission-program" })
   assert.equal(calls.length, 1)
 })
-test("schedule tools preserve the actual caller for roots, descendants, actors and passages", async t => {
-  const tools = new Map<string, any>(), calls: unknown[] = [], registration = { dispose: async () => {} }
-  let loseACK = false
-  const cleanup = await setupMissionsBusiness({
-    tool: { transform: async (configure: any) => {
-      configure({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration
-    } },
-    session: { hook: async () => registration },
-  } as never, async (sessionID, name) => {
-    assert.equal(name, "schedule")
-    return { control: {} as never, readSessionID: sessionID, current() {}, beforeTool: async () => {} }
-  }, async (sessionID, input) => {
-    calls.push({ sessionID, input })
-    if (loseACK) throw new Error("Lost bridge ACK")
-    return { schedules: [] }
-  })
-  t.after(cleanup)
-  const schedule = tools.get("schedule")
-  const validate = new Ajv().compile(schedule.input)
-  assert.equal(validate({ action: "list" }), true)
-  assert.equal(validate({ action: "delete", missionID: "owned_schedule", requestID: "delete_once", expectedRevision: 5 }), true)
-  for (const sessionID of ["ses_root", "ses_descendant", "ses_actor", "ses_passage"]) {
-    assert.deepEqual(JSON.parse((await schedule.execute({ action: "list" }, { sessionID })).content), { schedules: [] })
-  }
-  assert.deepEqual(calls.map((call: any) => call.sessionID), ["ses_root", "ses_descendant", "ses_actor", "ses_passage"])
-  await assert.rejects(schedule.execute({ action: "delete", missionID: "owned_schedule" }, { sessionID: "ses_actor" }))
-  assert.equal(calls.length, 4)
-  loseACK = true
-  const input = { action: "pause", missionID: "owned_schedule", requestID: "lost_ack", expectedRevision: 4 }
-  const result = JSON.parse((await schedule.execute(input, { sessionID: "ses_actor" })).content)
-  assert.deepEqual(result, { status: 503, pending: true, missionID: input.missionID, requestID: input.requestID,
-    action: input.action, code: "schedule-unconfirmed" })
-  assert.equal(calls.length, 5, "lost ACK returns the original identity without retry")
-})
 
 test("project controls preserve each actual native caller and return the original identity after bridge ACK loss", async t => {
   const tools = new Map<string, any>(), calls: any[] = [], registration = { dispose: async () => {} }
@@ -198,7 +164,7 @@ test("registers project tools, typed snapshot RPC, and role context", async () =
     },
   } as never)
 
-  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "program", "settings", "control", "configure", "delete"])
+  assert.deepEqual(tools.map((tool) => tool.name), ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "program", "settings", "control", "configure", "delete"])
   const description = (name: string) => (tools.find((tool) => tool.name === name) as unknown as { description: string }).description
   for (const name of ["report", "briefing"]) {
     assert.match(description(name), /plain language in the user's language[:,] 3-5 short sentences, outcome first/)
@@ -211,12 +177,10 @@ test("registers project tools, typed snapshot RPC, and role context", async () =
   const inspect = tools.find((tool) => tool.name === "inspect")!
   assert.match(description("inspect"), /start attaches THIS root as a paused coordinator/)
   assert.match(description("inspect"), /including human-created Missions, from any owned conversation/)
-  assert.match(description("prepare"), /without starting a passage in this conversation/)
-  assert.match(description("prepare"), /new coordinator is the default/)
+  assert.match(description("prepare"), /without starting it in this conversation/)
+  assert.match(description("prepare"), /with a new coordinator/)
   assert.match(description("prepare"), /Any owned project session may prepare/)
-  assert.match(description("prepare"), /coordinatorSessionID explicitly selects an eligible root for scheduling only, including your own root/)
-  assert.match(description("prepare"), /mission.schedule controls project schedules/)
-  assert.match(description("schedule"), /including human-created schedules/)
+  assert.match(description("prepare"), /refused with use-mission-program/)
   assert.equal((inspect as any).input.properties.start.properties.title.maxLength, 60)
   const validateInspect = new Ajv().compile((inspect as any).input)
   const validatePrepare = new Ajv().compile((tools.find(tool => tool.name === "prepare") as any).input)

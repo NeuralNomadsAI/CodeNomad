@@ -131,7 +131,7 @@ export async function moveProjectSessionFamily(params: {
     const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
     const move = async () => {
       await assertInactive(context.client, family[1])
-      for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+      for (const session of family[1]) assertOrdinaryMissionScheduleSession(session)
       if (params.validateTarget && !await params.validateTarget()) {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
@@ -175,7 +175,7 @@ export async function removeProjectWorktree(params: {
       )
       for (const family of families) assertWorkspaceFamily(family, context.workspaceID)
       await assertInactive(context.client, families.flat())
-      for (const session of families.flat()) await assertOrdinaryMissionScheduleSession(context.client, session)
+      for (const session of families.flat()) assertOrdinaryMissionScheduleSession(session)
       await params.validateBeforeRemove?.(context.project.id)
       const original = new Map(families.flat().map((session) => [session.id, session.location]))
       const moved: string[] = []

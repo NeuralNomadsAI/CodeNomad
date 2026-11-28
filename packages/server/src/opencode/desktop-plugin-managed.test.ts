@@ -107,18 +107,18 @@ test("translates only filesystem IO while retaining WSL native paths and URL dia
   assert.equal(managedDesktopPluginForSource(installations, installations[0].plugin.replace("literal", "Literal"), path.posix), undefined)
 })
 
-test("recognizes runtime-only Missions shims without provider and rejects provider-only artifact shims", async t => {
+test("recognizes Missions shims with or without their runtime artifact and rejects provider-only artifact shims", async t => {
   const fixture = await createFixture(t)
   const installed = await fixture.install("missions", ["codenomad.missions"])
   const installations = await fixture.read()
   assert.equal(installations.length, 1)
   assert.equal(installations[0].plugin, installed.plugin)
-  const sha = "a".repeat(64), providerFile = nativePaths.join(nativePaths.dirname(installed.plugin), `${sha}.provider.mjs`)
-  const providerOnly = installed.source.replace(/"runtime":\{[^}]+\}/, `"provider":{"file":${JSON.stringify(providerFile)},"sha256":"${sha}"}`)
-  const complete = installed.source.replace(/"runtime":/, `"provider":{"file":${JSON.stringify(providerFile)},"sha256":"${sha}"},"runtime":`)
-  assert.equal(parseManagedDesktopPluginEntry("missions", complete, nativePaths)!.plugin, installed.plugin)
-  const broken = providerOnly
-  assert.throws(() => parseManagedDesktopPluginEntry("missions", broken, nativePaths), /Invalid managed Missions artifacts/)
+  const sha = "a".repeat(64), provider = { file: nativePaths.join(nativePaths.dirname(installed.plugin), `${sha}.provider.mjs`), sha256: sha }
+  const runtime = { file: installed.plugin, sha256: nativePaths.basename(installed.plugin, ".mjs") }
+  const shim = (artifacts: object) => installed.source.replace(/\)\n$/, `, ${JSON.stringify(artifacts)})\n`)
+  for (const artifacts of [{ runtime }, { provider, runtime }])
+    assert.equal(parseManagedDesktopPluginEntry("missions", shim(artifacts), nativePaths)!.plugin, installed.plugin)
+  assert.throws(() => parseManagedDesktopPluginEntry("missions", shim({ provider }), nativePaths), /Invalid managed Missions artifacts/)
 })
 
 for (const damage of ["malformed shim", "extra shim code", "digest tamper", "missing payload", "renamed shim"] as const)
