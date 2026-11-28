@@ -15,9 +15,10 @@ use crate::{
 use codenomad_client::missions::{CalendarLaunch, CalendarView};
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    Space, TextRole, attachment, catalogue,
     document_reader::editor as modal,
-    git_panel as theme,
+    file_row_actions::icons as row_icons,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout},
     shell,
 };
@@ -35,14 +36,11 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
     }
 
     let heading = t("missions.scheduling.title");
-    let mut section = col()
-        .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
+    let mut section = theme::context()
         .key("mission-calendars-section")
         .role("region")
         .label(heading)
-        .child(text(heading).text_role(TextRole::Small).role("heading"));
+        .child(shell::panel_title(heading).role("heading"));
 
     if !calendars.entries.is_empty() {
         let mut list = col().full_width().role("list").label(heading);
@@ -52,14 +50,19 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
             let status = status_text(display_status(item, &ui.summaries), locale());
             let row_owner = owner.clone();
             list = list.child(
-                shell::session_row(&item.title, selected, false, move |state, tx| {
-                    if let Some(panel) = row_owner.get(state).0 {
-                        panel.calendars.select(&id);
-                        tx.instant();
-                    }
-                })
-                .key(format!("mission-calendar-row-{}", item.id))
-                .description(status),
+                theme::file_row(selected)
+                    .child(
+                        shell::session_row(&item.title, selected, false, move |state, tx| {
+                            if let Some(panel) = row_owner.get(state).0 {
+                                panel.calendars.select(&id);
+                                tx.instant();
+                            }
+                        })
+                        .remaining()
+                        .key(format!("mission-calendar-row-{}", item.id))
+                        .description(status.clone()),
+                    )
+                    .child(attachment::status_badge(&status)),
             );
         }
         section = section.child(list);
@@ -70,16 +73,20 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
         section = section
             .child(theme::note(t("missions.scheduleList.readFailed"), "alert"))
             .child(
-                layout::button(
-                    t("missionsPanel.reader.retry"),
-                    calendars.busy_read(),
-                    move |state| {
-                        if let Some(panel) = retry_owner.get(state).0 {
-                            panel.refresh_calendars();
-                        }
-                    },
-                )
-                .key("mission-calendars-retry"),
+                layout::action_row().child(
+                    theme::button(
+                        t("missionsPanel.reader.retry"),
+                        Flat,
+                        calendars.busy_read(),
+                        move |state, tx| {
+                            if let Some(panel) = retry_owner.get(state).0 {
+                                panel.refresh_calendars();
+                                tx.instant();
+                            }
+                        },
+                    )
+                    .key("mission-calendars-retry"),
+                ),
             );
     }
 
@@ -126,12 +133,18 @@ fn calendar_detail<S: 'static>(
         let edit_id = calendar.id.clone();
         let edit_owner = owner.clone();
         actions = actions.child(
-            layout::button_tx(t("missions.control.edit"), busy, move |state, tx| {
-                if let Some(panel) = edit_owner.get(state).0 {
-                    panel.calendars.open_editor(&edit_id);
-                    tx.instant();
-                }
-            })
+            theme::icon_button(
+                &shell::icons::PENCIL,
+                t("missions.control.edit"),
+                busy,
+                None,
+                move |state, tx| {
+                    if let Some(panel) = edit_owner.get(state).0 {
+                        panel.calendars.open_editor(&edit_id);
+                        tx.instant();
+                    }
+                },
+            )
             .key("mission-calendar-edit"),
         );
     }
@@ -141,9 +154,11 @@ fn calendar_detail<S: 'static>(
     {
         let session = session_id.to_owned();
         actions = actions.child(
-            layout::button_tx(
+            theme::icon_button(
+                &shell::icons::CONVERSATION,
                 t("missionsPanel.action.openConversation"),
                 false,
+                None,
                 move |state, tx| {
                     open(state, session.clone(), tx);
                     tx.instant();
@@ -156,12 +171,18 @@ fn calendar_detail<S: 'static>(
     let delete_id = calendar.id.clone();
     let delete_owner = owner.clone();
     actions = actions.child(
-        layout::button_tx(t("missions.control.delete"), busy, move |state, tx| {
-            if let Some(panel) = delete_owner.get(state).0 {
-                panel.calendars.request_delete(&delete_id);
-                tx.instant();
-            }
-        })
+        theme::icon_button(
+            &row_icons::TRASH,
+            t("missions.control.delete"),
+            busy,
+            None,
+            move |state, tx| {
+                if let Some(panel) = delete_owner.get(state).0 {
+                    panel.calendars.request_delete(&delete_id);
+                    tx.instant();
+                }
+            },
+        )
         .key("mission-calendar-delete"),
     );
 
@@ -181,8 +202,16 @@ fn calendar_detail<S: 'static>(
         .key("mission-calendar-detail")
         .role("region")
         .label(&calendar.title)
-        .child(text(&calendar.title).role("heading").wrap_anywhere())
-        .child(text(status).text_role(TextRole::Small).wrap_anywhere())
+        .child(
+            layout::action_row()
+                .child(
+                    text(&calendar.title)
+                        .role("heading")
+                        .wrap_anywhere()
+                        .remaining(),
+                )
+                .child(attachment::status_badge(&status)),
+        )
         .child(text(next_line).text_role(TextRole::Small).wrap_anywhere())
         .child(actions);
 
@@ -224,11 +253,7 @@ fn launch_summary_block(calendar: &CalendarView, loc: &str) -> El {
         .full_width()
         .separate(Space::Xs)
         .key("mission-calendar-launch")
-        .child(
-            text(t("missions.scheduling.when"))
-                .text_role(TextRole::Small)
-                .role("heading"),
-        );
+        .child(shell::panel_title(t("missions.scheduling.when")).role("heading"));
     match &calendar.launch {
         Some(CalendarLaunch::Criteria(policy)) => {
             for line in describe_criteria(policy, loc) {
@@ -269,7 +294,7 @@ fn history_block(calendar: &CalendarView, loc: &str, zone: &str) -> El {
         .key("mission-calendar-history")
         .role("region")
         .label(heading)
-        .child(text(heading).text_role(TextRole::Small).role("heading"));
+        .child(shell::panel_title(heading).role("heading"));
     let history = calendar.history();
     if history.is_empty() {
         section = section.child(

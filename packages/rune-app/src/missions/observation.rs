@@ -13,8 +13,10 @@ use codenomad_client::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, git_panel as theme,
+    Space, attachment,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout},
+    shell,
 };
 use std::{collections::HashSet, rc::Rc, time::Duration};
 
@@ -338,12 +340,11 @@ impl Observation {
                     || page.requests != Coverage::Observed
                     || !self.current(page)
             });
-        let mut view = col()
-            .full_width()
+        let mut view = theme::context()
             .role("region")
             .label(label)
             .key("mission-activity")
-            .child(text(label).text_role(TextRole::Small).role("heading"));
+            .child(shell::panel_title(label).role("heading"));
         let mut list = col().full_width().role("list").label(label);
         for page in &self.pages {
             for actor in &page.actors {
@@ -358,14 +359,13 @@ impl Observation {
                     actor.request.unwrap_or(actor.state)
                 };
                 list = list.child(
-                    col()
-                        .full_width()
+                    layout::action_row()
                         .pad(Space::Xs)
                         .role("listitem")
                         .label(title)
                         .key(format!("mission-actor-{}", actor.session_id))
-                        .child(text(title).wrap_anywhere())
-                        .child(text(status(state)).text_role(TextRole::Small)),
+                        .child(text(title).wrap_anywhere().remaining())
+                        .child(attachment::status_badge(status(state))),
                 );
             }
         }
@@ -377,21 +377,25 @@ impl Observation {
             if failed {
                 view = view.child(theme::note(t("missionsPanel.pages.failed"), "alert"));
             }
-            let mut action = layout::button(
+            let mut action = theme::button(
                 t(if failed {
                     "missionsPanel.reader.retry"
                 } else {
                     "missionsPanel.pages.more"
                 }),
+                Flat,
                 false,
-                more,
+                move |s, tx| {
+                    more(s);
+                    tx.instant();
+                },
             )
             .key("mission-activity-more");
             if partial {
                 let help = t("missionsPanel.pages.observations");
                 action = action.help(help).description(help);
             }
-            view = view.child(action);
+            view = view.child(layout::action_row().child(action));
         } else if partial {
             view = view.child(
                 theme::note(status(ActorState::Unknown), "status")

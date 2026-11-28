@@ -10,9 +10,10 @@ use codenomad_client::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, git_panel as theme,
+    Space, TextRole, catalogue,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout},
-    markdown,
+    markdown, shell,
 };
 
 #[derive(Default)]
@@ -186,26 +187,29 @@ pub(super) fn view<S: 'static>(
 ) -> El {
     let button = |label: String, part, offset, key| {
         let source = source.clone();
-        layout::button_tx(&label, !ready, move |state: &mut S, tx| {
+        theme::button(label, Flat, !ready, move |state: &mut S, tx| {
             act(state, &source, Gesture::ReadField(part, offset));
             tx.instant();
         })
         .key(key)
     };
-    let mut out = col()
-        .full_width()
-        .pad(Space::Xs)
-        .role("region")
-        .label(t("missionsPanel.pages.fields"))
-        .child(text(t("missionsPanel.pages.fields")).role("heading"));
+    let mut toggles = layout::action_row();
     for (part, name, count) in [
         (ControlPart::Receipts, "control.receipts", control.receipts),
         (ControlPart::Pending, "control.pending", control.pending),
     ] {
-        out = out.child(
+        toggles = toggles.child(
             button(format!("{name} ({count})"), part, 0, name).expanded(fields.part == Some(part)),
         );
     }
+    let mut out = col()
+        .full_width()
+        .pad(Space::Xs)
+        .separate(Space::Xs)
+        .role("region")
+        .label(t("missionsPanel.pages.fields"))
+        .child(shell::panel_title(t("missionsPanel.pages.fields")).role("heading"))
+        .child(toggles);
     if let Some(part) = fields.part {
         if let Some(page) = &fields.shown {
             out = out.child(
