@@ -55,7 +55,7 @@ pub(in crate::settings) fn view<S: 'static>(
     body = body.child(chrome::card(
         layout::action_row()
             .child(
-                layout::button(
+                chrome::secondary_action(
                     t("integrations.refresh"),
                     !panel.available() || panel.reading() || busy,
                     move |s: &mut S| {
@@ -202,7 +202,7 @@ fn recognized_card<S: 'static>(
                         .role("status"),
                 )
                 .child(
-                    layout::button(
+                    chrome::secondary_action(
                         t("integrations.detachConversation"),
                         busy || !binding_ready,
                         move |s: &mut S| {
@@ -276,7 +276,7 @@ fn recognized_card<S: 'static>(
             );
         }
         choices = choices.child(
-            layout::button(t("alertDialog.actions.cancel"), false, move |s: &mut S| {
+            chrome::secondary_action(t("alertDialog.actions.cancel"), false, move |s: &mut S| {
                 if let Some(panel) = access(s) {
                     panel.dismiss_overlay();
                 }
@@ -382,7 +382,7 @@ fn entry_header<S: 'static>(
         .key(format!("integration-info-{id}"))
     });
     let docs = entry.docs.clone().map_or_else(rune::el, |docs| {
-        layout::button_tx(t("integrations.docs"), false, move |s: &mut S, tx| {
+        chrome::secondary_action_tx(t("integrations.docs"), false, move |s: &mut S, tx| {
             if let Some(panel) = access(s) {
                 panel.docs_link.open(&docs, tx, move |s| {
                     access(s).map(|panel| &mut panel.docs_link)

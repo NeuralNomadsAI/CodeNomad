@@ -138,7 +138,7 @@ fn accounts_controls<S: 'static>(
         let trigger_key = format!("provider-account-add-{}", provider.id);
         let return_key = trigger_key.clone();
         actions = actions.child(
-            layout::button_tx(t("settings.accounts.add"), busy, move |s: &mut S, tx| {
+            chrome::secondary_action_tx(t("settings.accounts.add"), busy, move |s: &mut S, tx| {
                 access(s)
                     .manager
                     .open_connect_modal(prov_id.clone(), Some(return_key.clone()), tx);
@@ -159,24 +159,34 @@ fn accounts_controls<S: 'static>(
             let rename_input_key = format!("provider-account-rename-input-{}", provider.id);
             actions = actions
                 .child(
-                    layout::button_tx(t("settings.accounts.rename"), busy, move |s: &mut S, tx| {
-                        access(s)
-                            .manager
-                            .start_rename(&rename_prov, &rename_cred, &rename_initial);
-                        tx.focus_when_shown(rename_input_key.clone(), true);
-                    })
+                    chrome::secondary_action_tx(
+                        t("settings.accounts.rename"),
+                        busy,
+                        move |s: &mut S, tx| {
+                            access(s).manager.start_rename(
+                                &rename_prov,
+                                &rename_cred,
+                                &rename_initial,
+                            );
+                            tx.focus_when_shown(rename_input_key.clone(), true);
+                        },
+                    )
                     .label(t("settings.accounts.rename"))
                     .key(format!("provider-account-rename-{}", provider.id)),
                 )
                 .child(
-                    layout::button(t("settings.accounts.remove"), busy, move |s: &mut S| {
-                        access(s)
-                            .manager
-                            .queue_account_action(AccountAction::Remove {
-                                integration_id: remove_prov.clone(),
-                                credential_id: remove_cred.clone(),
-                            });
-                    })
+                    chrome::secondary_action(
+                        t("settings.accounts.remove"),
+                        busy,
+                        move |s: &mut S| {
+                            access(s)
+                                .manager
+                                .queue_account_action(AccountAction::Remove {
+                                    integration_id: remove_prov.clone(),
+                                    credential_id: remove_cred.clone(),
+                                });
+                        },
+                    )
                     .label(t("settings.accounts.remove"))
                     .key(format!("provider-account-remove-{}", provider.id)),
                 );
@@ -242,9 +252,13 @@ fn accounts_controls<S: 'static>(
                         .key(format!("provider-account-rename-save-{}", provider.id)),
                     )
                     .child(
-                        layout::button(t("alertDialog.actions.cancel"), busy, move |s: &mut S| {
-                            access(s).manager.cancel_rename(&prov_cancel, &cred_cancel);
-                        })
+                        chrome::secondary_action(
+                            t("alertDialog.actions.cancel"),
+                            busy,
+                            move |s: &mut S| {
+                                access(s).manager.cancel_rename(&prov_cancel, &cred_cancel);
+                            },
+                        )
                         .key(format!("provider-account-rename-cancel-{}", provider.id)),
                     ),
             ),

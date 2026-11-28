@@ -1888,7 +1888,7 @@ fn connect_bar<S: 'static>(
     }
 
     row_el = row_el.child(
-        layout::button(
+        chrome::secondary_action(
             t("settings.providers.refresh"),
             mgr.flight.is_some() || mgr.modal_open(),
             move |s: &mut S| access(s).manager.request_refresh(),

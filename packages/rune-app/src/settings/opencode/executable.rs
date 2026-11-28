@@ -444,7 +444,7 @@ impl State {
             card = card.child(
                 layout::action_row()
                     .child(chrome::palette::save_error(t(error)))
-                    .child(layout::button(
+                    .child(chrome::secondary_action(
                         t("sessionList.loadError.retry"),
                         !prefs.can_retry() || prefs.opencode_binary_pending(),
                         move |_: &mut S| retry_shared.borrow_mut().retry_opencode_binary(),

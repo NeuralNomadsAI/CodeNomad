@@ -90,7 +90,7 @@ impl Missions {
             if read_failed {
                 defaults_card = defaults_card.child(
                     layout::action_row().child(
-                        layout::button(
+                        chrome::secondary_action(
                             t("missions.preferences.reload"),
                             reloading || !active,
                             do_reload_defaults.clone(),
@@ -110,7 +110,7 @@ impl Missions {
                 .child(
                     layout::action_row()
                         .child(
-                            layout::button(
+                            chrome::secondary_action(
                                 t("missions.defaults.reset"),
                                 !active || reloading || needs_reload,
                                 move |s: &mut S| {
@@ -130,7 +130,7 @@ impl Missions {
                             .key("mission-defaults-repair"),
                         )
                         .child(
-                            layout::button(
+                            chrome::secondary_action(
                                 t("missions.preferences.reload"),
                                 !active || reloading,
                                 do_reload_defaults.clone(),
@@ -335,7 +335,7 @@ impl Missions {
         if needs_reload && valid {
             defaults_card = defaults_card.child(
                 layout::action_row().child(
-                    layout::button(
+                    chrome::secondary_action(
                         t("missions.preferences.reload"),
                         !active || reloading,
                         do_reload_defaults,

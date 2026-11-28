@@ -383,7 +383,7 @@ pub(super) fn view<S: 'static>(
                     .child(chrome::palette::save_error(t(
                         "settings.memory.error.unavailable",
                     )))
-                    .child(layout::button(
+                    .child(chrome::secondary_action(
                         t("settings.memory.retry"),
                         !verified || setting.busy(),
                         move |s| apply(s, None),

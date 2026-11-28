@@ -297,15 +297,13 @@ pub(super) fn view<S: 'static>(
                 .role("status"),
         );
     }
-    card = card.child(
-        layout::action_row()
-            .children(install_button)
-            .child(layout::button(
-                t("settings.opencode.setup.check"),
-                pending || !prefs.can_retry(),
-                check,
-            )),
-    );
+    card = card.child(layout::action_row().children(install_button).child(
+        chrome::secondary_action(
+            t("settings.opencode.setup.check"),
+            pending || !prefs.can_retry(),
+            check,
+        ),
+    ));
     if let Some(snapshot) = &status.value {
         let mut detail_rows = vec![version(
             "settings.opencode.setup.minimum",

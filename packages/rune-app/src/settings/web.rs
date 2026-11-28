@@ -27,7 +27,6 @@ pub(super) struct Panel {
     shown: bool,
     section: Section,
     narrow: NarrowState,
-    pending_focus: Option<&'static str>,
     deferred_open: Option<Section>,
     pending_section: Option<Section>,
     after_palette_save: Option<(u64, AfterPaletteSave)>,
@@ -97,15 +96,6 @@ impl Panel {
         paired: bool,
         tx: &mut rune::Tx,
     ) -> bool {
-        let mut focused = false;
-        if paired
-            && self.shown
-            && let Some(key) = self.pending_focus.take()
-            && self.narrow.is_narrow()
-        {
-            tx.focus(key, true);
-            focused = true;
-        }
         if paired && self.shown && self.section == Section::Info {
             self.info.announce(prefs, tx);
         }
@@ -121,12 +111,11 @@ impl Panel {
                 crate::strings::with_locale(locale, || layout::announce_alert(tx, t(error)));
             }
         }
-        focused
-            | (self.shown
-                && self.section == Section::Shortcuts
-                && self
-                    .shortcut_capture
-                    .poll(&mut self.recording_shortcut, prefs, tx))
+        self.shown
+            && self.section == Section::Shortcuts
+            && self
+                .shortcut_capture
+                .poll(&mut self.recording_shortcut, prefs, tx)
     }
 
     pub fn poll_stats(
@@ -283,14 +272,18 @@ impl Panel {
         let shown = self.shown && paired;
         let mut changed = self.scope.poll(prefs, wake, shown);
         if shown && let Some(requested) = self.deferred_open {
-            if self.general.dirty() || self.general.busy(prefs) {
-                // User started editing General while waiting for `/api/meta`: abandon deferred jump.
-                self.deferred_open = None;
-            } else if self.can_open_section(prefs, requested) {
+            if self.can_open_section(prefs, requested) {
                 if !self.config_files.busy() {
                     self.deferred_open = None;
                     if requested != self.section {
-                        apply_web_section(self, prefs, requested);
+                        if self.general.busy(prefs) {
+                            self.after_palette_save =
+                                Some((prefs.binding_epoch(), AfterPaletteSave::Section(requested)));
+                        } else if self.general.dirty() {
+                            self.pending_section = Some(requested);
+                        } else {
+                            apply_web_section(self, prefs, requested);
+                        }
                     }
                     self.narrow.close_picker();
                     changed = true;
@@ -480,7 +473,6 @@ fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
 fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.shown = false;
     panel.narrow.close_picker();
-    panel.pending_focus = None;
     panel.deferred_open = None;
     panel.confirm_config_close = false;
     panel.confirm_palette_close = false;

@@ -83,7 +83,7 @@ impl Logging {
                 .children(prefs.log_level_failed().map(|error| {
                     layout::action_row()
                         .child(chrome::palette::save_error(t(error)))
-                        .child(layout::button(
+                        .child(chrome::secondary_action(
                             t("sessionList.loadError.retry"),
                             !prefs.can_retry() || pending,
                             move |_: &mut S| retry.borrow_mut().retry_log_level(),

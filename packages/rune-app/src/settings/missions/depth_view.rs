@@ -210,7 +210,7 @@ impl State {
         if self.error || self.phase == Phase::Uncertain {
             card = card.child(
                 layout::action_row().child(
-                    layout::button(
+                    chrome::secondary_action(
                         t("missions.depth.refresh"),
                         !active || self.busy() || !has_target,
                         refresh,

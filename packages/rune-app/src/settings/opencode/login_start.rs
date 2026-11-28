@@ -281,7 +281,7 @@ impl State {
                 let retry_shared = shared.clone();
                 let retry_wake = wake;
                 row = row.child(
-                    layout::button(
+                    chrome::secondary_action(
                         t("settings.loginStart.retry"),
                         self.read_flight.is_some() || !online,
                         move |s: &mut S| {

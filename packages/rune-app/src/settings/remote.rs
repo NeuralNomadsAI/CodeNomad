@@ -975,7 +975,7 @@ impl Remote {
             if primary {
                 chrome::primary_action(label, disabled, press)
             } else {
-                layout::button(label, disabled, press)
+                chrome::secondary_action(label, disabled, press)
             }
         };
         let refresh_shared = shared.clone();

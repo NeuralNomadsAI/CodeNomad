@@ -268,7 +268,7 @@ impl State {
                     let revert_label =
                         catalogue::format(locale(), "missions.defaults.revert", &[("role", title)]);
                     let change_role = change_role.clone();
-                    layout::button(
+                    chrome::secondary_action(
                         t("missions.preferences.reset"),
                         disabled,
                         move |s: &mut S| change_role(s, role, None),

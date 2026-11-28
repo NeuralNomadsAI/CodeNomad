@@ -627,7 +627,7 @@ impl DirectAccess {
         let local_request = self.meta.as_ref().is_none_or(|m| m.local_request);
         let allow_external = self.allow_external();
         let refresh_shared = shared.clone();
-        let refresh = layout::button(
+        let refresh = chrome::secondary_action(
             t("remoteAccess.refresh"),
             !available || loading || applying,
             move |s: &mut S| {
@@ -755,7 +755,7 @@ impl DirectAccess {
                                 .key("remote-listening-confirm-apply"),
                             )
                             .child(
-                                layout::button(
+                                chrome::secondary_action(
                                     t("remoteAccess.listeningMode.restartConfirm.cancelLabel"),
                                     applying,
                                     move |s: &mut S| {
@@ -846,7 +846,7 @@ impl DirectAccess {
                 "remoteAccess.password.actions.set"
             });
             card = card.child(
-                layout::button(
+                chrome::secondary_action(
                     toggle_label,
                     !available || mutating || !self.meta_verified,
                     move |s: &mut S| {
@@ -999,7 +999,7 @@ impl DirectAccess {
                     .replace("{count}", &hidden.len().to_string())
             };
             card = card.child(
-                layout::button(&label, false, move |s: &mut S| {
+                chrome::secondary_action(&label, false, move |s: &mut S| {
                     if let Some(state) = access(s) {
                         state.direct.show_other_addresses = !state.direct.show_other_addresses;
                     }
@@ -1073,7 +1073,7 @@ impl DirectAccess {
             .child(
                 layout::action_row()
                     .child(
-                        layout::button_tx(
+                        chrome::secondary_action_tx(
                             open_label,
                             !available || !self.meta_verified,
                             move |s: &mut S, tx| {
@@ -1100,7 +1100,7 @@ impl DirectAccess {
                         .label(&format!("{open_label} · {url}")),
                     )
                     .child(
-                        layout::button_tx(
+                        chrome::secondary_action_tx(
                             copy_label,
                             !available || !self.meta_verified,
                             move |s: &mut S, tx| {

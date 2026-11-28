@@ -125,7 +125,7 @@ impl Editor {
                     let label = key.clone();
                     let key = key.clone();
                     let shared = shared.clone();
-                    layout::button(&label, !ready, move |s| {
+                    chrome::secondary_action(&label, !ready, move |s| {
                         let editor = edit(s);
                         let prefs = shared.borrow();
                         let Some(doc) = prefs

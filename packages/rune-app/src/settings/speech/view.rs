@@ -176,7 +176,7 @@ impl Speech {
         if toggle_failed {
             let retry_owner = shared.clone();
             actions = actions.child(
-                layout::button(
+                chrome::secondary_action(
                     t("settings.voice.retry"),
                     !prefs.can_retry() || pending,
                     move |_: &mut S| {

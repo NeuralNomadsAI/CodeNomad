@@ -199,6 +199,7 @@ impl NarrowState {
     /// preserve the picker state; widening past the breakpoint closes the compact picker.
     pub(super) fn measure(&mut self, width: f32, tx: &mut rune::Tx) {
         if width <= 0.0 || (self.width - width).abs() <= 0.5 {
+            tx.live_only();
             return;
         }
         let was_narrow = self.is_narrow();
@@ -208,7 +209,7 @@ impl NarrowState {
             self.picker_open = false;
         }
         if was_narrow != now_narrow {
-            tx.wake_after(std::time::Duration::ZERO);
+            tx.instant();
         }
     }
 }

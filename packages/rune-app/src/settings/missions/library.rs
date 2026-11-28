@@ -566,7 +566,7 @@ impl State {
                 .child(
                     layout::action_row()
                         .child(
-                            layout::button(
+                            chrome::secondary_action(
                                 t("missions.models.reset"),
                                 self.pending() || self.needs_reload || !active,
                                 reset,

@@ -872,7 +872,7 @@ impl Controls {
             let preset_id = preset_id.clone();
             let preset_name = option.name.clone();
             action_buttons.push(
-                layout::button(
+                chrome::secondary_action(
                     t("settings.appearance.colorScheme.custom.delete"),
                     draft.creating || saving,
                     move |s: &mut S| {
@@ -886,7 +886,7 @@ impl Controls {
         if saved_builtin_override {
             let reset_shared = shared.clone();
             action_buttons.push(
-                layout::button(
+                chrome::secondary_action(
                     t("settings.appearance.colorScheme.custom.reset"),
                     draft.creating || saving,
                     move |s: &mut S| {
@@ -899,7 +899,7 @@ impl Controls {
         if !draft.creating {
             let new_shared = shared.clone();
             action_buttons.push(
-                layout::button(
+                chrome::secondary_action(
                     t("settings.appearance.colorScheme.custom.new"),
                     !prefs.palette_ready() || saving,
                     move |s: &mut S| {

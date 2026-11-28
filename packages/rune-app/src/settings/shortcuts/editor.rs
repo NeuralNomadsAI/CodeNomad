@@ -88,7 +88,7 @@ pub(in crate::settings) fn view<S: 'static>(
                     }
                 })
                 .key("hotkey-filter"),
-            layout::button(t("hotkeys.resetAll"), locked, move |s: &mut S| {
+            chrome::secondary_action(t("hotkeys.resetAll"), locked, move |s: &mut S| {
                 if let Some((recording, capture)) = access(s) {
                     *recording = false;
                     capture.refused = false;

@@ -385,7 +385,11 @@ pub fn compact_bar<S: 'static>(
     let accent = t.color("accent-primary");
     let bar_h = if touch { 56.0 } else { 52.0 };
     let control_h = if touch { 44.0 } else { 40.0 };
-    let badge_fill = blend(accent, t.color("surface-inset"), 0.12);
+    let badge_fill = blend(
+        accent,
+        t.color("surface-inset"),
+        if dark { 0.04 } else { 0.12 },
+    );
     let gear_badge = el()
         .key("settings-compact-icon")
         .size(control_h, control_h)
@@ -429,9 +433,16 @@ pub fn compact_bar<S: 'static>(
                 .a11y_hidden(),
         )
         .child(
-            rune::icon(&crate::git_panel::CHEVRON_DOWN, 12.0)
-                .color(t.color("text-muted"))
-                .a11y_hidden(),
+            rune::icon(
+                if open {
+                    &icons::CHEVRON_UP
+                } else {
+                    &crate::git_panel::CHEVRON_DOWN
+                },
+                12.0,
+            )
+            .color(t.color("text-muted"))
+            .a11y_hidden(),
         )
         .on_press_tx(move |s, tx| toggle_click(s, tx))
         .on_key(move |s, event, tx| {
@@ -680,7 +691,7 @@ pub fn preset_buttons<S: 'static>(
     let accent = t.color("accent-primary");
     let border_base = t.color("border-base");
     let control_bg = t.color("surface-control");
-    let selected_fill = blend(accent, control_bg, 0.10);
+    let selected_fill = blend(accent, control_bg, if dark { 0.035 } else { 0.10 });
     let selected_border = blend(accent, border_base, 0.48);
     col()
         .key("transcript-presets")
@@ -1220,8 +1231,7 @@ pub fn binary_row_item<S: 'static>(
                     .text_role(TextRole::Mono)
                     .color(t.color("text-muted"))
                     .literal_direction()
-                    .truncate()
-                    .a11y_hidden(),
+                    .truncate(),
             ),
         );
     }
@@ -1235,10 +1245,11 @@ pub fn binary_row_item<S: 'static>(
             ),
         );
     }
-    let mut content_btn = row()
-        .key(key)
-        .role("button")
-        .label(label)
+    let mut content_btn = row().key(key).role("button").label(label);
+    if let Some(path) = path.filter(|p| *p != label) {
+        content_btn = content_btn.description(path);
+    }
+    content_btn = content_btn
         .checked(selected)
         .disabled(disabled)
         .focusable(!disabled)
@@ -1394,16 +1405,17 @@ pub fn empty_box(message: &str) -> El {
 }
 
 pub fn server_scope_badge(label: &str) -> El {
-    let t = tokens(layout::dark());
-    el().px(6.0)
-        .py(2.0)
-        .fill(t.color("surface-inset"))
-        .border(1.0, t.color("border-base"))
-        .child(
-            text(label)
-                .text_role(TextRole::Small)
-                .color(t.color("text-muted")),
-        )
+    let dark = layout::dark();
+    let t = tokens(dark);
+    let accent = t.color("accent-primary");
+    el().px(8.0)
+        .py(3.0)
+        .fill(blend(
+            accent,
+            t.color("surface-inset"),
+            if dark { 0.04 } else { 0.12 },
+        ))
+        .child(text(label).text_role(TextRole::Small).color(accent))
 }
 
 pub fn refresh_icon_button<S: 'static>(
@@ -1861,6 +1873,8 @@ pub fn checkbox_leading<S: 'static>(
         .disabled(disabled)
         .on_toggle(toggle)
         .build(&crate::kit(layout::dark()))
+        .full_width()
+        .min_w(0.0)
         .motion(rune::Spring::NONE)
 }
 
@@ -1870,15 +1884,15 @@ pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
         .min_w(0.0)
         .min_h(35.0)
         .py(3.0)
-        .flex_wrap()
         .center_y()
         .justify_between()
         .separate(Space::Md)
         .child(
             row()
-                .center_y()
+                .grow(1.0)
                 .shrink()
                 .min_w(0.0)
+                .center_y()
                 .separate(Space::Xs)
                 .child(text(label).text_role(TextRole::Body).shrink().wrap())
                 .children(info),
@@ -1966,6 +1980,78 @@ pub fn primary_action_tx<S: 'static>(
         .on_press_tx(press)
         .build(&crate::kit(layout::dark()))
         .motion(rune::Spring::NONE)
+}
+
+/// T1-bis secondary action button for settings rows: regular weight (400), compact label size,
+/// and muted ink on the bordered control surface, keeping weight 500 for primary actions.
+pub fn secondary_action<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S) + 'static,
+) -> El {
+    secondary_action_tx(label, disabled, move |s, _| press(s))
+}
+
+pub fn secondary_action_tx<S: 'static>(
+    label: &str,
+    disabled: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let dark = layout::dark();
+    let t = tokens(dark);
+    let kit = &*crate::kit(dark);
+    let action = std::rc::Rc::new(press);
+    let click = action.clone();
+    let style = rune::TextStyle::new(
+        t.number("font-size-xs").px(),
+        t.number("font-weight-regular").px(),
+    )
+    .lh(t.metric("secondary", "lineHeight").px());
+    let ink = if disabled {
+        t.color("text-muted")
+    } else {
+        t.color("text-secondary")
+    };
+    let mut btn = el()
+        .role("button")
+        .label(label)
+        .disabled(disabled)
+        .focusable(!disabled)
+        .min_h(t.number("control-height").px())
+        .px(t.space(Space::Md).px())
+        .center()
+        .fill(t.color("surface-control"))
+        .border(1.0, t.color("border-base"))
+        .motion(rune::Spring::NONE)
+        .child(text(label).font(style).color(ink).a11y_hidden());
+    if disabled {
+        btn = btn.opacity(0.55);
+    } else {
+        btn = btn
+            .hover(t.color("surface-hover"))
+            .on_press_tx(move |s, tx| click(s, tx))
+            .on_key(move |s, event, tx| {
+                if event.mods != rune::Mods::default() {
+                    return false;
+                }
+                match event.key {
+                    rune::Key::Enter => {
+                        if !tx.key_repeat() {
+                            action(s, tx);
+                        }
+                        true
+                    }
+                    rune::Key::Text(ref ch) if ch == " " => {
+                        if !tx.key_repeat() {
+                            action(s, tx);
+                        }
+                        true
+                    }
+                    _ => false,
+                }
+            });
+    }
+    btn.focus_ring(2.0, 2.0, kit.c.border_focus)
 }
 
 pub fn color_scheme(
@@ -2091,7 +2177,7 @@ pub fn disclosure_with_meta<S: 'static>(
     } else {
         kit.glyph.triangle_right
     };
-    let mut arrow = rune::icon(glyph, 11.0).color(t.color("text-muted"));
+    let mut arrow = rune::icon(glyph, 13.0).color(t.color("text-muted"));
     if !open {
         arrow = arrow.mirror_in_rtl();
     }
@@ -2235,6 +2321,11 @@ fn content_icon(key: &str) -> &'static rune::Icon {
 mod icons {
     use rune::Icon;
 
+    pub static CHEVRON_UP: Icon = Icon {
+        name: "lucide-chevron-up",
+        view: 24.0,
+        body: r#"<g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></g>"#,
+    };
     pub static SLIDERS_HORIZONTAL: Icon = Icon {
         name: "lucide-sliders-horizontal",
         view: 24.0,
@@ -2455,4 +2546,103 @@ fn stepping_picker_steps_while_closed_and_opens_with_alt_down() {
     });
     rt.frame(0.02);
     assert!(rt.state.open);
+}
+
+#[test]
+fn binary_row_item_exposes_path_to_accessibility_for_duplicate_labels() {
+    fn view(_: &(), cx: &mut rune::Cx<()>) -> El {
+        layout::render(cx, |_| {
+            binary_list([
+                binary_row_item(
+                    "opencode",
+                    Some("/usr/local/bin/opencode"),
+                    None,
+                    true,
+                    false,
+                    "bin-1".into(),
+                    |_: &mut ()| {},
+                    None::<(String, &str, fn(&mut ()))>,
+                ),
+                binary_row_item(
+                    "opencode",
+                    Some("/opt/alt/bin/opencode"),
+                    None,
+                    false,
+                    false,
+                    "bin-2".into(),
+                    |_: &mut ()| {},
+                    None::<(String, &str, fn(&mut ()))>,
+                ),
+            ])
+        })
+    }
+
+    let mut rt = rune::Runtime::new((), view, (480.0, 240.0), rune::Env::new(false, 1.0));
+    rt.frame(0.0);
+    let a11y = rt.accessibility_json().to_string();
+    assert!(
+        a11y.contains("/usr/local/bin/opencode") && a11y.contains("/opt/alt/bin/opencode"),
+        "binary paths must remain visible in accessibility output: {a11y}"
+    );
+}
+
+#[test]
+fn secondary_action_responds_once_to_click_enter_and_space_and_is_inert_when_disabled() {
+    #[derive(Default)]
+    struct State {
+        enabled_hits: usize,
+        disabled_hits: usize,
+    }
+
+    fn view(_: &State, cx: &mut rune::Cx<State>) -> El {
+        layout::render(cx, |_| {
+            col()
+                .w_full()
+                .h_full()
+                .child(
+                    secondary_action("Refresh", false, |s: &mut State| s.enabled_hits += 1)
+                        .key("sec-enabled"),
+                )
+                .child(
+                    secondary_action("Reset", true, |s: &mut State| s.disabled_hits += 1)
+                        .key("sec-disabled"),
+                )
+        })
+    }
+
+    let mut rt = rune::Runtime::new(
+        State::default(),
+        view,
+        (320.0, 200.0),
+        rune::Env::new(false, 1.0),
+    );
+    rt.frame(0.0);
+
+    let (x, y) = rt.find("sec-enabled").expect("enabled button");
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.02);
+    assert_eq!(rt.state.enabled_hits, 1);
+
+    rt.update(|_, tx| tx.focus("sec-enabled", true));
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Enter,
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.enabled_hits, 2);
+
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text(" ".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+    assert_eq!(rt.state.enabled_hits, 3);
+
+    let (dx, dy) = rt.find("sec-disabled").expect("disabled button");
+    rt.pointer_down(dx, dy);
+    rt.pointer_up(dx, dy);
+    rt.frame(0.02);
+    assert_eq!(rt.state.disabled_hits, 0);
 }

@@ -119,8 +119,10 @@ pub(super) fn view<S: 'static>(
                     .selectable(true),
             ),
         )
-        .child(
-            layout::action_row().child(layout::button_tx(label, busy, move |s, tx| {
+        .child(layout::action_row().child(chrome::secondary_action_tx(
+            label,
+            busy,
+            move |s, tx| {
                 let Some(state) = access(s) else {
                     return;
                 };
@@ -134,8 +136,8 @@ pub(super) fn view<S: 'static>(
                     let url = active.pairing.url.clone();
                     state.copy.write(&url, &prefs, tx);
                 }
-            })),
-        )
+            },
+        )))
         .child(text(&expires).text_role(TextRole::Small).wrap())
         .children(
             copy.failed(&pairing.url)

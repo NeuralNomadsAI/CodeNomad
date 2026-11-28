@@ -82,7 +82,7 @@ pub(in crate::settings::providers) fn view<S: 'static>(
                     layout::action_row()
                         .child(text(t("settings.images.error")).wrap().role("alert"))
                         .child(
-                            layout::button(
+                            chrome::secondary_action(
                                 t("settings.providers.refresh"),
                                 busy,
                                 move |_: &mut S| {

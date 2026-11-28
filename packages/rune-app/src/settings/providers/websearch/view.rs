@@ -161,9 +161,13 @@ fn connections_bar<S: 'static>(
                 .key("websearch-connect-open"),
             )
             .child(
-                layout::button(t("settings.providers.refresh"), busy, move |_: &mut S| {
-                    refresh_rc.borrow_mut().request_refresh();
-                })
+                chrome::secondary_action(
+                    t("settings.providers.refresh"),
+                    busy,
+                    move |_: &mut S| {
+                        refresh_rc.borrow_mut().request_refresh();
+                    },
+                )
                 .key("websearch-refresh"),
             ),
     );
@@ -255,7 +259,7 @@ fn connect_panel<S: 'static>(
                 layout::action_row()
                     .child(text(&title).text_role(TextRole::Title).role("heading"))
                     .child(
-                        layout::button(
+                        chrome::secondary_action(
                             t("settings.providers.actions.close"),
                             locked,
                             move |s: &mut S| {
@@ -335,9 +339,13 @@ fn configured_list<S: 'static>(
                 let cred_id = id.clone();
                 let rem_rc = state_rc.clone();
                 actions = actions.child(
-                    layout::button(disconnect_label, disconnect_disabled, move |_: &mut S| {
-                        rem_rc.borrow_mut().remove(cred_id.clone());
-                    })
+                    chrome::secondary_action(
+                        disconnect_label,
+                        disconnect_disabled,
+                        move |_: &mut S| {
+                            rem_rc.borrow_mut().remove(cred_id.clone());
+                        },
+                    )
                     .label(format!("{remove_label}: {} — {label}", item.name))
                     .key(format!("websearch-disconnect-{id}")),
                 );

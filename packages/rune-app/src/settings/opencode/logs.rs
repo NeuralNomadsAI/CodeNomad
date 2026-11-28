@@ -124,7 +124,7 @@ impl State {
     ) -> El {
         let toggle_shared = shared.clone();
         let toggle_wake = wake.clone();
-        let trigger = layout::button(
+        let trigger = chrome::secondary_action(
             t("settings.opencode.logs.open"),
             !prefs.opencode_binary_available(),
             move |s: &mut S| {

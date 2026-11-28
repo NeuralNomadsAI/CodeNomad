@@ -132,7 +132,7 @@ pub(super) fn view<S: 'static>(
         .children(prefs.notifications_error().map(|error| {
             layout::action_row()
                 .child(chrome::palette::save_error(t(error)))
-                .child(layout::button(
+                .child(chrome::secondary_action(
                     t("sessionList.loadError.retry"),
                     !prefs.can_retry(),
                     move |_: &mut S| {
@@ -147,7 +147,7 @@ pub(super) fn view<S: 'static>(
                 .separate(Space::Sm)
                 .child(heading(t("settings.notifications.system.title")))
                 .children((permission == Permission::Ask).then(|| {
-                    layout::action_row().child(layout::button(
+                    layout::action_row().child(chrome::secondary_action(
                         t("settings.notifications.requestPermission.action"),
                         false,
                         request,

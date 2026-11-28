@@ -316,7 +316,7 @@ pub(super) fn view<S: 'static>(
             }
         })
         .key("startup-restore-switch"),
-        layout::button(
+        chrome::secondary_action(
             t("settings.appearance.startup.clear.action"),
             disabled,
             move |_: &mut S| {
