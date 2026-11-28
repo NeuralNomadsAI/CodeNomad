@@ -53,7 +53,7 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
         await followPresence(path.join(root, "data", "session-pruning", "presence"), async () => () => {}, undefined, undefined, location.directory))
       return { location, data: [{ id: "codenomad-session-pruning", state: { status: state } }] }
     } },
-    rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: false }) }), { call: async ({ method, input, location }: any, { signal }: any) => {
+    rpc: Object.assign(() => ({}), { call: async ({ method, input, location }: any, { signal }: any) => {
       signal.throwIfAborted(); assert(currentConnection)
       assert(prepared.includes(location.directory), "useful RPC must follow successful targeted preparation")
       calls.push({ method, input, directory: location.directory, signal })
