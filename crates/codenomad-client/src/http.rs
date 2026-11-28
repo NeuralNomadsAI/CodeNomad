@@ -10,7 +10,17 @@ use std::{
 };
 
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(target_arch = "wasm32"))]
+pub const PROMPT_CONNECT_TIMEOUT: Duration = REQUEST_TIMEOUT;
+#[cfg(not(target_arch = "wasm32"))]
+pub const PROMPT_IDLE_TIMEOUT: Duration = Duration::from_secs(330);
 const MAX_TRACKED_DROPS: usize = 64;
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PromptTransport {
+    client: Client,
+    idle_timeout: Duration,
+}
 
 type DropTable = Arc<Mutex<Vec<(String, u64, usize, bool, bool)>>>;
 struct CapabilityState {
@@ -22,6 +32,8 @@ struct CapabilityState {
     probe_seq: AtomicU64,
     stream_drop_epoch: AtomicU64,
     attested_drop_epoch: AtomicU64,
+    #[cfg(not(target_arch = "wasm32"))]
+    prompt: PromptTransport,
 }
 
 struct GuardState {
@@ -174,7 +186,27 @@ impl reqwest::cookie::CookieStore for OriginCookieJar {
 }
 
 impl Http {
-    fn from_client(client: Client) -> Self {
+    #[cfg(not(target_arch = "wasm32"))]
+    fn build_prompt_transport<C: reqwest::cookie::CookieStore + 'static>(
+        cookies: Arc<C>,
+        connect_timeout: Duration,
+        idle_timeout: Duration,
+    ) -> Result<PromptTransport> {
+        let client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .cookie_provider(cookies)
+            .connect_timeout(connect_timeout)
+            .build()?;
+        Ok(PromptTransport {
+            client,
+            idle_timeout,
+        })
+    }
+    fn from_parts(
+        client: Client,
+        #[cfg(not(target_arch = "wasm32"))] prompt: PromptTransport,
+    ) -> Self {
         Self(
             client,
             Arc::new(OnceLock::new()),
@@ -191,20 +223,41 @@ impl Http {
                 probe_seq: AtomicU64::new(0),
                 stream_drop_epoch: AtomicU64::new(0),
                 attested_drop_epoch: AtomicU64::new(0),
+                #[cfg(not(target_arch = "wasm32"))]
+                prompt,
             }),
             Arc::default(),
         )
     }
     pub fn new() -> Result<Self> {
         #[cfg(not(target_arch = "wasm32"))]
+        {
+            let jar = Arc::new(reqwest::cookie::Jar::default());
+            let client = Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .cookie_provider(jar.clone())
+                .build()?;
+            let prompt =
+                Self::build_prompt_transport(jar, PROMPT_CONNECT_TIMEOUT, PROMPT_IDLE_TIMEOUT)?;
+            Ok(Self::from_parts(client, prompt))
+        }
+        #[cfg(target_arch = "wasm32")]
+        Ok(Self::from_parts(Client::new()))
+    }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn with_prompt_timeouts(
+        connect_timeout: Duration,
+        idle_timeout: Duration,
+    ) -> Result<Self> {
+        let jar = Arc::new(reqwest::cookie::Jar::default());
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
-            .cookie_store(true)
+            .cookie_provider(jar.clone())
             .build()?;
-        #[cfg(target_arch = "wasm32")]
-        let client = Client::new();
-        Ok(Self::from_client(client))
+        let prompt = Self::build_prompt_transport(jar, connect_timeout, idle_timeout)?;
+        Ok(Self::from_parts(client, prompt))
     }
     /// Pre-seed a loopback session cookie issued over the owned child host's stdio channel.
     #[cfg(not(target_arch = "wasm32"))]
@@ -226,9 +279,11 @@ impl Http {
         let client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
-            .cookie_provider(jar)
+            .cookie_provider(jar.clone())
             .build()?;
-        Ok(Self::from_client(client))
+        let prompt =
+            Self::build_prompt_transport(jar, PROMPT_CONNECT_TIMEOUT, PROMPT_IDLE_TIMEOUT)?;
+        Ok(Self::from_parts(client, prompt))
     }
     pub fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.1, &other.1)
@@ -549,6 +604,20 @@ impl Http {
     pub fn post(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::POST, url)
     }
+    pub(crate) fn post_prompt(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.6.prompt.client.post(url)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.0.post(url).fetch_credentials_same_origin()
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn prompt_idle_timeout(&self) -> Duration {
+        self.6.prompt.idle_timeout
+    }
     pub fn put(&self, url: impl reqwest::IntoUrl) -> RequestBuilder {
         self.request(reqwest::Method::PUT, url)
     }
@@ -579,15 +648,18 @@ pub async fn pairing_required() -> Result<Option<bool>> {
 }
 
 pub fn is_unauthorized(error: &crate::history::Error) -> bool {
-    error
-        .downcast_ref::<reqwest::Error>()
-        .and_then(reqwest::Error::status)
-        == Some(reqwest::StatusCode::UNAUTHORIZED)
+    error.downcast_ref::<crate::files::FileError>() == Some(&crate::files::FileError::Unauthorized)
+        || error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn authentication_expired(error: &crate::history::Error) -> bool {
     cfg!(not(target_arch = "wasm32"))
         && (error.is::<crate::stream::hub::AuthenticationExpired>()
+            || error.downcast_ref::<crate::files::FileError>()
+                == Some(&crate::files::FileError::Unauthorized)
             || error
                 .downcast_ref::<reqwest::Error>()
                 .and_then(reqwest::Error::status)

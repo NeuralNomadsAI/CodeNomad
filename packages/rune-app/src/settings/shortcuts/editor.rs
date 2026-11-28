@@ -80,6 +80,7 @@ pub(in crate::settings) fn view<S: 'static>(
                 .child(
                     layout::hinted_field(filter, t("hotkeys.filter"))
                         .label(t("hotkeys.filter"))
+                        .input_mode(rune::InputMode::Search)
                         .on_edit(filter_edit)
                         .build(&field_kit(layout::dark()))
                         .on_input_change(move |s: &mut S, _| {
@@ -141,6 +142,7 @@ fn row_view<S: 'static>(
     access: Access<S>,
 ) -> El {
     let id = row.id;
+    let row_composer_scope = row.scope == "composer";
     let edit_key = format!("settings-{id}-edit");
     let disabled = locked || !row.active;
     let editing = recording == Some(edit_key.as_str()) && !disabled;
@@ -192,7 +194,7 @@ fn row_view<S: 'static>(
             *recording = false;
             capture.refused = false;
             return false;
-        } else if reserved::blocks_recording(event, tx.key_base()) {
+        } else if reserved::blocks_recording(event, tx.key_base(), row_composer_scope) {
             capture.refused = true;
             #[cfg(target_arch = "wasm32")]
             layout::announce_alert(tx, t("hotkeys.reserved"));

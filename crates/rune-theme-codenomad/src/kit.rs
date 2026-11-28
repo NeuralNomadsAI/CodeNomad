@@ -324,6 +324,8 @@ pub(crate) fn build_from(
             control: Spring::new(t.duration_seconds(MotionRole::Control), 0.0),
             overlay: Spring::new(t.duration_seconds(MotionRole::Control), 0.0),
             disclosure: Spring::new(t.duration_seconds(MotionRole::Disclosure), 0.0),
+            hover: None,
+            press: None,
         },
         blend_over: Some(c("surface-canvas")),
         ring: None,

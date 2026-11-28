@@ -75,6 +75,10 @@ static CATALOG: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
 #[derive(Clone)]
 pub(crate) struct BrowserDevice(pub uuid::Uuid);
 
+// Browser-only workspace routes omitted from TS `SERVER_DEVICE_ROUTES`.
+static BROWSER_ONLY_SESSION_CLEANUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^/api/workspaces/[^/]+/session-cleanup/[^/]+$").unwrap());
+
 /// Per-device preview logout epoch captured at remote middleware admission time so a concurrent
 /// `POST /api/auth/logout` between admission and preview creation still fences publication.
 #[derive(Clone, Copy)]
@@ -278,6 +282,7 @@ async fn admit_inner(
     // Direct HTTPS server-device catalog retains authenticated memory relay; ingress stays closed.
     let server_memory = server && !channel.ingress && memory_route;
     let remote_logout = !server && method == Method::POST && path == "/api/auth/logout";
+    let browser_only_cleanup = !server && method == Method::POST && BROWSER_ONLY_SESSION_CLEANUP.is_match(&path);
     if entry && path == "/remote-pair" {
         if let Some(crate::host::ui::RemoteBundle::Rune(dir)) = &bundle
             && let Some(page) = crate::host::ui::rune_pair_page(dir, method).await
@@ -344,6 +349,7 @@ async fn admit_inner(
         && !preview_ui
         && !memory_ui
         && !server_memory
+        && !browser_only_cleanup
         && !remote_logout
         && ui.is_none()
         && !CATALOG.iter().any(|(methods, pat)| {
@@ -400,6 +406,10 @@ async fn admit_inner(
         r.headers_mut().insert("x-codenomad-before-dispatch", HeaderValue::from_static("1"));
         return cors(r, supplied);
     };
+    let paired_server = app.devices.as_ref().is_some_and(|d| d.lock().unwrap().is_server_device(id));
+    if (browser_only_cleanup || remote_logout) && paired_server {
+        return cors(reply(Status::NOT_FOUND, "Not found"), supplied);
+    }
     {
         let mut socket = channel.principal.lock().unwrap();
         if socket.is_some_and(|previous| previous != id) {
@@ -424,7 +434,7 @@ async fn admit_inner(
     let logout_epoch = app.previews.logout_epoch(id);
     req.extensions_mut().insert(Principal(principal.clone()));
     req.extensions_mut().insert(DeviceAdmission { id, logout_epoch });
-    if !server {
+    if !server && !paired_server {
         req.extensions_mut().insert(BrowserDevice(id));
     }
     let dispatch = async {

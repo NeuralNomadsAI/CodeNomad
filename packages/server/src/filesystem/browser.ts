@@ -1,7 +1,14 @@
 import fs from "fs"
 import os from "os"
 import path from "path"
-import { withFileAccess } from "./file-access"
+import {
+  FileChangedError,
+  FileTooLargeError,
+  fileVersion,
+  readBoundedFile,
+  withResolvedFileAccess,
+  writeVersionedFile,
+} from "./versioned-file"
 import {
   FileSystemCreateFolderResponse,
   FileSystemEntry,
@@ -10,6 +17,8 @@ import {
   FileSystemListingMetadata,
   WINDOWS_DRIVES_ROOT,
 } from "../api-types"
+
+export { FileChangedError, FileTooLargeError, fileVersion }
 
 interface FileSystemBrowserOptions {
   rootDir: string
@@ -24,7 +33,6 @@ interface DirectoryReadOptions {
 }
 
 const WINDOWS_DRIVE_LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))
-const MAX_READABLE_FILE_BYTES = 5 * 1024 * 1024
 
 export class FileSystemBrowser {
   private readonly root: string
@@ -86,12 +94,12 @@ export class FileSystemBrowser {
     return { path: relativePath, absolutePath }
   }
 
-  async writeFile(relativePath: string, contents: string): Promise<void> {
+  async writeFile(relativePath: string, contents: string, options?: { expectedVersion?: string }): Promise<string> {
     if (this.unrestricted) {
       throw new Error("writeFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    await withFileAccess(resolved, () => fs.promises.writeFile(resolved, contents, "utf-8"))
+    return writeVersionedFile(resolved, contents, { expectedVersion: options?.expectedVersion, isWindows: this.isWindows })
   }
 
   async readFile(relativePath: string): Promise<string> {
@@ -99,7 +107,7 @@ export class FileSystemBrowser {
       throw new Error("readFile is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return withFileAccess(resolved, () => fs.promises.readFile(resolved, "utf-8"))
+    return withResolvedFileAccess(resolved, this.isWindows, (target) => fs.promises.readFile(target.targetPath, "utf-8"))
   }
 
   async readFileBase64(relativePath: string): Promise<string> {
@@ -107,23 +115,14 @@ export class FileSystemBrowser {
       throw new Error("readFileBase64 is not available in unrestricted mode")
     }
     const resolved = this.toRestrictedAbsolute(relativePath)
-    return withFileAccess(resolved, async () => (await fs.promises.readFile(resolved)).toString("base64"))
+    return withResolvedFileAccess(resolved, this.isWindows, async (target) => (await fs.promises.readFile(target.targetPath)).toString("base64"))
   }
 
   async readFileContent(targetPath: string, options?: { encoding?: "utf-8" | "base64" }): Promise<FileSystemFileContentResponse> {
     const encoding = options?.encoding ?? "utf-8"
     const resolved = this.unrestricted ? this.resolveUnrestrictedPath(targetPath) : this.toRestrictedAbsolute(targetPath)
-    return withFileAccess(resolved, async () => {
-      const stats = await fs.promises.stat(resolved)
-      if (!stats.isFile()) {
-        throw new Error("Selected path is not a file")
-      }
-      if (stats.size > MAX_READABLE_FILE_BYTES) {
-        throw new Error("Selected file is too large to attach")
-      }
-      const contents = (await fs.promises.readFile(resolved)).toString(encoding)
-      return { path: targetPath, contents, encoding }
-    })
+    const { contents, version } = await readBoundedFile(resolved, encoding, this.isWindows)
+    return { path: targetPath, contents, encoding, version }
   }
 
   private async listRestrictedWithMetadata(relativePath: string | undefined, includeFiles: boolean): Promise<FileSystemListResponse> {

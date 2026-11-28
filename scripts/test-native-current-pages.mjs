@@ -63,5 +63,5 @@ await withProductRuntime(cli, async ({ root }) => {
   }
   assert.equal(requests.length, 0)
   await writeFile(path.join(root, "current-display-receipt.json"), JSON.stringify({ version, receipts, modelRequests: requests.length }, null, 2))
-  console.log("PASS: daily and scheduled current native Effect graphs, bounded headers/tasks/bodies, exact continuations, source refusal and zero model requests")
+  console.log("PASS: scheduled current native Effect graphs, bounded headers/tasks/bodies, exact continuations, source refusal and zero model requests")
 })

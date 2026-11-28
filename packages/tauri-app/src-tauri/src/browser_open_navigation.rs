@@ -1,5 +1,13 @@
 use super::*;
 
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub(super) enum NavigationDispatch {
+    Navigate,
+    HistoryEntry(i64),
+    Reload,
+}
+
 impl BrowserController {
     /// Open supplies an occurrence guard; navigate supplies a document witness.
     /// Both own one dispatch, load receipt and deferred native stop.
@@ -13,6 +21,32 @@ impl BrowserController {
         witness: Option<(u64, &str)>,
         open_request_id: Option<&str>,
         check: impl Fn() -> Result<(), String> + Clone + Send + Sync + 'static,
+    ) -> Result<String, String> {
+        self.navigate_with_dispatch(
+            registration,
+            view,
+            url,
+            deadline,
+            fence,
+            witness,
+            open_request_id,
+            check,
+            #[cfg(windows)]
+            NavigationDispatch::Navigate,
+        )
+    }
+
+    pub(super) fn navigate_with_dispatch(
+        &self,
+        registration: &Registration,
+        view: &tauri::Webview,
+        url: &tauri::Url,
+        deadline: Instant,
+        fence: &crate::native_request::RequestFence,
+        witness: Option<(u64, &str)>,
+        open_request_id: Option<&str>,
+        check: impl Fn() -> Result<(), String> + Clone + Send + Sync + 'static,
+        #[cfg(windows)] dispatch_kind: NavigationDispatch,
     ) -> Result<String, String> {
         let controller = self.clone();
         let app = view.app_handle().clone();
@@ -71,29 +105,60 @@ impl BrowserController {
                     Ok(())
                 },
             )?;
+            // A fragment-only open keeps the document: restarting at dispatch drops old-page events fired before it.
+            #[cfg(windows)]
+            if dispatch_request_id.is_some() {
+                controller
+                    .diagnostics
+                    .restart(&expected.registration_id, expected.generation, None);
+            }
             *receipt = Some(sequence);
             Ok(sequence)
         };
 
+        // A history entry of the same document (fragment or pushState) raises no NavigationStarting.
         #[cfg(windows)]
-        let dispatch = cdp_guarded_inner(
-            view,
-            "Page.navigate",
-            json!({ "url": url.as_str() }),
-            deadline,
-            move || admit().map(|_| ()),
-            24 * 1024 * 1024,
-        )
-        .and_then(|result| {
-            if let Some(error) = result["errorText"]
-                .as_str()
-                .filter(|error| !error.is_empty())
-            {
-                return Err(format!("Browser navigation failed: {error}"));
-            }
-            Ok(result["loaderId"].as_str().is_none())
-        })
-        .map_err(|error| preview_error("CDP Page.navigate", error));
+        let previous = view.url().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let dispatch = {
+            let (method, params, label) = match dispatch_kind {
+                NavigationDispatch::Navigate => (
+                    "Page.navigate",
+                    json!({ "url": url.as_str() }),
+                    "CDP Page.navigate",
+                ),
+                NavigationDispatch::HistoryEntry(entry_id) => (
+                    "Page.navigateToHistoryEntry",
+                    json!({ "entryId": entry_id }),
+                    "CDP Page.navigateToHistoryEntry",
+                ),
+                NavigationDispatch::Reload => ("Page.reload", json!({}), "CDP Page.reload"),
+            };
+            cdp_guarded_inner(
+                view,
+                None,
+                method,
+                params,
+                deadline,
+                move || admit().map(|_| ()),
+                24 * 1024 * 1024,
+            )
+            .and_then(|result| {
+                if let Some(error) = result["errorText"]
+                    .as_str()
+                    .filter(|error| !error.is_empty())
+                {
+                    return Err(format!("Browser navigation failed: {error}"));
+                }
+                Ok(match dispatch_kind {
+                    NavigationDispatch::Navigate => result["loaderId"].as_str().is_none(),
+                    // Decided once the traversal shows whether a new document started.
+                    NavigationDispatch::HistoryEntry(_) => true,
+                    NavigationDispatch::Reload => false,
+                })
+            })
+            .map_err(|error| preview_error(label, error))
+        };
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let dispatch = {
             use crate::embedded_view::input::{self, DocumentDispatch, Read};
@@ -135,6 +200,8 @@ impl BrowserController {
             .map(|_| fragment_only)
         };
         let sequence = *dispatched.lock().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let dispatched_at = Instant::now();
 
         let result = dispatch.and_then(|same_document| {
             let sequence = sequence.ok_or("Missing native browser navigation sequence")?;
@@ -142,7 +209,16 @@ impl BrowserController {
                 check()?;
                 if same_document {
                     let current = view.url().map_err(|error| error.to_string())?;
-                    if current == *url {
+                    // A cross-document entry starts its navigation before its address commits;
+                    // an entry at the same address gets a short grace for that start.
+                    #[cfg(windows)]
+                    let settled = !matches!(dispatch_kind, NavigationDispatch::HistoryEntry(_))
+                        || (!self.navigation_started(registration, sequence)
+                            && (current != previous
+                                || dispatched_at.elapsed() >= Duration::from_millis(1_500)));
+                    #[cfg(not(windows))]
+                    let settled = true;
+                    if current == *url && settled {
                         self.complete_same_document_navigation(
                             registration,
                             sequence,
@@ -245,6 +321,15 @@ impl BrowserController {
         };
         update(load);
         true
+    }
+
+    #[cfg(windows)]
+    fn navigation_started(&self, registration: &Registration, sequence: u64) -> bool {
+        let mut started = false;
+        self.with_navigation_load(registration, sequence, |load| {
+            started = load.navigation_id.is_some();
+        });
+        started
     }
 
     pub(super) fn take_navigation_stop(&self, registration: &Registration, sequence: u64) -> bool {

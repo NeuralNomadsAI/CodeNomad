@@ -138,3 +138,35 @@ test("quota invalidation aborts the admitted HTTP signal before another account 
   assert.deepEqual(published, [undefined, undefined])
   state.dispose()
 })
+
+test("Missions panel schedule reads run on their dedicated lane while backgroundReads is saturated", async () => {
+  const occupied = deferred<void>()
+  const blockers = [0, 1].map(() => backgroundReads.run(new AbortController().signal, () => occupied.promise))
+  await Promise.resolve()
+  const api = createServerApi({ ...createBackendTransport({ id: "mission-lane", baseUrl: "https://example.test" }),
+    fetch: async () => Response.json({ version: 1, projectID: "project", schedules: [] }),
+  })
+  try {
+    const result = await api.fetchMissionSchedules("i", { limit: 8, kind: "schedule" })
+    assert.deepEqual(result.schedules, [])
+  } finally {
+    occupied.resolve()
+    await Promise.all(blockers)
+  }
+})
+
+test("a slow schedule read does not hold the Missions panel's reads", async () => {
+  const held = deferred<Response>()
+  const api = createServerApi({ ...createBackendTransport({ id: "schedule-lane", baseUrl: "https://example.test" }),
+    fetch: async input => String(input).includes("/missions/scheduled?") ? held.promise : Response.json({ available: true, value: "objective" }),
+  })
+  const schedules = api.fetchMissionSchedules("i", { limit: 8, kind: "schedule" })
+  try {
+    // Native schedule state can take seconds; the panel's journal reads keep their own lane.
+    const content = await api.fetchMissionContent("i", "msn", { kind: "mission", field: "objective", offset: 0 }, AbortSignal.timeout(2_000))
+    assert.deepEqual(content, { available: true, value: "objective" })
+  } finally {
+    held.resolve(Response.json({ version: 1, projectID: "project", schedules: [] }))
+    await schedules
+  }
+})

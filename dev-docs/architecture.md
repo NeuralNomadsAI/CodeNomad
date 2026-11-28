@@ -56,7 +56,7 @@ Each workspace descriptor has its own optional `viewState` payload, normalized b
 | --- | --- |
 | `version: 1` | Envelope schema version. |
 | `previews[sessionId]` | Foreground `mode` (`chat`/`preview`). |
-| `missions` | Selected Mission/daily/native schedule, task, reader target, expanded rows and target-specific disclosures. |
+| `missions` | Selected Mission/native schedule, task, reader target, expanded rows and target-specific disclosures. |
 | `rightPanelTab` | Selected built-in or extension tab ID. |
 | `filesMode` | `workspace`, `changes` or `history`. |
 
@@ -88,8 +88,8 @@ The conversation permission mode route (`/api/workspaces/:id/sessions/:sessionId
 ### Published UI compatibility
 
 `packages/cloudflare/release-config.json` sets the remote UI's minimum CodeNomad
-server to **1.1.0**. The Missions interface consumes `POST /api/workspaces/:id/missions/panel-page`
-for its inventory and task reads. `ui/remote-ui.ts` checks the manifest's minimum
+server to **1.2.0**. The Status panel reads and writes conversation permissions
+through `/api/workspaces/:id/sessions/:sessionId/permission-mode`. `ui/remote-ui.ts` checks the manifest's minimum
 before downloading: older servers keep their cached or bundled interface and expose
 the server-upgrade status. `ui/__tests__/remote-ui.test.ts` covers both sides of this boundary.
 
@@ -256,6 +256,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `lib/agent-memory-api.ts` | C+A | memory settings and revision-checked entry operations | Local authenticated transport retains its request shape; qualified remote calls capture the backend client and attachment signal through timeout, fetch and body publication; raw workspace IDs at HTTP boundary. |
 | `stores/agent-memory.ts` | C+A+V | review, scoped reads, edits, Forget and reconnect demand | Injected owner memory API; backend/scope/context generation, pending-read identity, disposed checks and revocable confirmation; per-owner event subscriptions; sent edits retain their revision. |
 | `stores/agent-memory-cleanup.ts` | A+V | fresh settings/list preflight, create and send cleanup | Native request ID retained across uncertain outcomes; attachment, workspace client/folder and authorized cleanup directory rechecked between stages; owner memory API and session API/actions own creation and send. |
+| `lib/native-browser-hold.ts` | C | native browser hold renewal and release while a local desktop view shows a session | The view's hold ID and captured workspace/session own each renewal; cleanup stops the timer and releases the hold. |
 | `lib/native/memory-cleanup.ts` | IPC+P | native cleanup intent handoff and main-renderer handler | Exact local opener/window claim and normalized request; delegated cleanup owns backend work. |
 | `components/settings/agent-memory-editor.tsx` | P+V | revision-checked Save and confirmed Forget | Review store and selected-entry confirmation signal; the review owns HTTP and publication. |
 | `components/settings/agent-memory-settings-card.tsx` | C+A+V | enablement reads/writes, review and cleanup confirmation | Qualified project memory API; captured edit owner, request sequence/disposal, scope/context consent and native cleanup request; backend event subscriptions are released on owner change and disposal. |
@@ -312,6 +313,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `stores/shell-store.ts` | A+P | list/output/load; dirty trailing refreshForEvent; remove | Captured signalForInstance, request signal/current and lane identity; API callback gets signal; sent remove retains SDK client. |
 | `stores/shells.ts` | A | native Shell SDK adapter; event refresh | captureBackendOperation/current and location-scoped SDK client. |
 | `stores/session-goal.ts` | A+P | goal reads; event/open/reconnect refresh scheduler; runSessionGoalCommand | Factory supplies signalForInstance to the goal store; reconnect timers capture the scheduling attachment signal; session commands use action authority and guarded readback. |
+| `stores/session-automations.ts` | A+P | automation reads; execution/shell/open/reconnect refresh scheduler; runSessionAutomationAction | Factory supplies signalForInstance to the automations store; reconnect timers capture the scheduling attachment signal; mutations use captured backend and fence earlier reads. |
 | `stores/integrations.ts` | A | catalog/binding factories; event debounce/reconnect/open; connection/session epochs; detach cleanup | Both factories receive signalForInstance; reconnect scheduler captures attachment signal; backend owner guards connection epochs and revokes bindings while retaining their demand. |
 | `lib/integrations-api.ts` | A+P+C | fetchIntegrations/fetchIntegrationBinding/installIntegration/attachment request | Instance-owned backend HTTP and captured attachment/caller signal checked before dispatch and after response/body reads; raw workspace id at HTTP boundary; sent mutations retain their server-side outcome. |
 | `stores/plugin-controls.ts` | A+C | controls read/cache/demand; activation; instance-owner API adapter | Backend resolved from instance key, raw workspace id at API boundary; captured attachment signal and cache request generation fence reads/publication; sent activation retains selected client. |
@@ -378,7 +380,6 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/session-list.tsx` | A+C | catalog load-all/more/reload/search debounce; delete/bulk-delete/rename; favorites demand and toggle | captureBackendOperation/current for handler continuations; catalog and favorites stores guard their own reads; durable submitted mutations; age/focus timers are DOM. |
 | `components/session/session-view.tsx` | A+C | inbox sync; send/manage queue/run Shell/abort/background/revert/fork; renamed fork → messages | captureBackendOperation/current for explicit action follow-ups; delegated inbox/message/action owners; sent mutations retain captured client. |
 | `components/session/conversation-permissions.tsx` | V+C | read and change the conversation permission mode; refresh on matching native events and reconnect | The conversation view owns its subscriptions and coalesced, abortable reads. Writes target the owning backend and conversation; only the live view publishes and reconciles their result. |
-| `components/session-picker.tsx` | P | select/new/cancel callbacks | Caller session-action/view owner; selection identity. |
 | `components/session-preview-view.tsx` | A+C+IPC | preview/history/comment target; remote dismissal | Instance/backend-owned capability and isolated source map to application addresses; same-application navigation reuses the capability, other destinations use guarded creation. Store attachment/navigation authority fences requests and retained-client cleanup; native history/locations map to logical addresses. |
 | `components/prompt-input.tsx` | A | handleSend; voice start callback; submission follow-up | captureBackendOperation/current plus delegated recording/action ownership; UI timers separate. |
 | `components/prompt-input/usePromptAside.ts` | A | ask; side conversation read/send | captureBackendOperation, controller/generation/current, client and signalForInstance. |
@@ -395,6 +396,7 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/integration-host-installation.ts` | A+C | open installation/consent workflow | captureBackendOperation, epoch/controller/generation/disposed/current; submitted install retained. |
 | `components/plugin-activation-controls.tsx` | P | integration binding and application installation from Plugins rows | Delegated binding/installation handlers capture backend attachment and exact Location/session; row disposal and invalidation revoke pending consent. |
 | `components/session/session-goal-line.tsx` | P | runSessionGoalCommand | Session goal demand and delegated session-action attachment authority. |
+| `components/session/session-automations-block.tsx` | P | runSessionAutomationAction | Session automations demand and delegated attachment-scoped confirm and action authority. |
 | `components/mission-tracking.tsx` | P | onOpenActor callback | Captured actor/selected Mission view; parent navigation callback owns session hydration. |
 | `components/mission-schedule-list.tsx` | P | controls.act/reconcile | Delegated schedule controls attachment/current and durable mutation receipt. |
 | `components/mission-selected-actions.tsx` | P | onAdmitted; missionStore.refresh; briefing.ask | Selected Mission view predicate; delegated map/admission/action owner. |
@@ -413,12 +415,13 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/tool-call/renderers/task.tsx` | A | child-message demand/load; child transcript copy | captureBackendOperation/current; caller signal passed to child-message reader. |
 | `components/markdown.tsx` | A+V+COMPUTE | renderSnapshot/highlighter import; local-image candidates; route session/external links; metadata read | Render request/disposed/current and deferred-render timer; instance-owned preview and project metadata demand; mounted media source owners fence body reads and revoke blobs; rendering is local. |
 | `components/markdown-session-links.ts` | A+V | open session preview or project-file reader | Qualified instance and backend attachment own preview state; current attachment gates routing and fences late errors; worktree/session directory resolves file paths. |
+| `components/markdown-bare-paths.ts` | A+V | existence-gated bare-path file links | Session-bound markdown walks re-read the container at wrap time; one coalesced TTL-bounded directory listing per worktree directory fails closed and never converts missing files. |
 | `components/version-pill.tsx` | C | metadata read | Retained server metadata client/cache. |
 | `components/mission-briefing.tsx` | A+C | ask coordinator | captureBackendOperation, client/generation/current; delegated admission/send mutation. |
 | `components/mission-cleanup.tsx` | A+C | retry preflight; delete; reconcile conflict receipt | Captured backend and exact request identity retain the cleanup transaction; receipt reads settle without replay. |
 | `components/mission-creation-start.ts` | A+V+C | explicit creation ACK continuation to one Play | Captured attachment, view/client/native generation and project/directory; consumed continuation and durable lifecycle request identity; selected backend owns dispatch. |
 | `components/mission-task-preview.tsx` | P+V | expanded-row map/task/native conversation demand | Exact instance/mission/unique view owner; Mission store and task-session reader own captured attachment, bounded pages, publication and release. |
-| `components/mission-editor-schedule.ts` | A+C | readText/reload/saveJournalEdit/save/reconcile/retryPreparation; capability/detail/content/creation receipt | captureBackendOperation, controller/generation/current/request ID; persisted schedule/Mission mutation retained, continuation follows operation. |
+| `components/mission-editor-schedule.ts` | A+C | readText/reload/saveJournalEdit/save/reconcile; capability/detail/content/creation receipt | captureBackendOperation, controller/generation/current/request ID; persisted schedule/Mission mutation retained, continuation follows operation. |
 | `components/mission-editor-sources.ts` | A | read local branches/schedules; cursor/source reload | captureBackendOperation plus view controller/generation/current and signal. |
 | `components/mission-editor-repository.ts` | A | repository discovery/retry | captureBackendOperation, view controller/generation/current and signal. |
 | `components/mission-editor.tsx` | A+C | useSavedDefaults/save/reopen; Mission create/edit/delete/reconcile | captureBackendOperation plus view generation/controller/current/request ID; durable sent mutation and default persistence. |
@@ -430,8 +433,6 @@ Run `node --import tsx packages/ui/tests/contracts/backend-async-inventory.ts > 
 | `components/mission-profile-controls.tsx` | A | profile catalog/default hydration; delayed read and selection | captureBackendOperation, controller/generation/current; retained profile view demand. |
 | `components/mission-reader.tsx` | A | retryTarget/openActor; map/task more/load; conversation navigation | captureBackendOperation, generation/current/disposed; delegated page and session readers receive signal; clipboard/layout separate. |
 | `components/mission-recovery-button.tsx` | A+C | recover | captureBackendOperation/current/disposed; durable recovery mutation retained. |
-| `components/mission-recurrence-list.tsx` | A+C | act/check/stop; run-now/control/status; schedule history refresh | captureBackendOperation/generation/current; request receipts and durable recurrence mutation. |
-| `components/mission-recurrence-passage-reader.tsx` | A | archived passage page read | captureBackendOperation, controller/generation/current; captured physical folder plus persisted view scope. |
 | `components/mission-schedule-controls.ts` | A+C | receipt/reconcile/act; capability/detail/settings/control | captureBackendOperation, generation/controller/current; sent schedule mutation owns receipt. |
 | `components/mission-subagent-depth.tsx` | A+C | read/save; delayed depth settings request | captureBackendOperation, controller/epoch/generation/current; persisted depth mutation retained. |
 | `components/preferences-window.tsx` | C+IPC | flush; applyRequest; project SDK context; request/persistence queues; close/scroll flush | Native preferences request generation, sequential queues and current window request; durable storage flush; instance SDK cache cleanup. |
@@ -474,7 +475,8 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 
 | Adapter family | Exact methods | IO authority |
 |---|---|---|
-| Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal | S; background queue for secondary reads |
+| Transcript/navigation/history | fetchPermissionReceipts, fetchHistoryWindow, fetchSessionOutline, fetchOutlinePreviews, querySessionHistory, queryRankedHistory, pruneSessionHistory, fetchSessionGoal, fetchSessionAutomations | S; background queue for secondary reads |
+| Session automation mutations | pauseSessionAutomation, resumeSessionAutomation, deleteSessionAutomation | C; captured backend and session own the mutation; callers fence pre-mutation reads |
 | Background Shell inventory | fetchBackgroundShells | S; owner backend, raw workspace boundary and public directory; secondary queue and attachment-owned watch/read lane |
 | Transcript mutations | pruneSessionMessage | C; callers fence publication with their operation |
 | Conversation permission mode read | readConversationPermissionMode | S; owning backend, conversation view cancels stale reads |
@@ -505,13 +507,16 @@ Tool, Markdown and attachment images follow the [passive media contract](TRANSCR
 | Speech client services | fetchSpeechCapabilities, getDesktopVoiceConversationEngine, setDesktopVoiceConversationEngine | C for renderer-server capabilities and profile-owned engine preference |
 | Speech capture/playback | transcribeAudio, synthesizeSpeechStream | S for the caller's capture or playback lifetime; both playback modes consume the binary response. |
 | SideCars/previews | fetchSidecars, createSidecar, updateSidecar, deleteSidecar, createPreview, deletePreview, createPreviewCapability, deletePreviewCapability | C; resource token/session/client ownership; remote capability deletion retains its original proof and supports pagehide keepalive |
+| Native browser holds | holdNativeBrowser, releaseNativeBrowser | C; the view's hold ID owns the session hold, renewed while the view shows the session and released when it stops |
 | Conversation permission mode | readConversationPermissionMode, setConversationPermissionMode | S for reads, C for writes; the conversation and attachment fence publication |
 | Mission display windows | fetchMissionPanel, fetchMissionTasks, fetchMissionCurrentPanel, fetchMissionCurrentTasks | scope: supplied signal/current and capped deadline; per-transfer checks and secondary queue |
-| Mission content/current identity | fetchMissionContent, fetchMissionCurrentPassage, fetchMissionCurrentBody, fetchMissionCurrentContent, fetchMissionRecurrencePassagePage, fetchMissionRecurrence | S; body/current transfer also validates deadline/current identity |
+| Mission content/current identity | fetchMissionContent, fetchMissionCurrentPassage, fetchMissionCurrentBody, fetchMissionCurrentContent | S; body/current transfer also validates deadline/current identity |
 | Mission schedule reads | fetchMissionSchedules, fetchMissionScheduleCapability, fetchMissionSchedule | S; secondary queue |
 | One-time Mission creation receipt | missionCreationReceipt | S; bounded read of the exact original request |
-| Mission client-lived reads/receipts | fetchMission, fetchMissionPlaybooks, fetchMissionScheduleCreation, fetchMissionAdmission, missionScheduleSettings, missionRecurrenceControlStatus, missionRecurrenceRunNowStatus | C; request ID/revision receipt or caller A publication guard |
-| Mission mutations | saveMissionSchedule, controlMissionSchedule, controlMissionRecurrence, runMissionRecurrenceNow, createMissionRecurrence, createMission, editMission, deleteMission, controlMission, recoverMission | C; request ID/revision/admission transaction owner |
+| Mission client-lived reads/receipts | fetchMissionPlaybooks, fetchMissionAdmission | C; request ID/revision receipt or caller A publication guard |
+| Mission held-request reads | fetchMission, fetchMissionScheduleCreation, missionScheduleSettings | S+C; the automatic held-request reread supplies its view/owner signal and deadline; other callers keep the request ID/revision receipt or caller A publication guard |
+| Mission schedule save | saveMissionSchedule | S+C; request ID/revision owner; the automatic `retry: true` of a recorded partial preparation supplies an owner signal and deadline |
+| Mission mutations | controlMissionSchedule, createMission, editMission, deleteMission, controlMission, recoverMission | C; request ID/revision/admission transaction owner |
 | Event connection | connectEvents | Captured backend EventSource; ServerEvents owns generation/close/dispose |
 | Panel-extension reads | list, catalog, panel, assets, assetRead, workItems, workItemUrl; API4 images, imageRead, imagesStatus, prefillReferences, conversationStatus, conversation, preferencesGet, preferencesSet | Supplied signal in createPanelExtensionsApi; API4 authority includes instance/extension/digest/session |
 | Panel-extension administration | inspect, inspectCatalog, install, installCatalog, activate, remove | C; owning backend's client and operation captured at admission (`panelExtensionsFor`), with consent/digest |
@@ -542,6 +547,8 @@ The Status panel refreshes background Shells on Shell events/reconnect and allow
 ## Persistence
 
 CodeNomad configuration resolves through `packages/server/src/config/location.ts`: `config.yaml`, `state.yaml`, `remote-control-devices.json`, and `instances/` under `~/.config/codenomad/`. `config.json` is read only as migration input.
+
+The backend logger (`packages/server/src/logger.ts`) prints to stdout, where info lines are limited to the lifecycle components and desktop hosts read the shutdown handshake. With the stdout destination it also appends every emitted line, timestamped, to `logs/server.log` in that folder (`log-file.ts`): written synchronously before stdout, moved to `server.previous.log` at 5 MiB, and abandoned silently when the file cannot be written. An explicit `--log-destination` file receives the raw JSON lines instead of both.
 
 Backend shutdown closes SSE and upgraded sockets in Fastify's `preClose` hook and drains accepted local HTTP handlers before releasing workspace and native-parent authority. Completing responses close their keep-alive connection, including streams whose headers preceded shutdown, through a shutdown-only response-finish idle sweep. Permission recovery reads are cancelled and queued receipt writes settle before workspace cleanup. Plugin leases and workspace cleanup run concurrently, and the success handshake follows resource cleanup. Native-parent responses remain readable through this drain. Mission mutations persist through their native RPC handlers in the shared OpenCode service.
 

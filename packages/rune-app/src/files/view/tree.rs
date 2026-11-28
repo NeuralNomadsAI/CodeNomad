@@ -134,11 +134,7 @@ fn tree_content(s: &State, width: f32, touch: bool) -> El {
     let directory = ui.tree.directory();
     let name = codenomad_client::server_path_basename(directory);
     for (path, error) in ui.listing_errors() {
-        let message = if error.is::<codenomad_client::files::ListingTooLarge>() {
-            t("filesPanel.listingTooLarge").replace("{path}", if path == "." { name } else { path })
-        } else {
-            error.to_string()
-        };
+        let message = super::super::errors::format_listing_error(path, name, error);
         let retry = std::rc::Rc::new(screen::action_tx(&scope, {
             let path = path.to_owned();
             let directory = directory.to_owned();

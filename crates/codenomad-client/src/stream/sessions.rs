@@ -377,6 +377,12 @@ pub(super) async fn relay(
         )
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session
+            || (native["type"] == "form.created"
+                && native["data"]["form"]["sessionID"] == "global")
+            || (matches!(
+                native["type"].as_str(),
+                Some("form.replied" | "form.cancelled")
+            ) && native["data"]["sessionID"] == "global")
             || native["type"] == "server.connected")
     {
         if crate::history::valid_id(&b.session)
@@ -458,6 +464,48 @@ fn instance_storage_updates_leave_the_window_valid_but_native_hints_do_not() {
             .unwrap();
             assert!(!state.valid(stamp));
             assert!(matches!(inbox.try_recv().unwrap(), Input::Hint(1, _, _)));
+
+            // Project-owned global form events must relay to the active session so the dock refreshes.
+            for event in [
+                json!({
+                    "type": "form.created",
+                    "location": {"directory": "/repo"},
+                    "data": {"form": {"id": "frm_global", "sessionID": "global"}}
+                }),
+                json!({
+                    "type": "form.replied",
+                    "location": {"directory": "/repo"},
+                    "data": {"id": "frm_global", "sessionID": "global"}
+                }),
+                json!({
+                    "type": "form.cancelled",
+                    "location": {"directory": "/repo"},
+                    "data": {"id": "frm_global", "sessionID": "global"}
+                }),
+            ] {
+                relay(
+                    &backend,
+                    1,
+                    &out,
+                    &state,
+                    &json!({"type": "instance.event", "instanceId": "project", "event": event}),
+                    0,
+                )
+                .await
+                .unwrap();
+                let mut saw_native = false;
+                while let Ok(item) = inbox.try_recv() {
+                    if matches!(item, Input::Native(1, _, _, ref native) if native["type"] == event["type"])
+                    {
+                        saw_native = true;
+                    }
+                }
+                assert!(
+                    saw_native,
+                    "global form event {} must be relayed",
+                    event["type"]
+                );
+            }
         });
 }
 

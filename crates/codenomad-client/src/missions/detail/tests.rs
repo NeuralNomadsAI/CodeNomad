@@ -90,3 +90,41 @@ fn detail_is_project_mission_and_revision_fenced_before_task_publication() {
     foreign["tasks"][0]["order"] = json!(1);
     assert!(verified(open(), source(foreign.to_string(), "tasks", 3)).is_err());
 }
+
+#[test]
+fn header_decodes_optional_coordinator_goal_and_task_mode_strictly() {
+    let b = backend();
+    let open = || b.mission_header("project", "mission").unwrap();
+
+    // Omitted fields remain backward compatible.
+    let base = header_row();
+    let decoded = verified(open(), source(base.to_string(), "mission", 3)).unwrap();
+    assert_eq!(decoded.root.template(), Template::Custom);
+    assert_eq!(decoded.root.task_mode(), None);
+    assert!(!decoded.root.coordinator_goal());
+
+    // Explicit coordinatorGoal: true and taskMode: independent decode accurately.
+    let mut enabled = base.clone();
+    enabled["root"]["coordinatorGoal"] = json!(true);
+    enabled["root"]["taskMode"] = json!("independent");
+    enabled["root"]["template"] = json!("compare");
+    let decoded = verified(open(), source(enabled.to_string(), "mission", 3)).unwrap();
+    assert_eq!(decoded.root.template(), Template::Compare);
+    assert_eq!(decoded.root.task_mode(), Some(TaskMode::Independent));
+    assert!(decoded.root.coordinator_goal());
+
+    // Explicit coordinatorGoal: false stays false.
+    let mut disabled = base.clone();
+    disabled["root"]["coordinatorGoal"] = json!(false);
+    let decoded = verified(open(), source(disabled.to_string(), "mission", 3)).unwrap();
+    assert!(!decoded.root.coordinator_goal());
+
+    // Invalid non-boolean coordinatorGoal or unknown taskMode is rejected.
+    let mut bad_goal = base.clone();
+    bad_goal["root"]["coordinatorGoal"] = json!("yes");
+    assert!(verified(open(), source(bad_goal.to_string(), "mission", 3)).is_err());
+
+    let mut bad_mode = base;
+    bad_mode["root"]["taskMode"] = json!("daily");
+    assert!(verified(open(), source(bad_mode.to_string(), "mission", 3)).is_err());
+}

@@ -1,12 +1,12 @@
 import { z } from "zod"
-import { recurrenceIDSchema } from "./recurrence-contract"
 import type { MissionMap, MissionReport, MissionTask } from "./model"
 import { missionMarkdownPage } from "./markdown-pages"
 import { missionCurrentSourceSchema } from "./mission-current-source"
 import { missionPanelPageRequestSchema, MISSION_PANEL_REQUEST_BYTES } from "./mission-panel-page"
 import { missionContentRequestSchema } from "./mission-content"
 
-export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema, owner: z.enum(["daily", "scheduled"]).default("daily") }).strict()
+export const recurrenceIDSchema = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
+export const recurrenceCurrentInput = z.object({ scheduleID: recurrenceIDSchema, owner: z.literal("scheduled").default("scheduled") }).strict()
 export const recurrenceCurrentPageInput = z.object({ source: missionCurrentSourceSchema, selector: missionPanelPageRequestSchema,
   body: missionContentRequestSchema.optional() }).strict().superRefine((input, context) => {
   const selector = input.selector
@@ -24,7 +24,7 @@ export const recurrenceCurrentContentInput = recurrenceCurrentInput.extend({ pas
   revision: z.number().int().positive().safe().optional(),
 }).strict().refine(input => input.kind === "overview" ? input.itemId === undefined : input.itemId !== undefined,
   "Reader target identity differs")
-export type RecurrenceCurrentContentInput = Omit<z.infer<typeof recurrenceCurrentContentInput>, "owner"> & { owner?: "daily" | "scheduled" }
+export type RecurrenceCurrentContentInput = Omit<z.infer<typeof recurrenceCurrentContentInput>, "owner"> & { owner?: "scheduled" }
 export const recurrenceCurrentContentPage = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema, missionID: z.string().min(1).max(240),
   revision: z.number().int().positive().safe(),
@@ -32,7 +32,7 @@ export const recurrenceCurrentContentPage = z.object({ version: z.literal(1), pr
 }).strict()
 const id = { type: "string", minLength: 3, maxLength: 100 } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
-const contentProperties = { scheduleID: id, passageID: id, owner: { type: "string", enum: ["daily", "scheduled"] }, section: { type: "string", enum: labels },
+const contentProperties = { scheduleID: id, passageID: id, owner: { type: "string", const: "scheduled" }, section: { type: "string", enum: labels },
   page: counter, revision: { ...counter, minimum: 1 } } as const
 export const recurrenceCurrentContentWire = {
   input: { type: "object", oneOf: [

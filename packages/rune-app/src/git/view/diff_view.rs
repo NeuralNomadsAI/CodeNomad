@@ -133,7 +133,7 @@ pub(crate) fn reader(s: &State) -> El {
         .child(header);
     let lane = ui.requests.slot(Lane::Preview);
     if let Some(error) = &lane.error {
-        root = root.child(theme::note(error, "alert")).child(
+        root = root.child(theme::note(error.localized(), "alert")).child(
             button(
                 s,
                 t("instanceShell.rightPanel.actions.refresh"),

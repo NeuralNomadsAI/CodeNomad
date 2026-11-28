@@ -15,8 +15,8 @@
 @import "./panels/right-panel-customization.css";
 @import "./panels/status-tokens.css";
 @import "./panels/status-goal.css";
+@import "./panels/status-automations.css";
 @import "./panels/mission-control.css";
-@import "./panels/mission-recurrence.css";
 @import "./panels/mission-source-select.css";
 @import "./panels/mission-create.css";
 @import "./panels/mission-schedule.css";
@@ -24,7 +24,6 @@
 @import "./panels/mission-picker.css";
 @import "./panels/mission-action-bar.css";
 @import "./panels/mission-detail.css";
-@import "./panels/mission-overview.css";
 @import "./panels/mission-route.css";
 @import "./panels/mission-graph.css";
 @import "./panels/mission-task-tree.css";

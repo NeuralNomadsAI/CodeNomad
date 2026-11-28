@@ -229,4 +229,4 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
 })
 type SourceFence = ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>
 export type NativeSourceFence = Omit<SourceFence, "preparedSession" | "selectedSession" | "absentSession" | "coordinator">
-  & Partial<Pick<SourceFence, "coordinator">>
+  & Partial<Pick<SourceFence, "coordinator" | "absentSession">>

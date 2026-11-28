@@ -40,11 +40,31 @@ pub(super) fn install(
 ) -> Result<(), String> {
     let app = webview.app_handle().clone();
     let (sender, receiver) = mpsc::sync_channel(1);
+    #[cfg(target_os = "linux")]
+    let (choosers, registration_id) = (controller.clone(), registration.registration_id.clone());
     webview
         .with_webview(move |native| {
             let changed = move |url: String| {
                 controller.emit_webkit_navigation(&app, &registration, &url);
             };
+            #[cfg(target_os = "linux")]
+            {
+                use webkit2gtk::{FileChooserRequestExt, WebViewExt};
+                // A chooser the page opens during an agent's page action is cancelled, as OpenCode's browser
+                // promises; the person's own clicks outside agent actions keep the native chooser.
+                native.inner().connect_run_file_chooser(move |_, request| {
+                    let agent = choosers.inner.0.lock().is_ok_and(|inner| {
+                        inner
+                            .page_leases
+                            .values()
+                            .any(|lease| lease.registration.registration_id == registration_id)
+                    });
+                    if agent {
+                        request.cancel();
+                    }
+                    agent
+                });
+            }
             #[cfg(target_os = "linux")]
             platform::observe(&native.inner(), changed);
             let _ = sender.send(());

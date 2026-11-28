@@ -22,7 +22,8 @@ mod routing;
 mod sessions;
 mod staleness;
 pub use catalogue::{
-    AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves, SessionCatalogueChanges,
+    AttentionHint, CatalogueChanges, CatalogueWatch, ProviderMoves, SessionActivityHint,
+    SessionActivityKind, SessionCatalogueChanges,
 };
 pub use children::ChildSettlement;
 pub(crate) use children::Children;

@@ -593,6 +593,7 @@ fn delivery_hidden_interruptions_keep_the_active_close_guard_and_button() {
                 a.forms.push(crate::agent_api::Form {
                     tool: None,
                     infer_websearch: false,
+                    owner: Default::default(),
                     id: "request".into(),
                     title: "Question".into(),
                     fields: vec![serde_json::json!({"key":"answer","type":"string"})],

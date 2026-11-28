@@ -1,103 +1,113 @@
 import path from "node:path"
-import { tmpdir } from "node:os"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { NativeMissionRecurrenceStore } from "../../missions/recurrence-store"
-import { recurrenceConfigSchema, type RecurrenceConfig } from "../../missions/recurrence-contract"
-import { recurrencePassage } from "../../missions/recurrence-passage"
+import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
+import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
+import type { MissionConfiguration } from "../../missions/launch-policy"
+import type { MissionDocument } from "../../missions/mission-document"
+import { missionDocumentPassage } from "../../missions/mission-document-passage-storage"
+import type { documentPassageStartInput } from "../../missions/mission-document-passage-input"
+import type { MissionControl } from "../../missions/control"
 import type { MissionStorage } from "../../missions/journal"
 import type { MissionJsonValue } from "../../missions/model"
-import type { MissionNativeService } from "./native-service-adapter"
 import type { NativeMissionSession } from "../../missions/control-types"
-import type { NativePassageObservation, PassageSessionObservation } from "./native-passage-observation"
-import { admitNativeRecurrencePassage, type PassageInput } from "./native-recurrence-admission"
-import { setupMissionsBusiness, type MissionsPluginContext } from "../missions-plugin"
-import { selectNativePassageBusiness, retireNativePassageBusiness } from "./native-passage-business"
+import type { MissionNativeService } from "./native-service-adapter"
+import type { PassageSessionObservation } from "./native-passage-observation"
+import { admitNativeScheduledPassage } from "./native-scheduled-passage-admission"
+import { nativeScheduledPassageBusiness, type NativeScheduledPassageContext } from "./native-scheduled-passage-business"
+import { observeNativeScheduledPassage } from "./native-scheduled-passage-settlement"
 
-export async function passageFixture(business = true) {
-  const parent = path.join(tmpdir(), "opencode")
-  await mkdir(parent, { recursive: true })
-  const root = await mkdtemp(path.join(parent, "passage-unit-"))
-  const configYamlPath = path.join(root, "config.yaml")
-  await writeFile(configYamlPath, "server:\n  environmentVariables:\n    PASSAGE_UNIT: frozen\n")
-  const values = new Map<string, MissionJsonValue>()
+const current = () => true as const, at = Date.parse("2026-10-01T00:00:00Z")
+
+/** One running schedule ("schedule") holding a reserved manual passage, over scripted
+ * native sessions. `start` admits it through the real admission, `finish` reports
+ * through the real passage business and `observe` runs the real settlement. */
+export async function passageFixture() {
+  // A native absolute path that is never created: on Windows it keeps its backslashes.
+  const root = path.resolve("passage-unit-project")
+  const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
+  const states = new Map<string, PassageSessionObservation>(), messages = new Map<string, unknown>()
+  let creates = 0, sends = 0, environments = 0, pendingForm = false
   const storage: MissionStorage = {
     get: async key => structuredClone(values.get(key)),
-    set: async (key, value, current) => { current?.(); values.set(key, structuredClone(value)) },
+    set: async (key, value, guard) => { guard?.(); values.set(key, structuredClone(value)) },
     scan: async ({ prefix, after, limit = 100 }) => {
-      const all = [...values].filter(([key]) => key.startsWith(prefix) && (!after || key > after)).sort(([a], [b]) => a.localeCompare(b))
+      const all = [...values].filter(([key]) => key.startsWith(prefix) && (after === undefined || key > after))
+        .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
       const entries = all.slice(0, limit).map(([key, value]) => ({ key, value: structuredClone(value) }))
       return { entries, ...(all.length > limit ? { next: entries.at(-1)!.key } : {}) }
     },
   }
-  const calendar = new NativeMissionRecurrenceStore(storage, "project", root)
-  const config = { title: "Unit passage", consigne: "Do bounded work and finish through mission_report.",
-    clock: { zone: "UTC", time: "23:59" }, template: "custom", profileID: "profile", executionHost: "local",
-    profiles: { coordinator: { agent: "build", model: { providerID: "unit", id: "model" } },
-      roles: { specialist: { agent: "build", model: { providerID: "unit", id: "model" } } } }, taskMode: "native",
-    roots: [{ mode: "directory-only", directory: root }], watchedConversationIDs: [] }
-  const parsed = recurrenceConfigSchema.parse(config)
-  const paused = await calendar.create("schedule", parsed, 10, () => true)
-  const created = await calendar.setState("schedule", paused.revision, "running", () => true)
-  let doc = await calendar.reserve("schedule", created.revision, { kind: "manual", requestID: "unit-wake", expectedRevision: created.revision, at: 10 }, 10, () => true)
-  const passage = recurrencePassage(storage, doc, () => true, () => 20)
-  const sessions = new Map<string, NativeMissionSession>()
-  const states = new Map<string, PassageSessionObservation>()
-  const messages = new Set<string>()
-  let creates = 0, sends = 0, environments = 0, pendingForm = false, crashAfterSend = false
+  const store = new NativeMissionDocumentStore({ get: storage.get, compareAndSet: async (key, value, revision, guard) => {
+    guard()
+    if (((values.get(key) as { revision: number } | undefined)?.revision ?? null) !== revision) throw new Error("Fixture revision conflict")
+    values.set(key, structuredClone(value))
+  } }, "project", root)
+  const selection = { agent: "build", model: { providerID: "unit", id: "model" } }
+  const config: MissionConfiguration = { title: "Unit passage", objective: "Do bounded work and finish through mission_report.",
+    template: "custom", taskMode: "native", profileID: "profile", executionHost: "local",
+    roots: [{ mode: "directory-only", directory: root }], watchedConversationIDs: [],
+    profiles: { coordinator: selection, roles: { specialist: selection } },
+    launch: { timing: { kind: "every", intervalMs: 900_000 }, condition: null, ends: { maxLaunches: 3, at: null, afterMs: null } } }
+  const created = await store.create("schedule", config, at, current)
+  const reserved = await store.change(created.id, created.revision, current, next => {
+    changes.play(next, "play", at, [])
+    changes.synchronized(next, "play", (["principal", "reconciliation"] as const).map(role => ({ role, slot: 0, timeGeneration: 1,
+      scheduleID: `sch_${role}`, sessionID: `ses_${role}`, highWater: 0, pendingWake: null, wakePreparing: null })))
+    changes.reserve(next, { kind: "manual", requestID: "unit-wake" }, at, [])
+  })
+  const passage = missionDocumentPassage(storage, reserved, current)
   const location = { directory: root, project: { id: "project", canonical: root, directory: root } }
-  const observation: NativePassageObservation = {
-    assertCurrent: () => true,
-    assertScheduleCurrent: () => true,
-    exists: async id => sessions.has(id),
-    session: async (id, messageID) => { const state = states.get(id); if (!state) throw new Error("Missing session")
-      return { ...structuredClone(state), messagePresent: messageID === undefined ? state.messagePresent : messages.has(`${id}\0${messageID}`) } },
-    children: async id => [...sessions.values()].filter(session => session.parentID === id).map(session => session.id),
-    requests: async () => pendingForm,
-  }
   const native = {
-    location, assertCurrent: () => true,
-    get: async ({ sessionID }: { sessionID: string }) => { const session = sessions.get(sessionID); if (!session) throw new Error("Missing session"); return structuredClone(session) },
-    create: async (input: { id: string; agent: string; model: NativeMissionSession["model"]; metadata: NativeMissionSession["metadata"]; title: string }) => {
-      creates++
+    location, assertCurrent: current,
+    get: async ({ sessionID }: { sessionID: string }) => {
+      const session = sessions.get(sessionID); if (!session) throw new Error("Missing session"); return structuredClone(session)
+    },
+    create: async (input: { id: string; agent: string; model: NativeMissionSession["model"]; metadata: NativeMissionSession["metadata"] }, _options: unknown, guard: () => true) => {
+      guard(); creates++
       const session = { ...input, projectID: "project", location: { directory: root } }
       sessions.set(input.id, session)
       states.set(input.id, { id: input.id, projectID: "project", directory: root, active: false, inbox: 0,
         suspended: false, runningTools: 0, failed: false, messagePresent: false })
       return session
     },
-    environment: async (input: { variables: Record<string, string> }) => {
-      if (input.variables.PASSAGE_UNIT !== "frozen") throw new Error("Profile ENV missing")
-      environments++
-    },
-    admit: async (command: { input: { sessionID: string; id: string } }) => {
-      sends++
-      messages.add(`${command.input.sessionID}\0${command.input.id}`)
-      states.get(command.input.sessionID)!.messagePresent = true
-      // Scripted native turns complete immediately and expose their durable input/idle correlation.
-      states.get(command.input.sessionID)!.terminal ??= {
-        inputMessageID: command.input.id, messageID: `idle_${command.input.id}`, outcome: "succeeded" }
-      if (crashAfterSend) { crashAfterSend = false; throw new Error("Crash after native admission") }
-      return { id: command.input.id }
+    inbox: async () => [],
+    message: async ({ messageID }: { messageID: string }) => messages.get(messageID),
+    environment: async (_input: unknown, _options: unknown, guard: () => true) => { guard(); environments++ },
+    admit: async ({ input }: { input: ReturnType<typeof documentPassageStartInput> }, _options: unknown, guard: () => true) => {
+      guard(); sends++
+      messages.set(input.id, { type: "synthetic", id: input.id, text: input.text, metadata: input.metadata })
+      // Scripted native turns complete at once and expose their durable input/idle correlation.
+      states.get(input.sessionID)!.terminal ??= { inputMessageID: input.id, messageID: `idle_${input.id}`, outcome: "succeeded" }
+      return { type: "synthetic", id: input.id, sessionID: input.sessionID, delivery: input.delivery,
+        payload: { text: input.text, description: input.description, metadata: input.metadata } }
     },
   } as unknown as MissionNativeService
-  const input = async (): Promise<PassageInput> => ({ document: (await calendar.read(doc.id))!, storage, native, observation,
-    profile: { profileID: "profile", executionHost: "local", configYamlPath }, signal: new AbortController().signal,
-    current: () => true, read: () => calendar.read(doc.id), now: () => 20 })
-  // Manual fixture pending predates explicit Play; make the schedule running
-  // using its ordinary store control before reserving in production tests.
-  const tools = new Map<string, { execute(input: unknown, context: { sessionID: string; messageID: string; id: string; progress(update: Record<string, unknown>): Promise<void> }): Promise<{ content: string }> }>()
-  const hooks = new Map<string, (event: { sessionID: string; system: Array<{ type: string; text: string }>; tools: Record<string, unknown> }) => unknown>()
-  const context = { location, storage: { ...storage, remove: async () => {} }, session: { get: native.get,
-    hook: async (name: string, callback: never) => { hooks.set(name, callback); return { dispose: async () => {} } } }, tool: { transform: async (callback: (draft: unknown) => void) => {
-      callback({ namespace: () => {}, add: (tool: { name: string }) => tools.set(tool.name, tool as never) })
-      return { dispose: async () => {} }
-    } } } as unknown as MissionsPluginContext
-  const disposeTools = business ? await setupMissionsBusiness(context, id => selectNativePassageBusiness(context, id)) : async () => {}
-  return { root, calendar, passage, storage, observation, sessions, states, input, tools, hooks, context,
-    async start() { const ack = await admitNativeRecurrencePassage(await input()); doc = await calendar.recordAdmission(doc.id, ack, 20, () => true); return doc },
-    async finish(outcome: "completed" | "failed" = "completed") { return tools.get("report")!.execute({ final: true, outcome, summary: "Finished via real mission tool", evidence: [], next: [] },
-      { sessionID: passage.coordinatorSessionID, messageID: "msg_report", id: "call_report", progress: async () => {} }) },
-    set pendingForm(value: boolean) { pendingForm = value }, set crashAfterSend(value: boolean) { crashAfterSend = value },
-    counts: () => ({ creates, sends, environments }),
-    async dispose() { await disposeTools(); retireNativePassageBusiness(location); await rm(root, { recursive: true, force: true }) } }
+  const observation: NativeScheduledPassageContext["observation"] = {
+    assertCurrent: current, exists: async id => sessions.has(id),
+    session: async (id, messageID) => {
+      const state = states.get(id); if (!state) throw new Error("Missing session")
+      return { ...structuredClone(state), messagePresent: messageID === undefined ? state.messagePresent : messages.has(messageID) }
+    },
+    children: async id => [...sessions.values()].filter(session => session.parentID === id).map(session => session.id),
+    requests: async () => pendingForm,
+  }
+  const read = async (): Promise<MissionDocument> => {
+    const doc = await store.read("schedule"); if (!doc || "deletedAt" in doc) throw new Error("Fixture schedule missing"); return doc
+  }
+  const use = <T>(callback: (input: NativeScheduledPassageContext) => Promise<T>, observed = observation) => store.withExclusion(async locked => callback({
+    document: await read(), locked, storage, native, observation: observed, authority: () => locked.assertActive(),
+    profile: { profileID: "profile", executionHost: "local", configYamlPath: "unused-isolated-profile" },
+    signal: new AbortController().signal, current, now: () => at + 1000, environment: async () => ({ PASSAGE_UNIT: "frozen" }) }))
+  const business = <T>(callback: (control: MissionControl) => Promise<T>) => use(input => callback(nativeScheduledPassageBusiness(input).control))
+  return { root, at, store, document: read, storage, passage, observation, sessions, states, business,
+    async start() {
+      const result = await use(admitNativeScheduledPassage)
+      if (result.kind !== "admitted") throw new Error(`Fixture passage ${result.kind}`)
+      const doc = await read()
+      return store.change(doc.id, doc.revision, current, next => changes.admitted(next, result.passageID, result.at))
+    },
+    finish: (outcome: "completed" | "failed" = "completed") => business(control => control.report(passage.coordinatorSessionID,
+      { missionID: passage.missionID, outcome, summary: "Finished through the passage business", final: true, evidence: [], next: [] })),
+    observe: (observed = observation) => use(observeNativeScheduledPassage, observed),
+    set pendingForm(value: boolean) { pendingForm = value },
+    counts: () => ({ creates, sends, environments }) }
 }

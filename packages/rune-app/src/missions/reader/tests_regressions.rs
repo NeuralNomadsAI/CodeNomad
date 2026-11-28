@@ -1,24 +1,149 @@
 use super::{
-    tests::{
-        header_with, header_with_reports, query_params, slice_reply, spawn_http, task_and_report,
-    },
+    tests::{header_with, header_with_reports, query_params, slice_reply, task_and_report},
     *,
 };
 use crate::{
+    backend::Backend,
     files::test_http::{Http, wait},
     missions::directory::Panel,
     platform::reads::Reads,
 };
 use codenomad_client::{
-    bounded,
+    Receiver, bounded,
     missions::{ContentSelector, Status, Summary, content_digest},
 };
 use rune::{Env, Runtime};
-use serde_json::json;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    task::JoinHandle,
+};
+
+struct MockHttp {
+    backend: Backend,
+    server: JoinHandle<()>,
+}
+
+impl Drop for MockHttp {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
+}
+
+impl MockHttp {
+    async fn spawn(
+        handler: impl Fn(String, Value) -> (u16, Value) + Send + Sync + 'static,
+    ) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut backend =
+            Backend::connect(&format!("http://{}", listener.local_addr().unwrap()), "")
+                .await
+                .unwrap();
+        backend.workspace = "project".into();
+        backend.session = "session".into();
+        let handler = Arc::new(handler);
+        let server = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let handler = handler.clone();
+                tokio::spawn(async move {
+                    serve_connection(socket, handler).await;
+                });
+            }
+        });
+        Self { backend, server }
+    }
+
+    async fn spawn_query(
+        handler: impl Fn(HashMap<String, String>) -> (u16, Value) + Send + Sync + 'static,
+    ) -> Self {
+        Self::spawn(move |header, _| handler(query_params(&header))).await
+    }
+}
+
+async fn serve_connection(
+    mut socket: TcpStream,
+    handler: Arc<dyn Fn(String, Value) -> (u16, Value) + Send + Sync>,
+) {
+    let mut buf = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 1024];
+    let header_end = loop {
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+        if buf.len() >= 32_768 {
+            return;
+        }
+        match socket.read(&mut chunk).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+    };
+    let Ok(header) = String::from_utf8(buf[..header_end].to_vec()) else {
+        return;
+    };
+    let content_length = header
+        .lines()
+        .find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    if content_length > 65_536 {
+        return;
+    }
+    let mut body_bytes = buf.split_off(header_end);
+    if body_bytes.len() < content_length {
+        let missing = content_length - body_bytes.len();
+        let mut tail = vec![0u8; missing];
+        if socket.read_exact(&mut tail).await.is_err() {
+            return;
+        }
+        body_bytes.extend_from_slice(&tail);
+    }
+    let body_slice = &body_bytes[..content_length];
+    let body = if body_slice.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(body_slice).unwrap_or(Value::Null)
+    };
+    let (status, reply) = handler(header, body);
+    let payload = if status == 204 {
+        Vec::new()
+    } else {
+        serde_json::to_vec(&reply).unwrap()
+    };
+    let response_header = format!(
+        "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        payload.len()
+    );
+    let _ = socket.write_all(response_header.as_bytes()).await;
+    let _ = socket.write_all(&payload).await;
+}
+
+async fn wait_until<T>(wake_rx: &Receiver<()>, mut step: impl FnMut() -> Option<T>) -> T {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            if let Some(done) = step() {
+                return done;
+            }
+            wake_rx.recv().await.expect("wake channel closed");
+            while wake_rx.try_recv().is_ok() {}
+        }
+    })
+    .await
+    .expect("mission reader regression deadline")
+}
 
 fn noop_wake() -> Wake {
     Arc::new(|| {})
@@ -76,7 +201,7 @@ fn withdrawn_and_mismatched_task_reports_render_only_as_history_disclosures() {
         let report_requests = Arc::new(AtomicUsize::new(0));
         let req_c = report_requests.clone();
         let d_c = digest.clone();
-        let backend = spawn_http(move |params| {
+        let mock = MockHttp::spawn_query(move |params| {
             let kind = params.get("kind").map(String::as_str).unwrap_or_default();
             let field = params.get("field").map(String::as_str).unwrap_or_default();
             if kind == "report" && field == "summary" {
@@ -97,6 +222,7 @@ fn withdrawn_and_mismatched_task_reports_render_only_as_history_disclosures() {
             }
         })
         .await;
+        let backend = mock.backend.clone();
 
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
@@ -164,23 +290,17 @@ fn withdrawn_and_mismatched_task_reports_render_only_as_history_disclosures() {
             rt.frame(1.0 / 60.0);
         }
 
-        wait(async {
-            loop {
-                rt.update(|p, _| {
-                    p.poll();
-                });
-                for _ in 0..4 {
-                    rt.frame(1.0 / 60.0);
-                }
-                if rt
-                    .accessibility_json()
-                    .to_string()
-                    .contains("Old attempt body")
-                {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
+        wait_until(&wake_rx, || {
+            rt.update(|p, _| {
+                p.poll();
+            });
+            for _ in 0..4 {
+                rt.frame(1.0 / 60.0);
             }
+            rt.accessibility_json()
+                .to_string()
+                .contains("Old attempt body")
+                .then_some(())
         })
         .await;
         assert_eq!(report_requests.load(Ordering::SeqCst), 1);
@@ -198,7 +318,7 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
         let calls_c = calls.clone();
         let da = digest_a.clone();
         let db = digest_b.clone();
-        let backend = spawn_http(move |params| {
+        let mock = MockHttp::spawn_query(move |params| {
             calls_c.fetch_add(1, Ordering::SeqCst);
             let offset = params
                 .get("offset")
@@ -287,6 +407,8 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
         })
         .await;
 
+        let backend = mock.backend.clone();
+
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
             let _ = wake_tx.try_send(());
@@ -303,15 +425,12 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
             vec![],
         );
         let obj_sel = ContentSelector::mission("objective");
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_a), &reads, &wake);
-                let v = reader.body_view("project", "msn_1", &obj_sel);
-                if v.body.is_some_and(|b| b.text == "Newer rev text") {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_a), &reads, &wake);
+            let v = reader.body_view("project", "msn_1", &obj_sel);
+            v.body
+                .is_some_and(|b| b.text == "Newer rev text")
+                .then_some(())
         })
         .await;
         let calls_after_a = calls.load(Ordering::SeqCst);
@@ -327,18 +446,13 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
             vec![],
         );
         let notes_sel = ContentSelector::mission("notes");
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_b), &reads, &wake);
-                if reader
-                    .body_view("project", "msn_1", &notes_sel)
-                    .body
-                    .is_some_and(|b| b.text == "Stable digest")
-                {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_b), &reads, &wake);
+            reader
+                .body_view("project", "msn_1", &notes_sel)
+                .body
+                .is_some_and(|b| b.text == "Stable digest")
+                .then_some(())
         })
         .await;
         let calls_after_b = calls.load(Ordering::SeqCst);
@@ -354,14 +468,10 @@ fn body_cache_promotes_newer_revision_stays_fresh_on_same_digest_and_rejects_bad
             vec![],
         );
         let sum_sel = ContentSelector::mission("summary");
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_c), &reads, &wake);
-                if reader.body_view("project", "msn_1", &sum_sel).status == BodyStatus::Error {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_c), &reads, &wake);
+            (reader.body_view("project", "msn_1", &sum_sel).status == BodyStatus::Error)
+                .then_some(())
         })
         .await;
         let calls_after_c = calls.load(Ordering::SeqCst);
@@ -382,7 +492,7 @@ fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
         let da = digest_a.clone();
         let db = digest_b.clone();
         let full_c = full.clone();
-        let backend = spawn_http(move |params| {
+        let mock = MockHttp::spawn_query(move |params| {
             let offset = params
                 .get("offset")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -418,6 +528,7 @@ fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
             }
         })
         .await;
+        let backend = mock.backend.clone();
 
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
@@ -448,18 +559,13 @@ fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
         assert!(reader.take_ready_copy().is_none());
 
         // Wait until first page (10_000 units loaded out of 13_200), then request whole copy.
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
-                if reader
-                    .body_view("project", "msn_1", &sel)
-                    .body
-                    .is_some_and(|b| b.utf16_len >= 9_000)
-                {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
+            reader
+                .body_view("project", "msn_1", &sel)
+                .body
+                .is_some_and(|b| b.utf16_len >= 9_000)
+                .then_some(())
         })
         .await;
         assert!(
@@ -468,14 +574,9 @@ fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
                 .is_none(),
             "whole body is not loaded yet"
         );
-        let delivered = wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
-                if let Some(text) = reader.take_ready_copy() {
-                    break text;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        let delivered = wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap), &reads, &wake);
+            reader.take_ready_copy()
         })
         .await;
         assert_eq!(delivered, full);
@@ -490,18 +591,13 @@ fn async_copy_delivers_bound_digest_cancels_on_change_and_refuses_oversized() {
             json!({ "notes": { "characters": total, "digest": digest_a } }),
             vec![],
         );
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_notes), &reads, &wake);
-                if reader
-                    .body_view("project", "msn_1", &notes_sel)
-                    .body
-                    .is_some_and(|b| b.utf16_len >= 9_000)
-                {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_notes), &reads, &wake);
+            reader
+                .body_view("project", "msn_1", &notes_sel)
+                .body
+                .is_some_and(|b| b.utf16_len >= 9_000)
+                .then_some(())
         })
         .await;
         assert!(
@@ -544,11 +640,11 @@ fn hidden_panel_preserves_refresh_and_suspend_revalidates_on_return() {
         panel.detail.snapshot = Some(header_with("msn_1", 2, json!({}), vec![]));
         panel.selected = Some("msn_1".into());
         panel.reader.open_overview("msn_1".into());
-        // Schedule a refresh while visible (draining the initial Summaries/Cleanups requests
-        // so cancelled client sockets do not sit in the mock TcpListener backlog), then hide
+        // Schedule a refresh while visible (draining all 3 initial Summaries/Cleanups/Calendars
+        // requests so no cancelled client socket sits in the mock TcpListener backlog), then hide
         // the right panel while the reader stays open.
         panel.show(true);
-        for _ in 0..2 {
+        for _ in 0..3 {
             let req = wait(http.accept()).await;
             let _ = req.try_reply(503, json!({})).await;
         }
@@ -560,12 +656,18 @@ fn hidden_panel_preserves_refresh_and_suspend_revalidates_on_return() {
         // Suspending an inactive tab cancels flights and triggers detail revalidation on next poll.
         panel.suspend();
         assert!(panel.has_reader());
+        http.quiet().await;
         panel.poll();
         let req = wait(http.accept()).await;
         assert!(
             req.header.contains("/missions/panel"),
             "returning from suspended tab must revalidate detail snapshot, got: {}",
             req.header
+        );
+        assert_eq!(
+            req.body,
+            json!({"source": "mission", "missionID": "msn_1", "header": true}),
+            "revalidation must request the open mission header"
         );
     });
 }
@@ -575,71 +677,64 @@ fn overview_progress_fallback_and_offpage_task_lookup() {
     crate::platform::block_on(async {
         const OFFPAGE_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[{"id":"tsk_far","key":"task-far","title":"Offpage Task","role":"specialist","status":"completed","blockedBy":[],"order":55,"createdAt":1,"updatedAt":1,"dependents":0,"reportCount":1,"outstandingExecution":false,"bodies":{"brief":{"characters":12,"digest":"mPPnWrHj4vEFmX9TRzV2jvYMian4OZjG3wx189MckAU"}},"report":{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2}}],"reports":[{"id":"rep_tsk_far","taskKey":"task-far","sessionId":"ses_task","outcome":"completed","excerpt":"Excerpt for task-far","createdAt":2,"bodies":{"summary":{"characters":24,"digest":"mwKfd7N-_i81PRfQA3tUMgTlcMxZN6otlkuGGAlVLFo"},"evidence":{"characters":20,"digest":"miBWWG3jJlR9rjbI4TGbcmpBlZ8cwEvRfQCGUzUiU-Y"},"next":{"characters":2,"digest":"XukXOxtWTmGv0jWaiXwYC16oOHWpGihTffQgKq1LOqc"}}}]}"#;
         const OFFPAGE_DIGEST: &str = "Ef_gOvbQNxC9Ft1k1PBB0ll16tmt2zrK-4Zg5L9e0QY";
-        let http = Http::new().await;
-        let mut backend = http.backend.clone();
-        backend.workspace = "project".into();
         let lookup_hits = Arc::new(AtomicUsize::new(0));
         let lookup_c = lookup_hits.clone();
-        crate::platform::spawn(async move {
-            loop {
-                let req = http.accept().await;
-                let params = query_params(&req.header);
-                if req.header.contains("/missions/panel") && req.body["source"] == "tasks" {
-                    assert_eq!(req.body["task"]["keys"], json!(["task-far"]));
-                    lookup_c.fetch_add(1, Ordering::SeqCst);
-                    let _ = req
-                        .try_reply(
-                            200,
-                            json!({
-                                "available": true,
-                                "version": 1,
-                                "source": "tasks",
-                                "projectID": "project",
-                                "missionID": "msn_1",
-                                "revision": 5,
-                                "discardedEvents": 0,
-                                "controlUnavailable": false,
-                                "notificationUnavailable": false,
-                                "cleanupUnavailable": false,
-                                "page": {
-                                    "digest": OFFPAGE_DIGEST,
-                                    "total": 1,
-                                    "pieces": [{
-                                        "index": 0,
-                                        "offset": 0,
-                                        "characters": OFFPAGE_TASKS.encode_utf16().count(),
-                                        "text": OFFPAGE_TASKS
-                                    }]
-                                }
-                            }),
-                        )
-                        .await;
-                } else if params.get("kind").map(String::as_str) == Some("report") {
-                    let field = params.get("field").map(String::as_str).unwrap_or_default();
-                    let (text, is_json) = match field {
-                        "summary" => ("Offpage resolved summary", false),
-                        "evidence" => ("[\"verified offpage\"]", true),
-                        "next" => ("[]", true),
-                        _ => ("{}", true),
-                    };
-                    let digest = content_digest(text);
-                    let (st, body) = slice_reply(
-                        5,
-                        "report",
-                        field,
-                        json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
-                        &digest,
-                        text,
-                        0,
-                        60_000,
-                        is_json,
-                    );
-                    let _ = req.try_reply(st, body).await;
-                } else {
-                    let _ = req.try_reply(404, json!({})).await;
-                }
+        let mock = MockHttp::spawn(move |header, body| {
+            let params = query_params(&header);
+            if header.contains("/missions/panel") && body["source"] == "tasks" {
+                assert_eq!(body["task"]["keys"], json!(["task-far"]));
+                lookup_c.fetch_add(1, Ordering::SeqCst);
+                (
+                    200,
+                    json!({
+                        "available": true,
+                        "version": 1,
+                        "source": "tasks",
+                        "projectID": "project",
+                        "missionID": "msn_1",
+                        "revision": 5,
+                        "discardedEvents": 0,
+                        "controlUnavailable": false,
+                        "notificationUnavailable": false,
+                        "cleanupUnavailable": false,
+                        "page": {
+                            "digest": OFFPAGE_DIGEST,
+                            "total": 1,
+                            "pieces": [{
+                                "index": 0,
+                                "offset": 0,
+                                "characters": OFFPAGE_TASKS.encode_utf16().count(),
+                                "text": OFFPAGE_TASKS
+                            }]
+                        }
+                    }),
+                )
+            } else if params.get("kind").map(String::as_str) == Some("report") {
+                let field = params.get("field").map(String::as_str).unwrap_or_default();
+                let (text, is_json) = match field {
+                    "summary" => ("Offpage resolved summary", false),
+                    "evidence" => ("[\"verified offpage\"]", true),
+                    "next" => ("[]", true),
+                    _ => ("{}", true),
+                };
+                let digest = content_digest(text);
+                slice_reply(
+                    5,
+                    "report",
+                    field,
+                    json!({ "reportId": params.get("reportId").cloned().unwrap_or_default() }),
+                    &digest,
+                    text,
+                    0,
+                    60_000,
+                    is_json,
+                )
+            } else {
+                (404, json!({}))
             }
-        });
+        })
+        .await;
+        let backend = mock.backend.clone();
 
         let (wake_tx, wake_rx) = bounded(64);
         let wake: Wake = Arc::new(move || {
@@ -720,20 +815,35 @@ fn overview_progress_fallback_and_offpage_task_lookup() {
             rt.frame(1.0 / 60.0);
         }
 
-        wait(async {
-            loop {
-                rt.update(|p, _| {
-                    p.poll();
-                });
-                for _ in 0..4 {
-                    rt.frame(1.0 / 60.0);
-                }
-                let tree = rt.accessibility_json().to_string();
-                if tree.contains("Offpage Task") && tree.contains("Offpage resolved summary") {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
+        let offpage_summary = ContentSelector::report("rep_tsk_far", "summary");
+        wait_until(&wake_rx, || {
+            rt.update(|p, _| {
+                p.poll();
+            });
+            for _ in 0..4 {
+                rt.frame(1.0 / 60.0);
             }
+            assert_eq!(
+                rt.state.reader.lookup_failed(),
+                None,
+                "off-page lookup failed unexpectedly"
+            );
+            assert_eq!(
+                rt.state.reader.lookup_missing(),
+                None,
+                "off-page lookup reported missing unexpectedly"
+            );
+            assert_ne!(
+                rt.state
+                    .reader
+                    .body_view("project", "msn_1", &offpage_summary)
+                    .status,
+                BodyStatus::Error,
+                "off-page summary fetch parked in Error"
+            );
+            let tree = rt.accessibility_json().to_string();
+            (tree.contains("Offpage Task") && tree.contains("Offpage resolved summary"))
+                .then_some(())
         })
         .await;
         assert_eq!(lookup_hits.load(Ordering::SeqCst), 1);
@@ -778,7 +888,7 @@ fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
         let phase = Arc::new(AtomicUsize::new(0));
         let phase_c = phase.clone();
         let d_c = genuine_digest.clone();
-        let backend = spawn_http(move |_| match phase_c.load(Ordering::SeqCst) {
+        let mock = MockHttp::spawn_query(move |_| match phase_c.load(Ordering::SeqCst) {
             0 => slice_reply(
                 3,
                 "mission",
@@ -814,6 +924,7 @@ fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
             ),
         })
         .await;
+        let backend = mock.backend.clone();
 
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
@@ -831,14 +942,9 @@ fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
             vec![],
         );
 
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_v3), &reads, &wake);
-                if reader.body_view("project", "msn_1", &sel).status == BodyStatus::Error {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_v3), &reads, &wake);
+            (reader.body_view("project", "msn_1", &sel).status == BodyStatus::Error).then_some(())
         })
         .await;
         assert!(reader.body_view("project", "msn_1", &sel).body.is_none());
@@ -860,14 +966,9 @@ fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
             vec![],
         );
         reader.retry(&key);
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_v4), &reads, &wake);
-                if reader.body_view("project", "msn_1", &sel).status == BodyStatus::Missing {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_v4), &reads, &wake);
+            (reader.body_view("project", "msn_1", &sel).status == BodyStatus::Missing).then_some(())
         })
         .await;
 
@@ -878,18 +979,13 @@ fn tampered_body_digest_fails_closed_and_older_not_found_unparks_on_restore() {
             json!({ "notes": { "characters": genuine.len(), "digest": genuine_digest } }),
             vec![],
         );
-        wait(async {
-            loop {
-                reader.poll(&backend, Some("project"), Some(&snap_v5), &reads, &wake);
-                if reader
-                    .body_view("project", "msn_1", &sel)
-                    .body
-                    .is_some_and(|b| b.text == genuine)
-                {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            reader.poll(&backend, Some("project"), Some(&snap_v5), &reads, &wake);
+            reader
+                .body_view("project", "msn_1", &sel)
+                .body
+                .is_some_and(|b| b.text == genuine)
+                .then_some(())
         })
         .await;
         assert_eq!(
@@ -906,46 +1002,40 @@ fn rebind_preserves_open_reader_and_missing_offpage_lookup_keeps_current_view() 
     crate::platform::block_on(async {
         const EMPTY_TASKS: &str = r#"{"taskPage":{"order":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","offset":0,"end":0,"total":60,"reports":2,"counts":{"completed":60}},"tasks":[],"reports":[]}"#;
         const EMPTY_DIGEST: &str = "mJ1imXdP_i7bo88sVwOZGOR9y0Xazue3EWYDorWcORs";
-        let http = Http::new().await;
-        let mut backend_a = http.backend.clone();
-        backend_a.workspace = "project".into();
-        let backend_b = backend_a.clone();
-        crate::platform::spawn(async move {
-            loop {
-                let req = http.accept().await;
-                if req.header.contains("/missions/panel") && req.body["source"] == "tasks" {
-                    let _ = req
-                        .try_reply(
-                            200,
-                            json!({
-                                "available": true,
-                                "version": 1,
-                                "source": "tasks",
-                                "projectID": "project",
-                                "missionID": "msn_1",
-                                "revision": 5,
-                                "discardedEvents": 0,
-                                "controlUnavailable": false,
-                                "notificationUnavailable": false,
-                                "cleanupUnavailable": false,
-                                "page": {
-                                    "digest": EMPTY_DIGEST,
-                                    "total": 1,
-                                    "pieces": [{
-                                        "index": 0,
-                                        "offset": 0,
-                                        "characters": EMPTY_TASKS.encode_utf16().count(),
-                                        "text": EMPTY_TASKS
-                                    }]
-                                }
-                            }),
-                        )
-                        .await;
-                } else {
-                    let _ = req.try_reply(503, json!({})).await;
-                }
+        let mock = MockHttp::spawn(move |header, body| {
+            if header.contains("/missions/panel") && body["source"] == "tasks" {
+                (
+                    200,
+                    json!({
+                        "available": true,
+                        "version": 1,
+                        "source": "tasks",
+                        "projectID": "project",
+                        "missionID": "msn_1",
+                        "revision": 5,
+                        "discardedEvents": 0,
+                        "controlUnavailable": false,
+                        "notificationUnavailable": false,
+                        "cleanupUnavailable": false,
+                        "page": {
+                            "digest": EMPTY_DIGEST,
+                            "total": 1,
+                            "pieces": [{
+                                "index": 0,
+                                "offset": 0,
+                                "characters": EMPTY_TASKS.encode_utf16().count(),
+                                "text": EMPTY_TASKS
+                            }]
+                        }
+                    }),
+                )
+            } else {
+                (503, json!({}))
             }
-        });
+        })
+        .await;
+        let backend_a = mock.backend.clone();
+        let backend_b = backend_a.clone();
 
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
@@ -988,14 +1078,9 @@ fn rebind_preserves_open_reader_and_missing_offpage_lookup_keeps_current_view() 
         panel
             .reader
             .request_task_lookup("msn_1".into(), "task-ghost".into());
-        wait(async {
-            loop {
-                panel.poll();
-                if panel.reader.lookup_missing() == Some("task-ghost") {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            panel.poll();
+            (panel.reader.lookup_missing() == Some("task-ghost")).then_some(())
         })
         .await;
         assert!(panel.reader.is_overview_open("msn_1"));
@@ -1044,50 +1129,44 @@ fn failed_offpage_lookup_stays_retryable_instead_of_caching_missing() {
         const OFFPAGE_DIGEST: &str = "Ef_gOvbQNxC9Ft1k1PBB0ll16tmt2zrK-4Zg5L9e0QY";
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_c = calls.clone();
-        let http = Http::new().await;
-        let mut backend = http.backend.clone();
-        backend.workspace = "project".into();
-        crate::platform::spawn(async move {
-            loop {
-                let req = http.accept().await;
-                if req.header.contains("/missions/panel") && req.body["source"] == "tasks" {
-                    let n = calls_c.fetch_add(1, Ordering::SeqCst);
-                    if n == 0 {
-                        let _ = req.try_reply(503, json!({"error": "temporary"})).await;
-                    } else {
-                        let _ = req
-                            .try_reply(
-                                200,
-                                json!({
-                                    "available": true,
-                                    "version": 1,
-                                    "source": "tasks",
-                                    "projectID": "project",
-                                    "missionID": "msn_1",
-                                    "revision": 5,
-                                    "discardedEvents": 0,
-                                    "controlUnavailable": false,
-                                    "notificationUnavailable": false,
-                                    "cleanupUnavailable": false,
-                                    "page": {
-                                        "digest": OFFPAGE_DIGEST,
-                                        "total": 1,
-                                        "pieces": [{
-                                            "index": 0,
-                                            "offset": 0,
-                                            "characters": OFFPAGE_TASKS.encode_utf16().count(),
-                                            "text": OFFPAGE_TASKS
-                                        }]
-                                    }
-                                }),
-                            )
-                            .await;
-                    }
+        let mock = MockHttp::spawn(move |header, body| {
+            if header.contains("/missions/panel") && body["source"] == "tasks" {
+                let n = calls_c.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    (503, json!({"error": "temporary"}))
                 } else {
-                    let _ = req.try_reply(503, json!({})).await;
+                    (
+                        200,
+                        json!({
+                            "available": true,
+                            "version": 1,
+                            "source": "tasks",
+                            "projectID": "project",
+                            "missionID": "msn_1",
+                            "revision": 5,
+                            "discardedEvents": 0,
+                            "controlUnavailable": false,
+                            "notificationUnavailable": false,
+                            "cleanupUnavailable": false,
+                            "page": {
+                                "digest": OFFPAGE_DIGEST,
+                                "total": 1,
+                                "pieces": [{
+                                    "index": 0,
+                                    "offset": 0,
+                                    "characters": OFFPAGE_TASKS.encode_utf16().count(),
+                                    "text": OFFPAGE_TASKS
+                                }]
+                            }
+                        }),
+                    )
                 }
+            } else {
+                (503, json!({}))
             }
-        });
+        })
+        .await;
+        let backend = mock.backend.clone();
 
         let (wake_tx, wake_rx) = bounded(32);
         let wake: Wake = Arc::new(move || {
@@ -1129,14 +1208,9 @@ fn failed_offpage_lookup_stays_retryable_instead_of_caching_missing() {
         panel
             .reader
             .request_task_lookup("msn_1".into(), "task-far".into());
-        wait(async {
-            loop {
-                panel.poll();
-                if panel.reader.lookup_failed() == Some("task-far") {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            panel.poll();
+            (panel.reader.lookup_failed() == Some("task-far")).then_some(())
         })
         .await;
         assert!(panel.reader.lookup_missing().is_none());
@@ -1147,14 +1221,9 @@ fn failed_offpage_lookup_stays_retryable_instead_of_caching_missing() {
         panel
             .reader
             .request_task_lookup("msn_1".into(), "task-far".into());
-        wait(async {
-            loop {
-                panel.poll();
-                if panel.reader.is_task_open("msn_1", "tsk_far") {
-                    break;
-                }
-                wake_rx.recv().await.unwrap();
-            }
+        wait_until(&wake_rx, || {
+            panel.poll();
+            panel.reader.is_task_open("msn_1", "tsk_far").then_some(())
         })
         .await;
         assert_eq!(calls.load(Ordering::SeqCst), 2);

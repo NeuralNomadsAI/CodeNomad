@@ -254,6 +254,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
                         s.transcript_display.messages.boundary = Some(id);
                         s.revision += 1;
                         if empty_draft(s) {
+                            s.composer.exit_shell_mode();
                             s.draft.replace_text(&text);
                             s.composer.picker.changed(&s.draft, &s.reads, &s.wake);
                             tx.focus("composer", false);

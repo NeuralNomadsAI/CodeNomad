@@ -100,7 +100,11 @@ pub enum Error {
     Read,
     ReadOnly,
     MissingVersion,
-    Conflict(Option<String>),
+    Conflict(codenomad_client::files::WriteConflict),
+    AccessDenied,
+    Unauthorized,
+    NotFound,
+    WorkspaceUnavailable,
     Uncertain,
     TooLarge,
 }

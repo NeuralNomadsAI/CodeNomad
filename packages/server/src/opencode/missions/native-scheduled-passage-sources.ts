@@ -27,15 +27,16 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
   // each event's own news, so every schedule group reads only its own conditions.
   const changed: string[] = [], news = { triggers: false, conditions: false, changed }
   const note = (condition: MissionCondition, fresh: boolean) => { if (!fresh) return; news[role(condition)] = true; changed.push(missionSourceKey(condition)) }
-  for (const condition of events) {
-    if (condition.kind === "conversation-message") continue
-    if (!conditionReader) throw new Error("Qualified Mission condition reader unavailable")
-    const result = await conditionReader(structuredClone(observed), condition)
+  const external = events.filter(condition => condition.kind !== "conversation-message")
+  if (external.length && !conditionReader) throw new Error("Qualified Mission condition reader unavailable")
+  const reads = await Promise.all(external.map(condition => conditionReader!(structuredClone(observed), condition)))
+  for (const [index, condition] of external.entries()) {
+    const result = reads[index]!
     if (result.checkpoint.key !== missionSourceKey(condition) || result.checkpoint.kind !== condition.kind) throw new Error("Mission condition proof incomplete")
     guards.push(result.current); checkpoints.push(result.checkpoint); note(condition, result.changed)
     if (result.revalidate) revalidations.push(result.revalidate)
   }
-  const revalidate = revalidations.length ? async () => { for (const item of revalidations) await item() } : undefined
+  const revalidate = revalidations.length ? async () => { await Promise.all(revalidations.map(item => item())) } : undefined
   const followed = new Map(events.flatMap(item => item.kind === "conversation-message" ? [[item.conversationID, item] as const] : []))
   const ids = [...new Set([...config.watchedConversationIDs, ...followed.keys()])]
   const budget = { consigne: config.objective, roots: config.roots, watchedConversationIDs: ids }

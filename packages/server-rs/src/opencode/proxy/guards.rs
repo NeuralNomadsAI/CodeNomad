@@ -103,16 +103,21 @@ pub(super) fn is_account_no_store_route(route: &str, method: &Method) -> bool {
 }
 
 pub(super) fn guarded(route: &str, method: &Method) -> bool {
+    let session_segment = route
+        .strip_prefix("/api/session/")
+        .or_else(|| route.strip_prefix("/api/experimental/session/"))
+        .and_then(|rest| rest.split('/').next());
     if *method == Method::GET {
+        if session_segment
+            .is_some_and(|seg| seg.is_empty() || seg == "global" || (seg == "active" && route != "/api/session/active"))
+        {
+            return false;
+        }
         return !route.starts_with("/api/fs/") && !route.starts_with("/api/pty") && !route.starts_with("/api/shell");
     }
     if is_account_mutation(route, method) {
         return true;
     }
-    let session_segment = route
-        .strip_prefix("/api/session/")
-        .or_else(|| route.strip_prefix("/api/experimental/session/"))
-        .and_then(|rest| rest.split('/').next());
     if session_segment.is_some_and(|seg| matches!(seg, "" | "active" | "global")) {
         return false;
     }
@@ -145,14 +150,14 @@ pub(super) fn foreign() -> Error {
 pub(super) fn carrier_denied() -> Error {
     error(Status::FORBIDDEN, "Mission schedule carriers and metadata require owned schedule controls")
 }
-pub(super) fn marker(record: &Value) -> bool {
+pub(crate) fn marker(record: &Value) -> bool {
     record["metadata"].get("codenomad.schedule-carrier").is_some()
 }
 pub(super) fn same_target(initial: &Value, current: &Value) -> bool {
     ["id", "location", "projectID", "parentID", "fork"].iter().all(|key| current[*key] == initial[*key])
         && current["time"]["created"] == initial["time"]["created"]
 }
-pub(super) fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
+pub(crate) fn schedule_input(data: &serde_json::Map<String, Value>) -> bool {
     data.get("metadata").and_then(Value::as_object).is_some_and(|metadata| {
         ["schedule", "automation", "codenomad.schedule-carrier"].iter().any(|key| metadata.contains_key(*key))
     })
@@ -201,7 +206,7 @@ pub(crate) async fn verify_ordinary_session_at(
         .await
         .map_err(|_| uncertain())?;
     let status = response.status();
-    let body: Value = response.json().await.map_err(|_| uncertain())?;
+    let body: Value = crate::opencode::read_json(response, 128 * 1024).await.map_err(|_| uncertain())?;
     if status.is_success() {
         match body["output"]["owned"].as_bool() {
             Some(false) => {}

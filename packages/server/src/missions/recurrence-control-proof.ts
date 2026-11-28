@@ -68,21 +68,11 @@ export function recurrenceControlRequestDigest(input: Omit<RecurrenceControlProo
 }
 
 const RECURRENCE_PROOF_LIFETIME_MS = 30_000
-// Expiry waits past the freshness window so a commit racing the boundary in
-// another process sharing the storage has landed; this only delays release.
-const RECURRENCE_PROOF_EXPIRY_GRACE_MS = 5_000
 
 export function assertRecurrenceProofFresh(issuedAt: number, now = Date.now()): void {
   if (!Number.isSafeInteger(issuedAt) || issuedAt > now + 5000 || now - issuedAt >= RECURRENCE_PROOF_LIFETIME_MS) {
     throw new Error("Recurrence proof expired")
   }
-}
-
-/** True only once the same clock makes every later `assertRecurrenceProofFresh`
- * of `issuedAt` fail. A future-dated issue time is not expired: it may become fresh. */
-export function recurrenceProofExpired(issuedAt: number, now = Date.now()): boolean {
-  return Number.isSafeInteger(issuedAt) && issuedAt >= 0
-    && now - issuedAt >= RECURRENCE_PROOF_LIFETIME_MS + RECURRENCE_PROOF_EXPIRY_GRACE_MS
 }
 
 /** Redact signed principals and private bridge payloads while retaining native ses_ diagnostics. */

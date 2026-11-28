@@ -10,6 +10,7 @@ import { handleNativeSessionEvent } from "../stores/session-events"
 import { sdkManager } from "./sdk-manager"
 import { filesystemInvalidationVersion } from "./filesystem-events"
 import { sessionGoals } from "../stores/session-goal"
+import { sessionAutomations } from "../stores/session-automations"
 import { serverApi } from "./api-client"
 import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
@@ -157,6 +158,23 @@ test("goal refresh admitted by open cannot publish after detach", async t => {
   a.detach(); release({ status: "unsupported" }); await tick()
   assert.equal(signal.aborted, true)
   assert.notEqual(sessionGoals.state(id, "s").status, "unsupported")
+})
+
+test("automation refresh admitted by open cannot publish after detach", async t => {
+  const a = attach(t, "automation_owner"), id = "automation_owner~ws"
+  t.after(() => sessionAutomations.clearInstance(id))
+  let reads = 0, release!: (value: unknown) => void, signal!: AbortSignal
+  t.mock.method(serverApi, "fetchSessionAutomations", async (_id: string, _session: string, parent?: AbortSignal) => {
+    if (++reads === 1) return { status: "ok", automations: [] } as never
+    signal = parent!
+    return new Promise(resolve => { release = resolve }) as never
+  })
+  t.after(sessionAutomations.demand(id, "s")); await tick()
+  open(a.events); await tick()
+  assert.equal(reads, 2)
+  a.detach(); release({ status: "unsupported" }); await tick()
+  assert.equal(signal.aborted, true)
+  assert.notEqual(sessionAutomations.state(id, "s").status, "unsupported")
 })
 
 test("detach unsubscribes the source rather than merely suppressing delivery", t => {

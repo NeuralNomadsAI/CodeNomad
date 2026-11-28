@@ -1,5 +1,8 @@
 #![cfg(not(target_arch = "wasm32"))]
-use codenomad_client::{backend::Backend, files::WriteResult};
+use codenomad_client::{
+    backend::Backend,
+    files::{WriteConflict, WriteResult},
+};
 use serde_json::{Value, json};
 use std::{fs, path::PathBuf};
 
@@ -55,7 +58,7 @@ fn real_rust_files_write_contract() {
         assert_eq!(first_version, saved.version);
         let external = "Modification externe · 京都\nà conserver";
         fs::write(&private, external).unwrap();
-        assert!(matches!(backend.write_file(project, file, "obsolete", saved.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(Some(_))));
+        assert_eq!(backend.write_file(project, file, "obsolete", saved.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(WriteConflict::ChangedOnDisk));
         assert_eq!(fs::read(&private).unwrap(), external.as_bytes());
         let current = backend.preview_file(project, file).await.unwrap();
         assert_eq!(current.bytes, external.as_bytes());
@@ -68,7 +71,7 @@ fn real_rust_files_write_contract() {
         assert_ne!(final_read.version, current.version);
         assert_eq!(final_version, final_read.version);
         fs::remove_file(&private).unwrap();
-        assert!(matches!(backend.write_file(project, file, "must not recreate", final_read.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(Some(_))));
+        assert_eq!(backend.write_file(project, file, "must not recreate", final_read.version.as_deref().unwrap()).await.unwrap(), WriteResult::Conflict(WriteConflict::ChangedOnDisk));
         assert!(!private.exists());
         assert!(backend.write_file(foreign, "foreign.txt", "refused", final_read.version.as_deref().unwrap()).await.is_err());
         assert_eq!(fs::read(root.join("foreign/foreign.txt")).unwrap(), b"private sibling bytes");

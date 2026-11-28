@@ -1,0 +1,79 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index acc88af8d..2127c128e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -389,6 +389,8 @@ mod preview_origin;
+ use wkwebview::*;
+ #[cfg(any(target_os = "macos", target_os = "ios"))]
+ pub use wkwebview::{PrintMargin, PrintOptions, WryWebView};
++#[cfg(target_os = "macos")]
++pub use wkwebview::file_panels::set_file_panels_refused;
+ 
+ #[cfg(target_os = "windows")]
+ pub(crate) mod webview2;
+diff --git a/src/wkwebview/class/wry_web_view_ui_delegate.rs b/src/wkwebview/class/wry_web_view_ui_delegate.rs
+index 7392352d9..7a361072f 100644
+--- a/src/wkwebview/class/wry_web_view_ui_delegate.rs
++++ b/src/wkwebview/class/wry_web_view_ui_delegate.rs
+@@ -250,6 +250,13 @@ define_class!(
+       handler: &block2::Block<dyn Fn(*const NSArray<NSURL>)>,
+     ) {
+       unsafe {
++        // CodeNomad: a panel the page opens during an agent's page action is cancelled unseen.
++        if crate::wkwebview::file_panels::file_panels_refused(
++          _webview as *const WryWebView as *const std::ffi::c_void,
++        ) {
++          (*handler).call((null_mut(),));
++          return;
++        }
+         if let Some(mtm) = MainThreadMarker::new() {
+           let open_panel = NSOpenPanel::openPanel(mtm);
+           open_panel.setCanChooseFiles(true);
+diff --git a/src/wkwebview/file_panels.rs b/src/wkwebview/file_panels.rs
+new file mode 100644
+index 000000000..c52b536fb
+--- /dev/null
++++ b/src/wkwebview/file_panels.rs
+@@ -0,0 +1,28 @@
++// CodeNomad: an agent's page actions cancel the file panels a page opens (see the vendor README).
++use std::{
++  collections::HashSet,
++  ffi::c_void,
++  sync::{Mutex, OnceLock},
++};
++
++fn refused() -> &'static Mutex<HashSet<usize>> {
++  static REFUSED: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
++  REFUSED.get_or_init(Default::default)
++}
++
++/// While set for a WKWebView, a file panel its page opens is cancelled without being shown.
++pub fn set_file_panels_refused(webview: *mut c_void, refused_now: bool) {
++  if let Ok(mut set) = refused().lock() {
++    if refused_now {
++      set.insert(webview as usize);
++    } else {
++      set.remove(&(webview as usize));
++    }
++  }
++}
++
++pub(crate) fn file_panels_refused(webview: *const c_void) -> bool {
++  refused()
++    .lock()
++    .is_ok_and(|set| set.contains(&(webview as usize)))
++}
+\ No newline at end of file
+diff --git a/src/wkwebview/mod.rs b/src/wkwebview/mod.rs
+index 9b1db532b..00cd68eac 100644
+--- a/src/wkwebview/mod.rs
++++ b/src/wkwebview/mod.rs
+@@ -4,6 +4,8 @@
+ 
+ mod download;
+ #[cfg(target_os = "macos")]
++pub(crate) mod file_panels;
++#[cfg(target_os = "macos")]
+ mod drag_drop;
+ mod navigation;
+ #[cfg(feature = "mac-proxy")]

@@ -336,12 +336,12 @@ async fn interrupt_family<C, F>(
     stop: bool,
     checkpoint: &C,
     ledger: &mut Ledger,
+    deadline: Instant,
 ) -> Result<Value, Error>
 where
     C: Fn() -> F,
     F: Future<Output = Result<(), Error>>,
 {
-    let deadline = Instant::now() + FAMILY_CONTROL_BUDGET;
     let (mut expired, mut unknown, mut complete) = (false, false, false);
     let mut residual = Vec::new();
     for pass in 0..=PASSES {
@@ -416,12 +416,12 @@ async fn recheck<C, F>(
     ledger: &mut Ledger,
     descendants: &Value,
     interrupting: bool,
+    deadline: Instant,
 ) -> Result<Value, Error>
 where
     C: Fn() -> F,
     F: Future<Output = Result<(), Error>>,
 {
-    let deadline = Instant::now() + FAMILY_RECHECK_BUDGET;
     let previous = descendants["unconfirmed"].as_u64().unwrap_or(1) as usize;
     let was_complete = descendants["complete"] == true;
     let (tree, live) = match (walk(app, root, deadline).await, active(app).await) {
@@ -493,9 +493,9 @@ where
 async fn settle_root<C, F>(
     app: &App,
     sid: &str,
-    mid: &str,
     stop: bool,
     checkpoint: &C,
+    cancel: impl Fn(&Value) -> bool,
     cancellations: &mut Vec<(String, &'static str)>,
 ) -> Result<bool, Error>
 where
@@ -508,7 +508,7 @@ where
         checkpoint().await?;
         let mut changed = false;
         if stop {
-            match cancel_queued(app, sid, |x| cancellable(x, mid), |id, disposition| {
+            match cancel_queued(app, sid, &cancel, |id, disposition| {
                 if cancellations.len() < MAX_STOP_CANCELLATIONS
                     && !cancellations.iter().any(|(known, _)| known == id)
                 {
@@ -535,6 +535,43 @@ where
     Ok(!failed && !overflowing && !is_active(&active(app).await?, sid))
 }
 
+/// Stops one retired native task conversation and its whole native family, deepest first,
+/// then drains all queued inputs on that conversation and confirms a quiet family.
+pub(super) async fn interrupt_task_root<C, F>(
+    app: &App,
+    root: &Value,
+    started: Instant,
+    deadline: Instant,
+    checkpoint: &C,
+) -> Result<Value, Error>
+where
+    C: Fn() -> F,
+    F: Future<Output = Result<(), Error>>,
+{
+    let sid = root["id"].as_str().ok_or_else(unavailable)?;
+    let total_deadline = started + Duration::from_secs(75);
+    let mut ledger = Ledger::default();
+    let descendants = interrupt_family(app, root, true, checkpoint, &mut ledger, deadline).await?;
+    checkpoint().await?;
+    let root_ack = interrupt(app, sid).await?;
+    let recheck_deadline = || (Instant::now() + FAMILY_RECHECK_BUDGET).min(total_deadline);
+    let caught = recheck(app, root, true, checkpoint, &mut ledger, &descendants, true, recheck_deadline()).await?;
+    let mut cancellations = Vec::new();
+    let settled = settle_root(app, sid, true, checkpoint, |_| true, &mut cancellations).await?;
+    let verified = recheck(app, root, true, checkpoint, &mut ledger, &caught, false, recheck_deadline()).await?;
+    let mut descendants = verified;
+    if !settled {
+        descendants["unconfirmed"] = json!(descendants["unconfirmed"].as_u64().unwrap_or(0) + 1);
+        descendants["complete"] = json!(false);
+    }
+    Ok(json!({
+        "sessionID": sid,
+        "interrupted": root_ack["interrupted"] == true,
+        "settled": settled,
+        "descendants": descendants,
+    }))
+}
+
 pub async fn apply<C, F>(
     app: &App,
     root: &Value,
@@ -549,7 +586,8 @@ where
     let sid = root["id"].as_str().ok_or_else(unavailable)?;
     let stop = action == "stop";
     let mut ledger = Ledger::default();
-    let descendants = interrupt_family(app, root, stop, &checkpoint, &mut ledger).await?;
+    let descendants =
+        interrupt_family(app, root, stop, &checkpoint, &mut ledger, Instant::now() + FAMILY_CONTROL_BUDGET).await?;
     checkpoint().await?;
     let root_ack = interrupt(app, sid).await?;
     let mut cancellations = Vec::<(String, &'static str)>::new();
@@ -583,9 +621,29 @@ where
             ));
         }
     }
-    let caught = recheck(app, root, stop, &checkpoint, &mut ledger, &descendants, true).await?;
-    let settled = settle_root(app, sid, mid, stop, &checkpoint, &mut cancellations).await?;
-    let verified = recheck(app, root, stop, &checkpoint, &mut ledger, &caught, false).await?;
+    let caught = recheck(
+        app,
+        root,
+        stop,
+        &checkpoint,
+        &mut ledger,
+        &descendants,
+        true,
+        Instant::now() + FAMILY_RECHECK_BUDGET,
+    )
+    .await?;
+    let settled = settle_root(app, sid, stop, &checkpoint, |x| cancellable(x, mid), &mut cancellations).await?;
+    let verified = recheck(
+        app,
+        root,
+        stop,
+        &checkpoint,
+        &mut ledger,
+        &caught,
+        false,
+        Instant::now() + FAMILY_RECHECK_BUDGET,
+    )
+    .await?;
     let drained = !overflow
         || inbox(app, sid)
             .await

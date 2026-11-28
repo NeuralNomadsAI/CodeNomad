@@ -101,6 +101,7 @@ export const missionConfigurationSchema = z.object({
   watchedConversationIDs: z.array(nativeDocumentID).max(64).refine(ids => new Set(ids).size === ids.length),
   coordinatorSessionID: nativeDocumentID.refine(id => !isReservedMissionScheduleSessionID(id)).optional(),
   coordinatorSelectionAuthor: z.object({ coordinatorSessionID: nativeDocumentID }).strict().optional(),
+  coordinatorGoal: z.boolean().optional(),
   launch: missionLaunchPolicySchema,
 }).strict().refine(config => {
   try {

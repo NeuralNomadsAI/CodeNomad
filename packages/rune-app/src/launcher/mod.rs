@@ -1,5 +1,6 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
 mod connection;
+mod folders;
 pub(crate) mod linked;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod managed_renewal_tests;
@@ -21,6 +22,15 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::{connect, refresh_projects};
+
+/// Browse: this machine's folder picker where it has one, else the connected server's folders.
+pub fn browse(s: &mut State, tx: &mut Tx) {
+    if crate::platform::folder_picker_available() {
+        crate::platform::browse(s, tx);
+    } else {
+        folders::toggle(s);
+    }
+}
 pub(crate) use placement::place;
 pub(crate) use projects::set_project;
 pub use projects::{choose_project, open, open_temporary_folder, restore};
@@ -98,6 +108,7 @@ pub struct Launcher {
     managed_renewal_attempts: u8,
     pub(crate) projects_stale: bool,
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
+    folders: folders::Browser,
     wake: rune::Waker,
 }
 enum Reply {
@@ -203,6 +214,10 @@ impl Launcher {
     pub fn has_owned_server(&self) -> bool {
         self.host.is_some()
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn booting(&self) -> bool {
+        self.boot.is_some()
+    }
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn set_fixture_host(&mut self, host: crate::platform::LocalHost) {
         self.host = Some(host);
@@ -273,6 +288,7 @@ impl Launcher {
             managed_renewal_attempts: 0,
             projects_stale: false,
             projects_refresh: None,
+            folders: Default::default(),
             wake,
         }
     }
@@ -683,7 +699,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         tx.instant();
         return true;
     }
-    if connection::poll_projects_refresh(s) {
+    if connection::poll_projects_refresh(s) | folders::poll(s) {
         relayed = true;
     }
     let blocked = !can_change_session(s)
@@ -716,7 +732,17 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         return relayed;
     };
     let mut changed = relayed | browser_changed | checked.changed;
-    changed |= connection::poll_boot(l);
+    let boot_changed = connection::poll_boot(l);
+    changed |= boot_changed;
+    if boot_changed {
+        crate::workspace::connected(s);
+    }
+    let Some(l) = s.screen.launcher_mut() else {
+        if changed {
+            tx.instant();
+        }
+        return changed;
+    };
     let Some(result) = l.result.as_ref().and_then(|rx| rx.try_recv().ok()) else {
         if changed {
             tx.instant();
@@ -768,6 +794,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
+            l.folders = Default::default();
             if stale_connection && temporary_cleanup.is_some() {
                 drop(opening);
                 if let Some((backend, path, req_id)) = temporary_cleanup {
@@ -961,8 +988,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             if !stopped_in_flight && !auth_required_now && !stale_connection {
                 let mut present = HashSet::new();
-                present.insert(created_id);
+                present.insert(created_id.clone());
                 crate::workspace::note_restored_draft_sessions_present(s, &present);
+            }
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
             }
         }
         Ok(Reply::CreatedUnbound(session, submitted)) => {
@@ -974,6 +1004,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 || l.project
                     .as_ref()
                     .is_some_and(|p| stopped_during_pending.contains_key(&p.id));
+            let created_id = session.id.clone();
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -985,6 +1016,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::strings::t("sessionList.reload.error"),
                 true,
             );
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
+            }
         }
         Ok(Reply::CreatePrecheckFailed) => {
             l.error = Some("sessionList.reload.error");
@@ -1256,6 +1290,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 if key == "rune.create_error" {
                     l.creation_uncertain = true;
                 }
+                if key == "rune.list_error" && l.connection.is_some() {
+                    l.projects_stale = true;
+                }
                 l.error = Some(key);
                 if matches!(key, "rune.restore_error" | "rune.open_error") {
                     use crate::shell::notifications::{Category, emit_outcome};
@@ -1336,6 +1373,7 @@ fn apply_connected(
     l.managed_renewal_failed_for = None;
     l.managed_renewal_attempts = 0;
     l.projects_refresh = None;
+    l.folders = Default::default();
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);
     l.server_id = Some(server_id);
@@ -1349,6 +1387,7 @@ fn apply_connected(
     }
     let has_project = l.project.is_some();
     let job_pending = l.pending;
+    l.openings.retry_cleanup(l.connection.as_ref());
     crate::workspace::connected(s);
     if reauthenticated {
         crate::workspace::renew_connection(s);

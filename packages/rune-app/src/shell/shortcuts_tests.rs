@@ -164,6 +164,7 @@ fn close_instance_respects_file_edit_and_pending_form_guards() {
         fields: vec![json!({"key":"name","type":"string"})],
         tool: None,
         infer_websearch: false,
+        owner: Default::default(),
     });
     agent.drafts.insert(
         ("form-1".into(), "name".into()),
@@ -983,3 +984,4 @@ fn hidden_git_picker_does_not_block_global_shortcuts() {
 }
 
 mod detached;
+mod help_links;

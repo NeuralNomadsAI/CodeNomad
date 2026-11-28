@@ -52,10 +52,41 @@ pub(super) struct Preferences {
     seen_drops: Vec<(String, u64)>,
     seen_drop_generation: u64,
     observed_drop_watch: Option<codenomad_client::http::ClientDropWatch>,
+    native_stream_offline: std::collections::HashSet<String>,
+    pending_native_outage: bool,
     direct_access_lock: std::sync::Mutex<Option<(String, codenomad_client::Receiver<()>)>>,
 }
 
 impl Preferences {
+    pub(super) fn set_native_stream_online(&mut self, workspace: &str, connected: bool) {
+        if connected {
+            self.native_stream_offline.remove(workspace);
+        } else {
+            if !self.native_stream_offline.contains(workspace)
+                && self.native_stream_offline.len() >= 128
+            {
+                self.native_stream_offline.clear();
+            }
+            self.native_stream_offline.insert(workspace.to_owned());
+        }
+    }
+
+    pub(super) fn is_native_stream_online(&self, workspace: &str) -> bool {
+        !self.native_stream_offline.contains(workspace)
+    }
+
+    pub(super) fn clear_native_stream_state(&mut self) {
+        self.native_stream_offline.clear();
+        self.pending_native_outage = false;
+    }
+
+    pub(super) fn set_pending_native_outage(&mut self, pending: bool) {
+        self.pending_native_outage = pending;
+    }
+
+    pub(super) fn take_pending_native_outage(&mut self) -> bool {
+        std::mem::take(&mut self.pending_native_outage)
+    }
     pub(super) fn set_direct_access_lock(
         &self,
         owner: String,
@@ -149,6 +180,11 @@ impl Preferences {
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn fixture_transcript(&mut self, settings: Value) {
         self.config.snapshot = Some(json!({ "settings": settings }));
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture_config_doc(&mut self, doc: Value) {
+        self.config.snapshot = Some(doc);
     }
 
     fn seen_drop(&self, client_id: &str) -> u64 {
@@ -547,6 +583,11 @@ impl Preferences {
         self.config.snapshot = Some(json!({"settings": {"hotkeyOverrides": overrides}}));
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_settings(&mut self, settings: Value) {
+        self.config.snapshot = Some(json!({"settings": settings}));
+    }
+
     #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn fixture_config(&mut self, url: &str, settings: Value) {
         let mut backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
@@ -674,6 +715,8 @@ impl Preferences {
         self.authentication_required = false;
         self.transport_lost = same_address;
         self.observed_clients.clear();
+        self.native_stream_offline.clear();
+        self.pending_native_outage = false;
         self.sync_drop_watch();
         self.refresh();
         self.revision += 1;

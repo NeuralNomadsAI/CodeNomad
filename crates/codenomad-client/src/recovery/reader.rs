@@ -251,6 +251,8 @@ impl Reader {
             && rx.is_empty()
         {
             let stamp = wire.version.load(SeqCst);
+            let revision = wire.history_revision.load(SeqCst);
+            let anchored_around = matches!(self.anchored, Some(demand::Target::Around(_)));
             let snapshot = async {
                 if let Some(target) = &self.anchored {
                     backend.reading_window(target).await
@@ -265,15 +267,26 @@ impl Reader {
                 reading,
                 self.generation,
                 wire,
-                Fence::Live(stamp),
+                if anchored_around {
+                    Fence::History(revision)
+                } else {
+                    Fence::Live(stamp)
+                },
                 snapshot,
             )
             .await
             else {
                 return Ok(Turn::Next);
             };
+            let admitted = |page: &history::Page| {
+                if anchored_around && page.newer.is_some() {
+                    wire.history_current(revision)
+                } else {
+                    wire.valid(stamp) && rx.is_empty()
+                }
+            };
             match snapshot {
-                Ok(mut page) if wire.valid(stamp) && rx.is_empty() => {
+                Ok(mut page) if admitted(&page) => {
                     // Check server HTTP settlement on raw rows before merging SSE terminal state.
                     self.owed_tools
                         .retain(|(id, call), _| !tool_settled(&page.rows, id, call));

@@ -132,8 +132,6 @@ async function setup(missing = false, holdSchedule = false) {
       await route.fulfill({ json: {} }); return
     }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
-    if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project",
-      projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       reached.release(); await held.promise
       await route.fulfill(missing ? { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } }

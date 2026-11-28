@@ -571,3 +571,27 @@ fn palette_and_rename_dismiss_on_project_install_and_auth_renewal() {
         assert!(rt.find("command-palette-query").is_none());
     }
 }
+
+#[test]
+fn rename_field_disables_autofill_and_preserves_focus_and_editing() {
+    assert_eq!(INPUT_AUTOFILL, rune::Autofill::Off);
+    assert_eq!(INPUT_AUTOFILL.as_html(), "off");
+
+    let mut rt = runtime(workspace_state(1));
+    rt.update(|s, tx| {
+        assert!(open_active(s, tx));
+    });
+    settle(&mut rt);
+    assert!(is_open(&rt.state));
+    assert!(focused_path_contains(&rt, INPUT_KEY));
+
+    let elements = rt.elements();
+    let input = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some(INPUT_KEY))
+        .expect("tab rename input field");
+    assert_eq!(input.role, "textbox");
+
+    send_key(&mut rt, Key::Text("Renamed Tab".into()), Mods::default());
+    assert_eq!(rt.state.tab_rename.input.text, "Renamed Tab");
+}

@@ -88,6 +88,14 @@ describe("forge remotes", () => {
     assert.equal(await readForgeRemote(checkout({})), undefined)
   })
 
+  it("finds a partial clone's remote, listed with its filter", async () => {
+    const root = checkout({ origin: "https://github.com/team/app.git" })
+    // What `git clone --filter=blob:none` records: `git remote -v` then ends the line with "[blob:none]".
+    execFileSync("git", ["-C", root, "config", "remote.origin.promisor", "true"])
+    execFileSync("git", ["-C", root, "config", "remote.origin.partialclonefilter", "blob:none"])
+    assert.deepEqual(await readForgeRemote(root), { host: "github.com", path: "team/app", name: "origin" })
+  })
+
   it("builds each forge's web page for an item", () => {
     assert.equal(forgeWebUrl("github", "github.com", "o/r", "pullRequest", 7), "https://github.com/o/r/pull/7")
     assert.equal(forgeWebUrl("gitlab", "gitlab.com", "g/s/p", "pullRequest", 7), "https://gitlab.com/g/s/p/-/merge_requests/7")

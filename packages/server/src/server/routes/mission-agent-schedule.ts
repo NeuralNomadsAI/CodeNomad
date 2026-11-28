@@ -14,7 +14,6 @@ import { scheduledMissionHold } from "./mission-scheduled-holds"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { readMissionScheduleCapability } from "./mission-schedule-list"
 import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
-import { controlAgentDailyRecurrence } from "./mission-agent-daily"
 
 const commandSchema = z.object({ kind: z.literal("schedule"), input: scheduleToolInput }).strict()
 type Deps = ScheduledMissionDeps & Pick<ScheduledPreparationDeps, "scheduleSettingsActivation">
@@ -26,7 +25,6 @@ export async function controlAgentMissionSchedule(deps: Deps, sessionID: string,
   const { input } = commandSchema.parse(command), manager = deps.workspaceManager
    if (!deps.worktreeDeletionFence) throw new Error("Mission schedule owner unavailable")
    const agent = await ownedMissionAgent(manager, sessionID, signal)
-   if (input.owner === "daily") return controlAgentDailyRecurrence(deps, agent, input, signal)
    const { client, workspace, session, current, refresh, options } = agent
   const rpc = client.rpc(CODENOMAD_MISSIONS_RPC)
    if (!["list", "read", "capabilities", "activation-read"].includes(input.action)) {

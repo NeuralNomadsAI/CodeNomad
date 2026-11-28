@@ -6,7 +6,7 @@ import type { MissionCalendar, MissionWake } from "../../missions/mission-docume
 export const missionAutomationService = Context.Service<never, unknown>("@opencode/Automation")
 
 /** New calendars run this fixed Code Mode program, which calls the wake tool with
- * no model turn. Rows created with the carrier prompt keep it until they retire. */
+ * no model turn. */
 export const MISSION_WAKE_TOOL = Object.freeze({ namespace: "codenomad", name: "mission_schedule_wake", permission: "codenomad_mission_schedule_wake" })
 // OpenCode accepts only nothing or a CodeResult: without `return null` the tool's output would be the result.
 export const MISSION_WAKE_CODE = `await tools.${MISSION_WAKE_TOOL.namespace}.${MISSION_WAKE_TOOL.name}({}); return null`
@@ -36,7 +36,7 @@ export async function runningMissionCodeWake<T>(scheduleID: string, run: number,
 /** OpenCode counts a returned run even after a pause; only a program that ended uncounted stays uncounted. */
 export const missionCodeWakeRunning = (scheduleID: string, run: number) => running.has(runningKey(scheduleID, run))
 /** OpenCode counts a code run once its program returns, after Missions consumed it. */
-export const missionAutomationRunFloor = (code: boolean, highWater: number) => code ? highWater - 1 : highWater
+export const missionAutomationRunFloor = (highWater: number) => highWater - 1
 export type MissionCodeWakeRow = { runCount: number; status: Automation.Status; nextDueAt: number | null }
 export const missionCodeWakeRow = (info: MissionAutomationInfo): MissionCodeWakeRow => ({ runCount: info.runCount, status: info.status,
   nextDueAt: info.nextDueAt === undefined ? null : DateTime.toEpochMillis(info.nextDueAt) })
@@ -46,7 +46,7 @@ export const missionCodeWakeRow = (info: MissionAutomationInfo): MissionCodeWake
  * is live in this process (OpenCode has not counted it; its due time is the row's next one). */
 export function missionCodeWakeProof(calendar: MissionCalendar, row: MissionCodeWakeRow, run: number): MissionWake | undefined {
   const messageID = missionWakeMessageID(calendar.scheduleID, run), prepared = calendar.wakePreparing
-  if (row.runCount < missionAutomationRunFloor(true, calendar.highWater) || row.runCount > Math.max(calendar.highWater, prepared?.run ?? 0)) return
+  if (row.runCount < missionAutomationRunFloor(calendar.highWater) || row.runCount > Math.max(calendar.highWater, prepared?.run ?? 0)) return
   if (run <= calendar.highWater) return { scheduleID: calendar.scheduleID, run, messageID, dueAt: calendar.lastDueAt ?? 0 }
   if (prepared) return prepared.run === run ? prepared : undefined
   if (calendar.role !== "reconciliation" || run !== calendar.highWater + 1 || row.runCount !== run - 1
@@ -59,22 +59,6 @@ export function missionCodeWakeProof(calendar: MissionCalendar, row: MissionCode
 export const missionAutomationID = (id: string) => id.startsWith("sch_") ? `aut_${id.slice(4)}` : id
 export const sameMissionAutomation = (left: string, right: string) => missionAutomationID(left) === missionAutomationID(right)
 export const missionWakeMessageID = (id: string, run: number) => `msg_${id}_${run}`
-export const missionWakeReadIDs = (id: string, run: number) =>
-  id.startsWith("sch_") ? [missionWakeMessageID(id, run), missionWakeMessageID(missionAutomationID(id), run)] : [missionWakeMessageID(id, run)]
-
-type Metadata = Readonly<Record<string, unknown>>
-type WakeMetadata = { id: string; run: number; dueAt: number; late: boolean }
-export function missionWakeMetadata(metadata: Metadata | undefined, messageID?: string): WakeMetadata | undefined {
-  const native = metadata?.automation, legacy = metadata?.schedule
-  if ((native === undefined) === (legacy === undefined)) return
-  const value = (native ?? legacy) as Partial<WakeMetadata> | null
-  if (!value || typeof value.id !== "string" || !Number.isSafeInteger(value.run) || value.run! < 1
-    || !Number.isSafeInteger(value.dueAt) || value.dueAt! < 0 || typeof value.late !== "boolean"
-    || (native !== undefined && !value.id.startsWith("aut_"))
-    || (messageID !== undefined && messageID !== missionWakeMessageID(value.id, value.run!))) return
-  return value as WakeMetadata
-}
-
 export const missionAutomationInfo = Schema.toType(Automation.Info)
 export const readMissionAutomation = Schema.decodeUnknownEffect(missionAutomationInfo)
 export type MissionAutomationInfo = typeof missionAutomationInfo.Type
@@ -95,7 +79,7 @@ export function matchMissionAutomation(info: MissionAutomationInfo, slot: Missio
     ? info.directory.replaceAll("/", "\\") === owner.directory.replaceAll("/", "\\") : info.directory === owner.directory
   const action = info.action
   const wakes = action.type === "prompt" ? action.prompt === signal && action.to.session === slot.sessionID
-    : action.code === MISSION_WAKE_CODE && action.args === undefined
+    : action.type === "code" && action.code === MISSION_WAKE_CODE && action.args === undefined
   if (!directory || info.projectID !== owner.projectID || info.sessionID !== slot.sessionID
     || info.name !== slot.name || !wakes || info.trigger.type === "event"
     || (info.expires === undefined ? null : DateTime.toEpochMillis(info.expires)) !== slot.endsAt

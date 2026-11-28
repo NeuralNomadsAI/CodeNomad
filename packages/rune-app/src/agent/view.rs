@@ -85,6 +85,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
         body = body.child(
             field(&a.search)
                 .label(t("rune.find_model"))
+                .input_mode(rune::InputMode::Search)
                 .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Model))
                 .build(&field_kit(layout::dark()))
                 .key("model-search"),
@@ -169,10 +170,7 @@ pub fn view(s: &State, cx: &Cx<State>, layout_viewport_height: Option<f32>) -> E
             }
             (panel, actions)
         } else if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-            (
-                crate::agent_form_view::fields(s, f),
-                crate::agent_form_view::actions(s, f),
-            )
+            crate::agent_form_view::form_panel(s, f)
         } else {
             (rune::el(), rune::el())
         };

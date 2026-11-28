@@ -9,7 +9,13 @@ use axum::{
     http::{Method, StatusCode as Status},
 };
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    time::Duration,
+};
+use tokio::time::Instant;
+
+const INTERRUPT_BUDGET: Duration = Duration::from_secs(45);
 
 pub(super) fn valid_key(key: &str) -> bool {
     (2..=64).contains(&key.len())
@@ -39,14 +45,52 @@ fn proves_task(prompt: &str, mid: &str, key: &str) -> bool {
         && key.bytes().last().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
-pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) -> Result<Value, Error> {
+fn live_continuations(tasks: &[Value], task_key: &str) -> Vec<String> {
+    let by_key: HashMap<&str, &Value> = tasks.iter().filter_map(|t| Some((t["key"].as_str()?, t))).collect();
+    fn edges(task: &Value) -> Vec<&str> {
+        let mode = &task["executionMode"];
+        if mode["kind"] != "native" {
+            return Vec::new();
+        }
+        ["reuseFromTaskKey", "parentTaskKey"].into_iter().filter_map(|k| mode[k].as_str()).collect()
+    }
+    let reaches = |task: &Value| {
+        let mut seen = HashSet::new();
+        let mut queue: VecDeque<&str> = edges(task).into();
+        while let Some(key) = queue.pop_front() {
+            if key == task_key {
+                return true;
+            }
+            if !seen.insert(key) {
+                continue;
+            }
+            if let Some(next) = by_key.get(key) {
+                queue.extend(edges(next));
+            }
+        }
+        false
+    };
+    tasks
+        .iter()
+        .filter_map(|task| {
+            let key = task["key"].as_str()?;
+            let status = task["status"].as_str()?;
+            (key != task_key && !matches!(status, "withdrawn" | "completed" | "failed") && reaches(task))
+                .then(|| key.to_owned())
+        })
+        .collect()
+}
+
+fn parse_input(input: &Value) -> Result<(&str, &str), Error> {
     let mid = input["missionID"].as_str().filter(|s| id(s, 100)).ok_or_else(bad)?;
     let key = input["taskKey"].as_str().filter(|s| valid_key(s)).ok_or_else(bad)?;
     if input.as_object().is_none_or(|o| o.len() != 2) {
         return Err(bad());
     }
-    let s = snapshot(app, &scope).await?;
-    let m = mission(&s, mid, &co)?;
+    Ok((mid, key))
+}
+
+fn check_native_root_task<'a>(m: &'a Value, key: &str) -> Result<&'a Value, Error> {
     let task = find(m, "tasks", "key", key).ok_or_else(foreign)?;
     let mode = &task["executionMode"];
     if mode["kind"] != "native" || mode.get("parentTaskKey") != Some(&Value::Null) {
@@ -57,6 +101,27 @@ pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) ->
             ),
         ));
     }
+    Ok(task)
+}
+
+fn assert_stoppable(m: &Value, task: &Value, key: &str) -> Result<(), Error> {
+    if m["status"] != "active" || task["status"] != "withdrawn" {
+        return Err((
+            Status::CONFLICT,
+            Json(json!({"code":"task-not-retired","error":"Retire the task with mission.revise before stopping its work"})),
+        ));
+    }
+    let tasks = m["tasks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    if !live_continuations(tasks, key).is_empty() {
+        return Err((
+            Status::CONFLICT,
+            Json(json!({"code":"task-reused","error":"An open task continues this task's conversation; retire that task first"})),
+        ));
+    }
+    Ok(())
+}
+
+async fn find_roots(app: &App, scope: &Scope, co: &Value, mid: &str, key: &str) -> Result<(Vec<Value>, bool), Error> {
     let sid = co["id"].as_str().ok_or_else(foreign)?;
     let mut cursor = None::<String>;
     let mut cursors = HashSet::new();
@@ -104,7 +169,7 @@ pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) ->
                     if messages["data"].get(0).is_some_and(|msg| {
                         msg["type"] == "user" && msg["text"].as_str().is_some_and(|text| proves_task(text, mid, key))
                     }) {
-                        roots.push(child_id.to_owned());
+                        roots.push(child.clone());
                     }
                 }
                 _ => complete = false,
@@ -123,17 +188,79 @@ pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) ->
             }
         }
     }
+    Ok((roots, complete))
+}
+
+pub(super) async fn observe(app: &App, scope: Scope, co: Value, input: Value) -> Result<Value, Error> {
+    let (mid, key) = parse_input(&input)?;
+    let s = snapshot(app, &scope).await?;
+    let m = mission(&s, mid, &co)?;
+    let _ = check_native_root_task(m, key)?;
+    let (roots, complete) = find_roots(app, &scope, &co, mid, key).await?;
     let mut sessions = Vec::new();
     if !roots.is_empty() {
         let (status, active) =
             scope.request(app, Method::GET, "/api/session/active", &[], None, 10, 256 * 1024).await?;
         let active = active["data"].as_object().filter(|_| status.is_success()).ok_or_else(held)?;
-        for sid in roots {
-            sessions
-                .push(json!({"sessionID":sid,"active":active.get(&sid).is_some_and(|v| !v.is_null() && *v != false)}));
+        for root in roots {
+            if let Some(sid) = root["id"].as_str() {
+                sessions.push(
+                    json!({"sessionID":sid,"active":active.get(sid).is_some_and(|v| !v.is_null() && *v != false)}),
+                );
+            }
         }
     }
     current_root(app, &scope, &co).await?;
+    Ok(json!({"sessions":sessions,"complete":complete}))
+}
+
+/// Stops a retired native task's conversations and their whole native families, deepest first,
+/// then cancels their queued inputs. The coordinator is never touched.
+pub(super) async fn interrupt(app: &App, scope: Scope, co: Value, input: Value) -> Result<Value, Error> {
+    let (mid, key) = parse_input(&input)?;
+    let s = snapshot(app, &scope).await?;
+    let m = mission(&s, mid, &co)?;
+    let task = check_native_root_task(m, key)?;
+    assert_stoppable(m, task, key)?;
+    let _permit = scope.permit().ok_or_else(held)?;
+    let started = Instant::now();
+    let deadline = started + INTERRUPT_BUDGET;
+    let (roots, found_complete) = find_roots(app, &scope, &co, mid, key).await?;
+    let root_ids: Vec<String> = roots.iter().filter_map(|r| r["id"].as_str().map(str::to_owned)).collect();
+    let checkpoint = || {
+        let scope = &scope;
+        let co = &co;
+        let root_ids = &root_ids;
+        async move {
+            scope.refresh(app).await?;
+            let fresh_co = current_root(app, scope, co).await?;
+            let s = snapshot(app, scope).await?;
+            let m = mission(&s, mid, &fresh_co)?;
+            let task = check_native_root_task(m, key)?;
+            assert_stoppable(m, task, key)?;
+            if m["tasks"].as_array().is_some_and(|tasks| {
+                tasks.iter().any(|other| {
+                    other["status"] != "withdrawn"
+                        && other["actorSessionId"].as_str().is_some_and(|aid| root_ids.iter().any(|r| r == aid))
+                })
+            }) {
+                return Err((
+                    Status::CONFLICT,
+                    Json(json!({"code":"task-reused","error":"An open task continues this task's conversation; retire that task first"})),
+                ));
+            }
+            if !crate::worktrees::owns(app, &scope.workspace, &scope.dir).await || !scope.current(app) {
+                return Err(foreign());
+            }
+            Ok(())
+        }
+    };
+    let mut sessions = Vec::with_capacity(roots.len());
+    for root in &roots {
+        checkpoint().await?;
+        sessions.push(super::family::interrupt_task_root(app, root, started, deadline, &checkpoint).await?);
+    }
+    let complete = found_complete && sessions.iter().all(|s| s["settled"] == true && s["descendants"]["complete"] == true);
     Ok(json!({"sessions":sessions,"complete":complete}))
 }
 
@@ -151,5 +278,17 @@ mod tests {
             "msn_fixture",
             "native-check"
         ));
+    }
+
+    #[test]
+    fn live_continuations_tracks_reuse_and_nested_chains() {
+        let tasks = vec![
+            json!({"key":"t1","status":"withdrawn","executionMode":{"kind":"native","parentTaskKey":null}}),
+            json!({"key":"t2","status":"withdrawn","executionMode":{"kind":"native","reuseFromTaskKey":"t1","parentTaskKey":null}}),
+            json!({"key":"t3","status":"in-progress","executionMode":{"kind":"native","parentTaskKey":"t2"}}),
+            json!({"key":"t4","status":"completed","executionMode":{"kind":"native","reuseFromTaskKey":"t1","parentTaskKey":null}}),
+        ];
+        assert_eq!(live_continuations(&tasks, "t1"), vec!["t3"]);
+        assert!(live_continuations(&tasks, "t3").is_empty());
     }
 }

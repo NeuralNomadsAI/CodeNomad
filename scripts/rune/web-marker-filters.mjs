@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
-export async function markerFilters(page, messages, url, project, {touch, pages}) {
+export async function markerFilters(page, messages, url, project, {touch, pages, attestedPatch}) {
+  assert(typeof attestedPatch==='function','Attested PATCH helper required for markerFilters')
   const rail=page.getByRole('navigation',{name:messages['messageTimeline.ariaLabel']})
   const reason=rail.getByRole('button',{name:messages['messageBlock.reasoning.thinkingLabel'],exact:true})
   const tool=rail.getByRole('button',{name:'read',exact:true})
@@ -31,8 +32,8 @@ export async function markerFilters(page, messages, url, project, {touch, pages}
     const settings={showThinkingBlocks:show}
     if(everything)Object.assign(settings,{systemMessagesVisibility:show?'expanded':'hidden',
       toolCallExpansionDefaults:{tools:{read:show?'expanded':'hidden'}}})
-    const response=await page.request.patch(new URL('/api/storage/config/ui',url).href,{data:{settings}})
-    assert(response.ok(),'The private fixture can save transcript visibility')
+    const response=await attestedPatch('/api/storage/config/ui',{settings})
+    assert(response.ok,`The private fixture can save transcript visibility (status ${response.status})`)
   }
   const before=page.viewportSize()
   const closed=[]

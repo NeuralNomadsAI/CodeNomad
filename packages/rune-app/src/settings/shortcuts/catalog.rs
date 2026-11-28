@@ -11,7 +11,7 @@ pub(in crate::settings) struct Row {
     pub overridden: bool,
     pub conflicts: Vec<(String, String)>,
     chords: Vec<Chord>,
-    scope: &'static str,
+    pub(super) scope: &'static str,
 }
 
 fn definitions() -> &'static [Value] {
@@ -55,6 +55,7 @@ pub(in crate::settings) fn active(id: &str) -> bool {
             | "session-tab-9"
             | "session-search"
             | "close-session"
+            | "prompt-exit-shell"
             | "cleanup-blank-sessions"
             | "open-command-palette"
             | "instance-rename"
@@ -241,7 +242,7 @@ fn solid_catalog_keeps_every_action_and_decodes_every_default() {
     assert_eq!(keys.len(), 75);
     assert_eq!(
         keys.iter().filter(|id| active(id)).count(),
-        32 + usize::from(crate::platform::folder_picker_available())
+        33 + usize::from(crate::platform::folder_picker_available())
             + 6 * usize::from(crate::platform::workspace_open::AVAILABLE)
     );
     for def in defs {

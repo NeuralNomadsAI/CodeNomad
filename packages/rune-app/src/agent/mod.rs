@@ -1,13 +1,16 @@
 //! Session-owned controls. Session, permissions, forms, model catalogue and stop use separate HTTP lanes.
 pub(crate) mod form_view;
+#[cfg(test)]
+mod form_view_tests;
 pub(crate) mod forms;
+mod string_constraints;
 #[cfg(test)]
 mod tests;
 pub(crate) mod view;
 #[cfg(test)]
 mod viewport_tests;
 use crate::{
-    agent_api::{Action, Form, Model, Permission, Snapshot},
+    agent_api::{Action, Form, FormsSnapshot, Model, Permission, Snapshot},
     agent_forms::{self, Drafts},
     backend::Backend,
 };
@@ -27,11 +30,18 @@ enum Result {
     Read(Snapshot, bool, u64),
     Session(Snapshot, Option<String>, bool, u64),
     Permissions(Option<Vec<Permission>>, u64),
-    Forms(Option<Vec<Form>>, u64),
+    Forms(Option<FormsSnapshot>, u64),
     Catalog(Option<Vec<Model>>, String, u64),
     Act(bool, Snapshot, Option<String>, u64),
     ActPermission(bool, Option<Vec<Permission>>, u64),
-    ActForm(bool, Option<Vec<Form>>, u64),
+    ActForm(
+        crate::agent_api::FormReplyOutcome,
+        Option<String>,
+        Option<FormsSnapshot>,
+        u64,
+    ),
+    ActFormOutcome(crate::agent_api::FormReplyOutcome, u64),
+    ActFormSnapshot(Option<FormsSnapshot>, u64),
     Stop(bool),
     VerifiedIdle(String, bool),
 }
@@ -90,12 +100,11 @@ pub(crate) fn focused_field_key(s: &crate::State) -> Option<(String, Option<Stri
         ));
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["hidden"] != true)
         {
             let Some(key) = field["key"].as_str() else {
                 continue;
@@ -104,10 +113,10 @@ pub(crate) fn focused_field_key(s: &crate::State) -> Option<(String, Option<Stri
                 continue;
             };
             if d.edit.focused {
-                return Some((format!("field-{key}"), Some(region)));
+                return Some((agent_forms::field_editor_key(key), Some(region)));
             }
             if d.custom.focused {
-                return Some((format!("custom-{key}"), Some(region)));
+                return Some((agent_forms::custom_editor_key(key), Some(region)));
             }
         }
     }
@@ -146,40 +155,82 @@ pub(crate) fn focused_control_key(
         return Some((key.to_string(), Some("model-list".into())));
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
         let region = format!("pending-content-{}", f.id);
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        if key == rune_theme_codenomad::form_controls::FORM_FOCUS_ANCHOR {
+            return Some((key.to_string(), Some(region)));
+        }
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["type"] == "external" || field["hidden"] != true)
         {
             let Some(field_key) = field["key"].as_str() else {
                 continue;
             };
             let matched = match field["type"].as_str() {
                 Some("boolean") => {
-                    key == format!("bool-{field_key}-true")
-                        || key == format!("bool-{field_key}-false")
+                    key == agent_forms::bool_option_key(field_key, "true")
+                        || key == agent_forms::bool_option_key(field_key, "false")
                 }
-                Some("string") => field["options"].as_array().is_some_and(|options| {
-                    options.iter().take(64).any(|option| {
-                        option["value"]
-                            .as_str()
-                            .is_some_and(|value| format!("option-{field_key}-{value}") == key)
-                    })
-                }),
-                Some("multiselect") => field["options"].as_array().is_some_and(|options| {
-                    options.iter().take(64).any(|option| {
-                        option["value"]
-                            .as_str()
-                            .is_some_and(|value| format!("multi-{field_key}-{value}") == key)
-                    })
-                }),
+                Some("external") => {
+                    agent_forms::external_url(field).is_some()
+                        && (key == agent_forms::external_link_key(field_key)
+                            || key == agent_forms::external_copy_key(field_key)
+                            || key == agent_forms::external_ack_key(field_key))
+                }
+                Some("string") => {
+                    let options = agent_forms::normalized_options(field);
+                    options.iter().any(|option| {
+                        agent_forms::string_option_key(field_key, option.value) == key
+                            || (option.description.is_some()
+                                && agent_forms::option_desc_reveal_key(field_key, option.value)
+                                    == key)
+                    }) || (field["required"] != true
+                        && key == agent_forms::clear_option_key(field_key))
+                }
+                Some("multiselect") => {
+                    agent_forms::normalized_options(field).iter().any(|option| {
+                        agent_forms::multi_option_key(field_key, option.value) == key
+                            || (option.description.is_some()
+                                && agent_forms::option_desc_reveal_key(field_key, option.value)
+                                    == key)
+                    }) || (field["custom"] == true
+                        && a.drafts
+                            .get(&(f.id.clone(), field_key.to_string()))
+                            .is_some_and(|d| {
+                                d.preserved_custom
+                                    .iter()
+                                    .any(|raw| agent_forms::multi_option_key(field_key, raw) == key)
+                            }))
+                }
                 _ => false,
             };
             if matched {
                 return Some((key.to_string(), Some(region)));
             }
+        }
+    }
+    None
+}
+pub(crate) fn focused_form_editor_utf16(s: &crate::State) -> Option<usize> {
+    let a = s.agent.as_ref()?;
+    let f = a.forms.iter().find(|f| f.id == a.selected)?;
+    let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
+    for field in active_fields
+        .into_iter()
+        .filter(|field| field["hidden"] != true)
+    {
+        let Some(key) = field["key"].as_str() else {
+            continue;
+        };
+        let Some(d) = a.drafts.get(&(f.id.clone(), key.to_string())) else {
+            continue;
+        };
+        if d.edit.focused {
+            return Some(d.edit.text.encode_utf16().count());
+        }
+        if d.custom.focused {
+            return Some(d.custom.text.encode_utf16().count());
         }
     }
     None
@@ -196,11 +247,10 @@ pub(crate) fn focused_field_edit(s: &crate::State) -> Option<&rune::TextEdit> {
         return Some(edit);
     }
     if let Some(f) = a.forms.iter().find(|f| f.id == a.selected) {
-        let values = agent_forms::values(f, &a.drafts);
-        for field in f
-            .fields
-            .iter()
-            .filter(|field| field["hidden"] != true && agent_forms::active(field, &values))
+        let (active_fields, _) = agent_forms::active_fields(f, &a.drafts);
+        for field in active_fields
+            .into_iter()
+            .filter(|field| field["hidden"] != true)
         {
             let Some(key) = field["key"].as_str() else {
                 continue;
@@ -286,11 +336,117 @@ pub struct Ui {
     models_directory: Option<String>,
     permissions_lane: RequestLane,
     forms_lane: RequestLane,
+    pending_deferred_submission: Option<Box<PendingDeferredSubmission>>,
+    pending_field_rejection: Option<Box<PendingFieldRejection>>,
     activity_during_job: bool,
     usage_during_job: bool,
     trailing: Option<bool>,
     catalog_trailing: Option<String>,
 }
+
+struct PendingDeferredSubmission {
+    form_id: String,
+    submitted_fields: Vec<serde_json::Value>,
+    deferred_fields: Vec<(String, serde_json::Value)>,
+}
+
+struct PendingFieldRejection {
+    form_id: String,
+    submitted_fields: Vec<serde_json::Value>,
+    to_mark: Vec<(String, serde_json::Value)>,
+}
+fn extract_field_key_from_message(message: &str, valid_keys: &[&str]) -> Option<String> {
+    // OpenCode form validation messages end with `: <field_key>` (e.g.
+    // `Form field does not match pattern: code` or `...: code.`). Match only the exact key
+    // after `: ` without stripping punctuation or whitespace.
+    let mut search = message;
+    let mut matched: Option<&str> = None;
+    while let Some((_, tail)) = search.split_once(": ") {
+        if let Some(&key) = valid_keys.iter().find(|&&k| k == tail)
+            && matched.is_none_or(|prev| key.len() > prev.len())
+        {
+            matched = Some(key);
+        }
+        search = tail;
+    }
+    matched.map(str::to_string)
+}
+
+fn collect_structured_field_keys(
+    value: &serde_json::Value,
+    valid_keys: &[&str],
+    out: &mut Vec<String>,
+) {
+    fn push_key(raw: &str, valid_keys: &[&str], out: &mut Vec<String>) {
+        if valid_keys.contains(&raw) && !out.iter().any(|existing| existing == raw) {
+            out.push(raw.to_string());
+        }
+    }
+    if let Some(obj) = value.as_object() {
+        for prop in ["field", "key"] {
+            if let Some(k) = obj.get(prop).and_then(serde_json::Value::as_str) {
+                push_key(k, valid_keys, out);
+            }
+        }
+        if let Some(path) = obj.get("path").and_then(serde_json::Value::as_array)
+            && let Some(last) = path.last().and_then(serde_json::Value::as_str)
+        {
+            push_key(last, valid_keys, out);
+        }
+        for map_key in ["fields", "fieldErrors"] {
+            if let Some(map) = obj.get(map_key).and_then(serde_json::Value::as_object) {
+                for k in map.keys() {
+                    push_key(k, valid_keys, out);
+                }
+            }
+        }
+        for arr_key in ["issues", "errors", "details"] {
+            if let Some(arr) = obj.get(arr_key).and_then(serde_json::Value::as_array) {
+                for item in arr {
+                    collect_structured_field_keys(item, valid_keys, out);
+                }
+            }
+        }
+        for nested in ["error", "data"] {
+            if let Some(child) = obj.get(nested) {
+                if child.is_object() {
+                    collect_structured_field_keys(child, valid_keys, out);
+                } else if let Some(msg) = child.as_str()
+                    && let Some(k) = extract_field_key_from_message(msg, valid_keys)
+                {
+                    push_key(&k, valid_keys, out);
+                }
+            }
+        }
+        if let Some(msg) = obj.get("message").and_then(serde_json::Value::as_str)
+            && let Some(k) = extract_field_key_from_message(msg, valid_keys)
+        {
+            push_key(&k, valid_keys, out);
+        }
+    }
+}
+
+fn extract_rejected_field_keys(body: &str, valid_keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+        collect_structured_field_keys(&json, valid_keys, &mut out);
+        if !out.is_empty() {
+            return out;
+        }
+        if let Some(s) = json.as_str()
+            && let Some(k) = extract_field_key_from_message(s, valid_keys)
+        {
+            out.push(k);
+            return out;
+        }
+        return out;
+    }
+    if let Some(k) = extract_field_key_from_message(body, valid_keys) {
+        out.push(k);
+    }
+    out
+}
+
 pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let (jobs, rx) = bounded(1);
     let (permissions, prx) = bounded(1);
@@ -339,17 +495,50 @@ pub fn start(backend: Backend, wake: rune::Waker) -> Handle {
     let o = out.clone();
     crate::platform::spawn(async move {
         while let Ok(job) = frx.recv().await {
-            let result = match job {
-                PendingJob::Read(generation) => Result::Forms(b.forms_snapshot().await, generation),
-                PendingJob::Act(action, generation) => {
-                    let ok = b.agent_action(&action).await.is_ok();
-                    Result::ActForm(ok, b.forms_snapshot().await, generation)
+            match job {
+                PendingJob::Read(generation) => {
+                    if o.send(Result::Forms(b.forms_snapshot().await, generation))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    w();
                 }
-            };
-            if o.send(result).await.is_err() {
-                break;
+                PendingJob::Act(action, generation) => {
+                    let settled_id = match &action {
+                        Action::Answer(id, _, _, _) | Action::Cancel(id, _) => Some(id.clone()),
+                        _ => None,
+                    };
+                    let outcome = b.agent_form_action(&action).await;
+                    if matches!(outcome, crate::agent_api::FormReplyOutcome::Ok) {
+                        let snapshot = b.forms_snapshot().await;
+                        if o.send(Result::ActForm(outcome, settled_id, snapshot, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                    } else {
+                        if o.send(Result::ActFormOutcome(outcome, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                        let snapshot = b.forms_snapshot().await;
+                        if o.send(Result::ActFormSnapshot(snapshot, generation))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        w();
+                    }
+                }
             }
-            w();
         }
     });
     let b = backend.clone();
@@ -463,6 +652,8 @@ impl Ui {
         self.forms_lane.reconciling = false;
         self.forms_lane.trailing = false;
         self.forms_lane.error = false;
+        self.pending_deferred_submission = None;
+        self.pending_field_rejection = None;
         self.attention.disconnected();
         self.sync_error();
         self.sync_pending_known();
@@ -496,6 +687,8 @@ impl Ui {
         self.catalog_directory = None;
         self.permissions_lane.reset();
         self.forms_lane.reset();
+        self.pending_deferred_submission = None;
+        self.pending_field_rejection = None;
         self.activity_during_job = false;
         self.usage_during_job = false;
         self.trailing = None;
@@ -539,7 +732,8 @@ impl Ui {
             || self.has_unsaved_form_drafts()
     }
     pub(crate) fn has_unsaved_form_drafts(&self) -> bool {
-        self.drafts.values().any(|d| d.dirty) || self.reasons.values().any(|d| !d.text.is_empty())
+        self.drafts.values().any(agent_forms::Draft::is_dirty)
+            || self.reasons.values().any(|d| !d.text.is_empty())
     }
     pub fn toggle_picker(&mut self) {
         self.picker = !self.picker;
@@ -584,15 +778,71 @@ impl Ui {
         self.act(Action::Permission(id, decision.into(), message))
     }
     pub fn answer_form(&mut self, id: &str) {
+        self.reconcile_custom_focus();
         if let Some(form) = self.forms.iter().find(|f| f.id == id) {
-            if let Ok(answer) = agent_forms::answer(form, &self.drafts) {
-                self.act(Action::Answer(id.into(), answer, form.fields.clone()))
+            if let Ok((answer, deferred)) = agent_forms::answer_with_deferred(form, &self.drafts) {
+                let fields = form.fields.clone();
+                if !self.forms_locked() {
+                    self.pending_field_rejection = None;
+                    self.pending_deferred_submission = (!deferred.is_empty()).then(|| {
+                        Box::new(PendingDeferredSubmission {
+                            form_id: id.to_string(),
+                            submitted_fields: fields.clone(),
+                            deferred_fields: deferred,
+                        })
+                    });
+                }
+                self.act(Action::Answer(
+                    id.into(),
+                    answer,
+                    fields,
+                    form.owner.clone(),
+                ))
             }
         }
     }
     pub fn cancel_form(&mut self, id: String) {
-        if self.forms.iter().any(|f| f.id == id) {
-            self.act(Action::Cancel(id));
+        if let Some(owner) = self
+            .forms
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| f.owner.clone())
+        {
+            self.pending_deferred_submission = None;
+            self.pending_field_rejection = None;
+            self.act(Action::Cancel(id, owner));
+        }
+    }
+    pub(crate) fn reconcile_custom_focus(&mut self) -> bool {
+        let mut changed = false;
+        for form in &self.forms {
+            for field in &form.fields {
+                if field["type"] != "multiselect" || field["custom"] != true {
+                    continue;
+                }
+                let Some(key) = field["key"].as_str() else {
+                    continue;
+                };
+                let Some(draft) = self.drafts.get_mut(&(form.id.clone(), key.to_string())) else {
+                    continue;
+                };
+                if draft.custom.focused {
+                    draft.custom_was_focused = true;
+                } else if draft.custom_was_focused {
+                    let options = agent_forms::normalized_options(field);
+                    if draft.reconcile_committed_multiselect_custom(&options) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
+    }
+    fn clear_form_editor_focus(&mut self) {
+        for draft in self.drafts.values_mut() {
+            draft.edit.focused = false;
+            draft.custom.focused = false;
+            draft.custom_was_focused = false;
         }
     }
     pub fn idle(&self) -> bool {
@@ -647,6 +897,8 @@ impl Ui {
             models_directory: None,
             permissions_lane: RequestLane::default(),
             forms_lane: RequestLane::default(),
+            pending_deferred_submission: None,
+            pending_field_rejection: None,
             activity_during_job: false,
             usage_during_job: false,
             trailing: None,
@@ -833,7 +1085,7 @@ impl Ui {
                     self.sync_error();
                 }
             }
-            Action::Answer(_, _, _) | Action::Cancel(_) => {
+            Action::Answer(_, _, _, _) | Action::Cancel(_, _) => {
                 if self.forms_locked() {
                     return;
                 }
@@ -845,10 +1097,13 @@ impl Ui {
                     .is_ok()
                 {
                     self.attention.invalidate_kind(1);
+                    self.clear_form_editor_focus();
                     self.forms_lane.busy = true;
                     self.forms_lane.hint_during_job = false;
                     self.forms_lane.error = false;
                     self.sync_error();
+                } else {
+                    self.pending_deferred_submission = None;
                 }
             }
         }
@@ -885,6 +1140,12 @@ impl Ui {
     }
     pub fn forms_locked(&self) -> bool {
         self.scope_missing || self.forms_lane.locked(self.online)
+    }
+    /// True only while a form reply/cancel POST is actively in flight. Draft editing remains
+    /// available once the POST finishes even if post-reply reconciliation is still pending, while
+    /// Answer/Cancel stay gated by `forms_locked()`.
+    pub fn forms_mutating(&self) -> bool {
+        self.forms_lane.busy
     }
     pub fn ids(&self) -> Vec<String> {
         self.permissions
@@ -977,31 +1238,148 @@ impl Ui {
         self.reconcile_selected();
     }
 
-    fn apply_forms(&mut self, forms: Option<Vec<Form>>) {
+    fn apply_forms(&mut self, forms: Option<FormsSnapshot>, settled_id: Option<&str>) {
         let current_requests = !std::mem::take(&mut self.forms_lane.hint_during_job);
         self.forms_lane.known = forms.is_some();
         self.sync_pending_known();
-        if let Some(forms) = forms {
+        if let Some(snapshot) = forms {
+            let merged = snapshot.merge_prior(&self.forms, settled_id);
             if self.online {
                 self.attention.observe_kind(
                     1,
-                    forms.iter().map(|f| f.id.clone()),
+                    merged.iter().map(|f| f.id.clone()),
                     current_requests,
                 );
             }
-            self.forms = forms;
+            self.forms = merged;
             agent_forms::seed(&self.forms, &mut self.drafts);
+            if let Some(rejection) = self.pending_field_rejection.take() {
+                if self
+                    .forms
+                    .iter()
+                    .any(|f| f.id == rejection.form_id && f.fields == rejection.submitted_fields)
+                {
+                    for (field_key, submitted_value) in rejection.to_mark {
+                        if let Some(field_schema) = rejection
+                            .submitted_fields
+                            .iter()
+                            .find(|f| f["key"].as_str() == Some(field_key.as_str()))
+                            && let Some(draft) =
+                                self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                        {
+                            draft.set_server_rejected(field_schema.clone(), submitted_value);
+                        }
+                    }
+                } else {
+                    for (field_key, submitted_value) in rejection.to_mark {
+                        if let Some(draft) =
+                            self.drafts.get_mut(&(rejection.form_id.clone(), field_key))
+                            && draft.server_rejected_value.as_ref() == Some(&submitted_value)
+                        {
+                            draft.clear_server_rejected();
+                        }
+                    }
+                }
+            }
         }
         self.reconcile_selected();
+    }
+
+    fn handle_act_form_outcome(&mut self, outcome: crate::agent_api::FormReplyOutcome) {
+        self.forms_lane.busy = false;
+        self.forms_lane.reading = true;
+        self.clear_form_editor_focus();
+        let submitted_deferred = self.pending_deferred_submission.take();
+        let ok = matches!(outcome, crate::agent_api::FormReplyOutcome::Ok);
+        if self.scope_missing {
+            self.forms_lane.reconciling = false;
+            self.pending_field_rejection = None;
+            return;
+        }
+        if let crate::agent_api::FormReplyOutcome::ValidationRejected(ref detail) = outcome
+            && let Some(submitted) = submitted_deferred
+        {
+            let PendingDeferredSubmission {
+                form_id,
+                submitted_fields,
+                deferred_fields,
+            } = *submitted;
+            let all_keys: Vec<&str> = submitted_fields
+                .iter()
+                .filter_map(|f| f["key"].as_str())
+                .collect();
+            let rejected_keys = detail
+                .as_deref()
+                .map(|body| extract_rejected_field_keys(body, &all_keys))
+                .unwrap_or_default();
+            let to_mark: Vec<(String, serde_json::Value)> = if !rejected_keys.is_empty() {
+                deferred_fields
+                    .into_iter()
+                    .filter(|(k, _)| rejected_keys.iter().any(|r| r == k))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if !to_mark.is_empty() {
+                if self
+                    .forms
+                    .iter()
+                    .any(|f| f.id == form_id && f.fields == submitted_fields)
+                {
+                    for (field_key, submitted_value) in &to_mark {
+                        if let Some(field_schema) = submitted_fields
+                            .iter()
+                            .find(|f| f["key"].as_str() == Some(field_key.as_str()))
+                            && let Some(draft) =
+                                self.drafts.get_mut(&(form_id.clone(), field_key.clone()))
+                        {
+                            draft
+                                .set_server_rejected(field_schema.clone(), submitted_value.clone());
+                        }
+                    }
+                }
+                self.pending_field_rejection = Some(Box::new(PendingFieldRejection {
+                    form_id,
+                    submitted_fields,
+                    to_mark,
+                }));
+            }
+        }
+        self.forms_lane.error = !ok;
+        self.forms_lane.reconciling = true;
+        self.sync_error();
+    }
+
+    fn handle_act_form_snapshot(
+        &mut self,
+        forms: Option<FormsSnapshot>,
+        settled_id: Option<&str>,
+        generation: u64,
+    ) {
+        self.forms_lane.reading = false;
+        if self.scope_missing {
+            self.forms_lane.reconciling = false;
+            return;
+        }
+        let fresh = generation == self.forms_lane.generation;
+        self.forms_lane.error |= fresh && forms.is_none();
+        self.sync_error();
+        if fresh {
+            self.forms_lane.reconciling = forms.is_none();
+            self.apply_forms(forms, settled_id);
+        } else {
+            self.forms_lane.reconciling = true;
+            self.forms_lane.trailing = true;
+        }
     }
 
     #[cfg(test)]
     fn snapshot(&mut self, mut s: Snapshot, generation: u64) {
         let permissions = s.permissions.take();
-        let forms = s.forms.take();
+        let forms = s.forms.take().map(FormsSnapshot::complete);
         self.apply_session(s, generation);
         self.apply_permissions(permissions);
-        self.apply_forms(forms);
+        self.apply_forms(forms, None);
     }
 
     pub fn poll(&mut self) -> bool {
@@ -1049,7 +1427,7 @@ impl Ui {
                         }
                         self.forms_lane.error |= forms.is_none();
                         self.sync_error();
-                        self.apply_forms(forms);
+                        self.apply_forms(forms, None);
                     }
                 }
                 Result::Catalog(models, directory, generation) => {
@@ -1093,22 +1471,15 @@ impl Ui {
                         }
                     }
                 }
-                Result::ActForm(ok, forms, generation) => {
-                    self.forms_lane.busy = false;
-                    if self.scope_missing {
-                        self.forms_lane.reconciling = false;
-                    } else {
-                        let fresh = generation == self.forms_lane.generation;
-                        self.forms_lane.error = !ok || (fresh && forms.is_none());
-                        self.sync_error();
-                        if fresh {
-                            self.forms_lane.reconciling = forms.is_none();
-                            self.apply_forms(forms);
-                        } else {
-                            self.forms_lane.reconciling = true;
-                            self.forms_lane.trailing = true;
-                        }
-                    }
+                Result::ActForm(outcome, settled_id, forms, generation) => {
+                    self.handle_act_form_outcome(outcome);
+                    self.handle_act_form_snapshot(forms, settled_id.as_deref(), generation);
+                }
+                Result::ActFormOutcome(outcome, _generation) => {
+                    self.handle_act_form_outcome(outcome);
+                }
+                Result::ActFormSnapshot(forms, generation) => {
+                    self.handle_act_form_snapshot(forms, None, generation);
                 }
                 Result::Stop(ok) => {
                     self.stopping = false;
@@ -1152,6 +1523,10 @@ impl Ui {
             {
                 self.dispatch_catalog_read(directory, self.catalog_generation);
             }
+        }
+        for draft in self.drafts.values_mut() {
+            changed |= rune_theme_codenomad::form_controls::clamp_form_text_edit(&mut draft.edit);
+            changed |= rune_theme_codenomad::form_controls::clamp_form_text_edit(&mut draft.custom);
         }
         changed
     }

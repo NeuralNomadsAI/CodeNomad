@@ -38,11 +38,13 @@ test("a running code program is admitted once, from its row's unchanged count an
   await f.store.change(doc.id, doc.revision, f.current, value => missionDocumentChanges.processWake(value, (value.calendars
     .find(item => item.scheduleID === principal.scheduleID)!).wakePreparing!))
   assert.equal((await admit()).state, "applied")
+  await assert.rejects(admit(1, { ...row, code: false }), /schedule-calendar-requires-code/)
 })
 
 test("prompt, paused, foreign and barrier states admit nothing", async t => {
   const { f, row, admit, prepared } = await admission(t)
-  for (const value of [null, { ...row, code: false }, { ...row, status: "paused" as const }, { ...row, nextDueAt: null }, { ...row, runCount: 1 }])
+  await assert.rejects(admit(1, { ...row, code: false }), /schedule-calendar-requires-code/)
+  for (const value of [null, { ...row, status: "paused" as const }, { ...row, nextDueAt: null }, { ...row, runCount: 1 }])
     assert.equal((await admit(1, value)).state, "rejected")
   await f.control("pause")
   assert.equal((await admit()).state, "rejected")

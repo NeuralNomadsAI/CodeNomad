@@ -552,10 +552,7 @@ fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reas
         settle(&mut rt).await;
         http.request("PUT", "main.rs")
             .await
-            .reply(
-                409,
-                serde_json::json!({"error": "File changed while saving"}),
-            )
+            .reply(409, serde_json::json!({"error": "File changed on disk"}))
             .await;
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
@@ -567,11 +564,11 @@ fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reas
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         rt.frame(0.02);
-        assert!(
-            rt.accessibility_json()
-                .to_string()
-                .contains("File changed while saving")
-        );
+        let expected_conflict =
+            crate::strings::with_locale("en", || crate::strings::t("filesPanel.draftConflict"));
+        let a11y = rt.accessibility_json().to_string();
+        assert!(a11y.contains(expected_conflict));
+        assert!(!a11y.contains("File changed on disk"));
         // A disappeared file can fail both the write and the automatic reread.
         http.request("GET", "main.rs")
             .await
@@ -579,11 +576,9 @@ fn binary_replacement_keeps_the_draft_visible_and_version_refusal_shows_the_reas
             .await;
         settle(&mut rt).await;
         assert!(rt.state.files.as_ref().unwrap().reader.error().is_some());
-        assert!(
-            rt.accessibility_json()
-                .to_string()
-                .contains("File changed while saving")
-        );
+        let a11y_after_reread = rt.accessibility_json().to_string();
+        assert!(a11y_after_reread.contains(expected_conflict));
+        assert!(!a11y_after_reread.contains("File changed on disk"));
         rt.update(|state, _| state.files.as_mut().unwrap().reader.refresh());
         rt.update_if(|state, _| state.files.as_mut().unwrap().poll(20.0));
         http.request("GET", "main.rs")

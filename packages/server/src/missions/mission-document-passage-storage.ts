@@ -2,7 +2,7 @@ import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, missionDeletionRecordKey, stableToken, type MissionStorage } from "./journal"
 import { MISSION_DOCUMENT_PREFIX, type MissionDocument } from "./mission-document"
 
-/** Storage isolation shared by daily and document passages. The native caller
+/** Storage isolation of document passages. The native caller
  * owns authorization and the document exclusion throughout every mutation. */
 export function isolatedMissionPassageJournal(storage: MissionStorage, identity: {
   projectID: string; projectCanonical: string; ownerID: string; passageID: string; storagePrefix: string

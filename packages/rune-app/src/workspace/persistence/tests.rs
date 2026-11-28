@@ -388,3 +388,196 @@ fn native_file_draft_write_failure_stays_dirty_without_automatic_retries() {
     assert_ne!(loaded, expected);
     assert_eq!(loaded, inflight_expected);
 }
+
+use crate::platform::storage::{
+    RestoreMode, WebDepartInput, WebDepartKeys, WebDepartStorage, depart_web_state,
+};
+
+#[derive(Default)]
+struct MemoryWebStorage {
+    items: std::collections::BTreeMap<String, String>,
+    fail_keys: std::collections::BTreeSet<String>,
+}
+
+impl WebDepartStorage for MemoryWebStorage {
+    fn set_item(&mut self, key: &str, value: &str) -> std::result::Result<(), ()> {
+        if self.fail_keys.contains(key) {
+            return Err(());
+        }
+        self.items.insert(key.to_owned(), value.to_owned());
+        Ok(())
+    }
+}
+
+fn test_web_keys() -> WebDepartKeys<'static> {
+    WebDepartKeys {
+        state: "state",
+        file_drafts: "file-drafts",
+        released: "released",
+    }
+}
+
+#[test]
+fn web_pagehide_keeps_records_when_session_storage_quota_fails_after_clear() {
+    let drafts = br#"[{"path":"src/lib.rs","text":"unsaved"}]"#;
+
+    // After Web Clear (snapshot suppressed), a sessionStorage quota failure while persisting
+    // pending file drafts must refuse to release server workspace records.
+    let mut quota_store = MemoryWebStorage::default();
+    quota_store.fail_keys.insert("file-drafts".to_owned());
+    let release = depart_web_state(
+        &mut quota_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    );
+    assert!(!release);
+    assert!(quota_store.items.is_empty());
+
+    // Oversized pending drafts, invalid UTF-8, or a contested borrow after Clear also retain records.
+    let mut oversized_store = MemoryWebStorage::default();
+    assert!(!depart_web_state(
+        &mut oversized_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 4,
+            keys: test_web_keys(),
+        },
+    ));
+    assert!(oversized_store.items.is_empty());
+
+    let mut invalid_utf8_store = MemoryWebStorage::default();
+    assert!(!depart_web_state(
+        &mut invalid_utf8_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: Some(Some(&[0xff, 0xfe])),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert!(invalid_utf8_store.items.is_empty());
+
+    let mut borrow_failed_store = MemoryWebStorage::default();
+    assert!(!depart_web_state(
+        &mut borrow_failed_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: None,
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert!(borrow_failed_store.items.is_empty());
+
+    // Once sessionStorage accepts the pending file drafts after Clear, records may be released.
+    let mut ok_clear_store = MemoryWebStorage::default();
+    assert!(depart_web_state(
+        &mut ok_clear_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert_eq!(
+        ok_clear_store.items.get("file-drafts").map(String::as_str),
+        Some(std::str::from_utf8(drafts).unwrap())
+    );
+    assert!(!ok_clear_store.items.contains_key("state"));
+    assert!(!ok_clear_store.items.contains_key("released"));
+
+    // On a normal (unsuppressed) departure, failing to persist pending drafts also prevents
+    // marking records released even if the workspace snapshot itself fits.
+    let mut normal_quota_store = MemoryWebStorage::default();
+    normal_quota_store
+        .fail_keys
+        .insert("file-drafts".to_owned());
+    assert!(!depart_web_state(
+        &mut normal_quota_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: false,
+            snapshot: Some(br#"{"tabs":[]}"#),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert_eq!(
+        normal_quota_store.items.get("state").map(String::as_str),
+        Some(r#"{"tabs":[]}"#)
+    );
+    assert!(!normal_quota_store.items.contains_key("released"));
+
+    // When both drafts and snapshot persist on normal departure, RELEASED is set and records release.
+    let mut normal_ok_store = MemoryWebStorage::default();
+    assert!(depart_web_state(
+        &mut normal_ok_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: false,
+            snapshot: Some(br#"{"tabs":[]}"#),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert_eq!(
+        normal_ok_store.items.get("released").map(String::as_str),
+        Some("1")
+    );
+
+    // Frozen or Unknown restore keeps records without touching storage; Disabled releases cleanly.
+    let mut frozen_store = MemoryWebStorage::default();
+    assert!(!depart_web_state(
+        &mut frozen_store,
+        WebDepartInput {
+            frozen: true,
+            restore: RestoreMode::Enabled,
+            snapshot_suppressed: true,
+            snapshot: Some(b""),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert!(frozen_store.items.is_empty());
+
+    let mut disabled_store = MemoryWebStorage::default();
+    assert!(depart_web_state(
+        &mut disabled_store,
+        WebDepartInput {
+            frozen: false,
+            restore: RestoreMode::Disabled,
+            snapshot_suppressed: false,
+            snapshot: Some(br#"{"tabs":[]}"#),
+            pending_file_drafts: Some(Some(drafts)),
+            max_file_draft_bytes: 256 * 1024,
+            keys: test_web_keys(),
+        },
+    ));
+    assert!(disabled_store.items.is_empty());
+}

@@ -5,9 +5,11 @@ pub use tabs::{
     new_tab, rename_tab, select, select_index, select_relative, tab_rename_seed,
 };
 
+mod blank_cleanup;
 mod cleanup;
 pub(crate) use cleanup::{remove_cleaned_session, session_cleanup_protected};
 mod drafts;
+mod idle_markers;
 mod notification;
 mod observation;
 mod panel_state;
@@ -21,6 +23,12 @@ pub(crate) use temporary::{
     stashed_has_in_memory_state, temporary_tab_info,
 };
 
+pub(crate) use blank_cleanup::{
+    abort_for_project as auto_cleanup_abort_for_project,
+    abort_for_session as auto_cleanup_abort_for_session,
+    abort_if_protected as auto_cleanup_abort_if_protected,
+    is_deleting_session as auto_cleanup_is_deleting_session, schedule as schedule_blank_cleanup,
+};
 pub(crate) use drafts::{
     MAX_WINDOW_DEVICE_FILES, adopt_recovered_draft, attachment_draft_admissible, bound,
     bound_with_adopt, capture, check_restored_draft_sessions, confirm_unconfirmed, draft_changed,
@@ -79,6 +87,8 @@ pub(super) struct Entry {
     consumed_cursors: HashSet<u64>,
     visits: crate::launcher::Visits,
     catalogue: catalogue::Refresh,
+    blank_cleanup: blank_cleanup::Runner,
+    idle_markers: idle_markers::Tracker,
     wanted_panels: [Option<[bool; 2]>; 2],
     sidebar_edits: Option<(TextEdit, bool, TextEdit, bool)>,
     binding: Option<Backend>,
@@ -1823,6 +1833,8 @@ fn entry(key: String, mut saved: Tab) -> Entry {
         consumed_cursors: HashSet::new(),
         visits: Default::default(),
         catalogue: Default::default(),
+        blank_cleanup: Default::default(),
+        idle_markers: Default::default(),
         wanted_panels: [None; 2],
         sidebar_edits: None,
         binding: None,
@@ -1943,6 +1955,11 @@ pub fn connected(s: &mut State) {
         l.openings = ui.openings.clone();
     }
     #[cfg(not(target_arch = "wasm32"))]
+    let booting = s
+        .screen
+        .launcher()
+        .is_some_and(crate::launcher::Launcher::booting);
+    #[cfg(not(target_arch = "wasm32"))]
     let directory = s
         .screen
         .launcher()
@@ -1956,7 +1973,11 @@ pub fn connected(s: &mut State) {
         ui.ready = false;
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if !ui.persistence.loading && ui.persistence.store.is_none() && !ui.persistence.read_error {
+    if booting && !ui.persistence.loading && ui.persistence.store.is_none() {
+        ui.ready = false;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if !booting && !ui.persistence.loading {
         ui.ready = true;
     }
 }
@@ -1997,6 +2018,11 @@ impl Drop for Ui {
     }
 }
 pub fn resume(s: &mut State, tx: &mut Tx) {
+    if s.screen.launcher().is_some_and(|l| {
+        l.project.is_none() && l.server_id.is_none() && (l.pending || l.error.is_some())
+    }) {
+        return;
+    }
     if s.workspace
         .as_ref()
         .is_some_and(|ui| ui.ready && ui.entries[ui.active].project.is_none())
@@ -2119,6 +2145,8 @@ pub fn opened(s: &mut State, project: &Project) {
             .filter_map(|(scope, id)| scope.matches(&reopened_workspace).then(|| id.clone()))
             .collect();
         let item = &mut ui.entries[ui.active];
+        item.blank_cleanup.clear();
+        item.idle_markers.clear();
         item.cleared.clear();
         item.pending_drafts = pending_keys;
         item.restored_drafts.clear();

@@ -102,7 +102,7 @@ jobs:
         run: |
           npx --workspace @codenomad/ui playwright install --with-deps chromium
           npm install --prefix scripts/perf/tools --ignore-scripts --no-audit --no-fund \
-            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.3.2
+            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.4.1
       - run: node --test scripts/perf/page-probe.test.mjs
       - name: Measure renderer work and latency against the TUI
         run: |
@@ -312,10 +312,7 @@ jobs:
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Context IDs must resolve native schedule metadata; the retained product
-          # bundle must admit cold scheduled passages with the backend closed.
-          node scripts/test-native-schedule-context.mjs $cli
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The retained Missions bundle must admit cold scheduled passages with the backend closed.
           $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
           $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
           node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
@@ -364,12 +361,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Recurring schedule journeys (~6.5 min) qualify the latest stable
-          # only; the contract fixture qualifies the recurrence graph on both.
-          if ('${{ matrix.runtime }}' -eq 'latest') {
-            node scripts/test-recurring-simple-native.mjs $cli ABCD
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          }
 
       - name: Upload isolated schedule product failure diagnostics
         if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
@@ -382,17 +373,6 @@ jobs:
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
           if-no-files-found: ignore
           retention-days: 7
-      - name: Upload isolated schedule foundation failure diagnostics
-        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: schedule-foundation-failure-${{ matrix.runtime }}
-          path: |
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Upload isolated runtime contract failure diagnostics
         if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
         uses: actions/upload-artifact@v7.0.2
@@ -637,6 +617,7 @@ jobs:
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
+          packages/ui/src/components/mission-editor-schedule.test.ts
           packages/ui/src/components/mission-execution.test.ts
           packages/ui/src/components/mission-native-execution-locales.test.ts
           packages/ui/src/components/mission-native-execution.test.ts
@@ -653,13 +634,13 @@ jobs:
           packages/ui/src/lib/mission-cleanup.test.ts
           packages/ui/src/lib/mission-defaults.test.ts
           packages/ui/src/lib/mission-display.test.ts
+          packages/ui/src/lib/mission-held-reread.test.ts
           packages/ui/src/lib/mission-lifecycle-request.test.ts
           packages/ui/src/lib/mission-markdown-pages.test.ts
           packages/ui/src/lib/mission-model-library.test.ts
           packages/ui/src/lib/mission-mutation-locales.test.ts
           packages/ui/src/lib/mission-mutation.test.ts
           packages/ui/src/lib/mission-preferences-document.test.ts
-          packages/ui/src/lib/mission-recurrence-control.test.ts
           packages/ui/src/lib/mission-view-fence.test.ts
           packages/ui/src/lib/native-mission-preferences.test.ts
           packages/ui/src/lib/storage-owner-read-fence.test.ts
