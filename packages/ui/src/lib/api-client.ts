@@ -104,9 +104,7 @@ function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T
   return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
 }
 
-// The panel's journal reads and the schedule list. The reads
-// of one schedule (document, capability, saved request) stay on the shared budget, so
-// the ones a click waits for never queue behind a list read.
+// The Missions panel's reads.
 function missionRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>): Promise<T> {
   return missionReads.run(signal ?? new AbortController().signal, read, "visible")
 }
