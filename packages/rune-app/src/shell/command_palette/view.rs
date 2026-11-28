@@ -1,6 +1,6 @@
 use super::{
     CLOSE_KEY, FIELD, blocked_by_higher_modal, close, commands::Category, execute_by_id,
-    handle_key, is_open, resolved_selection, toggle, visible_commands,
+    handle_key, is_open, item_key, resolved_selection, toggle, visible_commands,
 };
 use crate::{
     State,
@@ -34,8 +34,12 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
         .unwrap_or_else(|| s.input_scope.clone());
     let render_locale = locale();
     let title = t("commandPalette.title");
+    let items = visible_commands(s);
+    let selected = resolved_selection(&items, palette.selected_id);
+    let active_descendant = selected.map(|index| item_key(items[index].id));
     let search_field = layout::hinted_field(&palette.query, t("commandPalette.searchPlaceholder"))
         .label(t("commandPalette.searchPlaceholder"))
+        .active_descendant(active_descendant)
         .on_edit({
             let scope = scope.clone();
             move |s: &mut State| {
@@ -46,8 +50,10 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
                 }
             }
         })
-        .on_change(screen::action_tx(&scope, |s, _| {
+        .on_change(screen::action_tx(&scope, |s, tx| {
             s.command_palette.selected_id = None;
+            s.command_palette.ignore_pointer_hover = true;
+            tx.scroll_to_instant(theme::LIST, 0.0, 0.0);
         }))
         .on_key({
             let scope = scope.clone();
@@ -65,8 +71,6 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
         |s: &mut State| &mut s.command_palette.close_control,
         screen::action_tx(&scope, close),
     );
-    let items = visible_commands(s);
-    let selected = resolved_selection(&items, palette.selected_id);
     let mut rows = Vec::new();
     if items.is_empty() {
         let query = palette.query.text.trim();
@@ -83,15 +87,18 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
             let shortcut = item.shortcut(s);
             let hover_scope = scope.clone();
             let press_scope = scope.clone();
-            rows.push(theme::command_row(
-                format!("command-palette-item-{id}"),
+            let mut row_el = theme::command_row(
+                item_key(id),
                 item.label.as_ref(),
                 item.description.as_deref(),
                 shortcut.as_deref(),
                 selected == Some(index),
                 item.disabled,
                 move |s: &mut State, hovered, _| {
-                    if hovered && s.current_scope(&hover_scope) {
+                    if hovered
+                        && s.current_scope(&hover_scope)
+                        && !s.command_palette.ignore_pointer_hover
+                    {
                         s.command_palette.selected_id = Some(id);
                     }
                 },
@@ -102,7 +109,22 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
                         });
                     }
                 },
-            ));
+            );
+            if !item.disabled {
+                let move_scope = scope.clone();
+                row_el = row_el.on_pointer_move(move |s: &mut State, p| {
+                    if !s.current_scope(&move_scope) {
+                        return;
+                    }
+                    let pos = (p.x, p.y);
+                    if s.command_palette.last_pointer_pos != Some(pos) {
+                        s.command_palette.last_pointer_pos = Some(pos);
+                        s.command_palette.ignore_pointer_hover = false;
+                        s.command_palette.selected_id = Some(id);
+                    }
+                });
+            }
+            rows.push(row_el);
         }
     }
     let list = theme::list(title, palette.viewport.1, rows);
