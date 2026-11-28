@@ -43,7 +43,13 @@ fn check_folder(root: &Path) -> Result<(), String> {
     if !root.is_absolute() || root.file_name().is_none() || !below_top {
         return Err("it is not a folder below a drive's top".into());
     }
-    if folders::protected().iter().any(|kept| inside(kept, root)) {
+    // Compared as the disk names them: a short `8.3` name or a junction in a parent spells one
+    // of the user's folders another way.
+    let real_root = real(root);
+    if folders::protected()
+        .iter()
+        .any(|kept| inside(&real(kept), &real_root))
+    {
         return Err("it is, or holds, one of your own folders".into());
     }
     if is_link(root) {
@@ -52,6 +58,24 @@ fn check_folder(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// `path` as the disk names it: its nearest existing ancestor resolved (long names, junctions and
+/// links followed), with what does not exist yet appended.
+fn real(path: &Path) -> std::path::PathBuf {
+    let mut missing = Vec::new();
+    let mut at = path;
+    loop {
+        if let Ok(resolved) = std::fs::canonicalize(at) {
+            return missing.iter().rev().fold(resolved, |p, part| p.join(part));
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                at = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
 /// Whether `path` is `base` or lies inside it, compared without regard to case.
 fn inside(path: &Path, base: &Path) -> bool {
     let lower = |p: &Path| {

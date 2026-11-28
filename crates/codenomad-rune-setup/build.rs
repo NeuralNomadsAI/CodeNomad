@@ -19,6 +19,11 @@ fn main() {
     if std::fs::read(&out).ok().as_deref() != Some(bytes.as_slice()) {
         std::fs::write(&out, &bytes).unwrap_or_else(|e| panic!("{}: {e}", out.display()));
     }
+    // The setup's dialogs need the manifest, which only a Windows host's resource compiler embeds.
+    #[cfg(not(windows))]
+    if env("CARGO_CFG_TARGET_OS").as_deref() == Some("windows") {
+        panic!("build codenomad-rune-setup on a Windows host");
+    }
     #[cfg(windows)]
     if env("CARGO_CFG_TARGET_OS").as_deref() == Some("windows") {
         let version =

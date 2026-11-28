@@ -139,10 +139,20 @@ impl Wizard<'_> {
                 _ => {}
             },
             TDN_BUTTON_CLICKED => match (self.stage, wparam as i32) {
-                (Stage::Welcome, INSTALL) if install::running(self.root) => {
-                    return Next::Go(Stage::Running, S_FALSE);
+                (Stage::Welcome, INSTALL) => {
+                    // Refused before asking to close a running copy.
+                    if let Err(why) = install::preflight(self.p, self.root, self.desktop) {
+                        self.failed(&why);
+                        return Next::Go(Stage::Failed, S_FALSE);
+                    }
+                    let next = if install::running(self.root) {
+                        Stage::Running
+                    } else {
+                        Stage::Installing
+                    };
+                    return Next::Go(next, S_FALSE);
                 }
-                (Stage::Welcome, INSTALL) | (Stage::Running, CLOSE_AND_INSTALL) => {
+                (Stage::Running, CLOSE_AND_INSTALL) => {
                     return Next::Go(Stage::Installing, S_FALSE);
                 }
                 // Nothing stops an install halfway.
@@ -264,7 +274,8 @@ unsafe extern "system" fn callback(
         }
     }
 }
-/// Runs the pages; the exit code is 0 once installed, 1 when it failed, 2 when cancelled.
+/// Runs the pages; the exit code is 0 once installed, 1 when it failed, 2 when cancelled, 3 when
+/// installed but the application could not be started.
 pub fn run(p: &Product, root: &Path, args: &Args) -> i32 {
     let name = &p.name;
     let welcome = page(

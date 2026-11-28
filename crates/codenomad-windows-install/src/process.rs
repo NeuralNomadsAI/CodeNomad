@@ -20,18 +20,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, PWSTR};
 
 /// A process whose program lives under the install. Windows does not give its id to another
-/// process while the handle is open, so what is asked of the id reaches this process only.
+/// process while a handle to it is open, so what is asked of the id reaches this process only.
 struct Running {
     pid: u32,
-    handle: HANDLE,
-    /// Whether the handle can wait for the process and end it.
-    owned: bool,
+    /// Opened to read the program; held until the process is done with.
+    query: HANDLE,
+    /// Opened once the program matched, to wait for the process and end it. None when Windows
+    /// refuses (a process of another account).
+    control: Option<HANDLE>,
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        // SAFETY: the handle was opened by `under` and is closed once.
-        _ = unsafe { CloseHandle(self.handle) };
+        // SAFETY: handles this value opened, each closed once.
+        unsafe {
+            if let Some(control) = self.control {
+                _ = CloseHandle(control);
+            }
+            _ = CloseHandle(self.query);
+        }
     }
 }
 
@@ -39,7 +46,8 @@ impl Running {
     fn exited(&self, wait: Duration) -> bool {
         let ms = u32::try_from(wait.as_millis()).unwrap_or(u32::MAX);
         // SAFETY: waits on a handle this value owns.
-        self.owned && unsafe { WaitForSingleObject(self.handle, ms) } == WAIT_OBJECT_0
+        self.control
+            .is_some_and(|control| unsafe { WaitForSingleObject(control, ms) } == WAIT_OBJECT_0)
     }
 }
 
@@ -66,8 +74,7 @@ fn under(root: &Path) -> Vec<Running> {
         while more {
             let pid = entry.th32ProcessID;
             if pid != me
-                && let Some(running) = open(pid)
-                && image(running.handle).is_some_and(|p| p.to_lowercase().starts_with(&prefix))
+                && let Some(running) = open(pid, &prefix)
             {
                 found.push(running);
             }
@@ -78,28 +85,24 @@ fn under(root: &Path) -> Vec<Running> {
     found
 }
 
-/// Opens `pid` to read its program, wait for it and end it; to read its program only when
-/// Windows refuses the rest (a process of another account).
-fn open(pid: u32) -> Option<Running> {
-    let all = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE | PROCESS_TERMINATE;
+/// Opens `pid` to read its program and, only when that program lives under `prefix`, again to
+/// wait for it and end it: no other process is ever opened with the right to end it.
+fn open(pid: u32, prefix: &str) -> Option<Running> {
     // SAFETY: opens handles that `Running` closes.
-    unsafe {
-        if let Ok(handle) = OpenProcess(all, false, pid) {
-            return Some(Running {
-                pid,
-                handle,
-                owned: true,
-            });
-        }
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        Some(Running {
-            pid,
-            handle,
-            owned: false,
-        })
+    let query = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut running = Running {
+        pid,
+        query,
+        control: None,
+    };
+    if !image(query).is_some_and(|program| program.to_lowercase().starts_with(prefix)) {
+        return None;
     }
+    // SAFETY: the same process, which `query` keeps from being replaced under this id.
+    running.control =
+        unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false, pid) }.ok();
+    Some(running)
 }
-
 fn image(process: HANDLE) -> Option<String> {
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
@@ -135,9 +138,11 @@ pub fn close_running(root: &Path, grace: Duration) -> bool {
     }
     let deadline = Instant::now() + grace;
     for process in &running {
-        if !process.exited(deadline.saturating_duration_since(Instant::now())) && process.owned {
-            // SAFETY: ends the process this handle has held since its program was checked.
-            _ = unsafe { TerminateProcess(process.handle, 1) };
+        if !process.exited(deadline.saturating_duration_since(Instant::now()))
+            && let Some(control) = process.control
+        {
+            // SAFETY: ends the process held open since its program was checked.
+            _ = unsafe { TerminateProcess(control, 1) };
             process.exited(Duration::from_secs(2));
         }
     }

@@ -13,7 +13,10 @@
 //! ```
 //!
 //! `--silent` installs without a window, with the desktop shortcut and the launch only when
-//! asked. `--dir` installs somewhere else than `%LOCALAPPDATA%\Programs\<name>`.
+//! asked. `--dir` installs somewhere else than `%LOCALAPPDATA%\Programs\<name>`: an absolute
+//! path on a drive or a share, to a folder that is absent, empty or this application's install.
+//!
+//! Exit codes: 0 installed, 1 not installed, 2 cancelled, 3 installed but not started.
 //!
 //! Derived from `apps/installer` of `anomalyco/opencode-rune` (MIT, see
 //! `THIRD_PARTY_NOTICES.md`).

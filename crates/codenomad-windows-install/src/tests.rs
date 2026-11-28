@@ -310,6 +310,23 @@ fn the_setup_only_takes_a_folder_that_is_absent_empty_or_its_own_install() {
     );
     assert!(target(Path::new(r"relative\root")).is_err(), "not absolute");
 
+    // One of the user's folders reached through a junction in a parent is still that folder.
+    let users = s.dir.join("users");
+    let made = std::process::Command::new("cmd.exe")
+        .args(["/d", "/c", "mklink", "/J"])
+        .args([&users, &profile.parent().unwrap().to_path_buf()])
+        .stdout(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let same_profile = users.join(profile.file_name().unwrap());
+    assert!(
+        target(&same_profile).is_err(),
+        "the profile through a junction"
+    );
+    assert_eq!(target(&users.join("no such user")), Ok(()), "beside it");
+    std::fs::remove_dir(&users).unwrap();
     register_in(&s.product, &s.root(), &s.links()).unwrap();
     assert_eq!(target(&s.root()), Ok(()), "the registered install");
 }

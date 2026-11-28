@@ -83,7 +83,9 @@ pub fn run() -> i32 {
 /// started.
 fn folder(dir: Option<&Path>, p: &Product) -> Option<PathBuf> {
     match dir {
-        Some(dir) if dir.is_absolute() => {
+        // A drive or a share only: a `\\?\` or `\\.\` path names the same folders another way,
+        // past the checks that compare paths.
+        Some(dir) if dir.is_absolute() && plain(dir) => {
             let spelled = std::path::absolute(dir).ok()?;
             Some(spelled.components().collect())
         }
@@ -92,6 +94,26 @@ fn folder(dir: Option<&Path>, p: &Product) -> Option<PathBuf> {
     }
 }
 
+fn plain(dir: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(
+        dir.components().next(),
+        Some(Component::Prefix(p)) if matches!(p.kind(), Prefix::Disk(_) | Prefix::UNC(..))
+    )
+}
+
+/// What must hold before anything is closed or replaced: the folder is replaced whole, so it
+/// must be nothing but this install, and the shortcuts must be free to write.
+pub fn preflight(p: &Product, root: &Path, desktop_shortcut: bool) -> Result<(), String> {
+    windows_install::check_install_target(p, root).map_err(|why| {
+        format!(
+            "{} can't be installed in {}: {why}.",
+            p.name,
+            root.display()
+        )
+    })?;
+    windows_install::check_shortcuts(p, root, desktop_shortcut)
+}
 /// Whether a copy of the application runs from `root`, which installing closes.
 pub fn running(root: &Path) -> bool {
     !windows_install::running_under(root).is_empty()
@@ -120,16 +142,7 @@ fn install_payload(
         p.version,
         root.display()
     ));
-    // Before anything is closed or replaced: the folder is replaced whole, so it must be nothing
-    // but this install, and the shortcuts must be free to write.
-    windows_install::check_install_target(p, root).map_err(|why| {
-        format!(
-            "{} can't be installed in {}: {why}.",
-            p.name,
-            root.display()
-        )
-    })?;
-    windows_install::check_shortcuts(p, root, desktop_shortcut)?;
+    preflight(p, root, desktop_shortcut)?;
     if !windows_install::close_running(root, CLOSE_GRACE) {
         return Err(format!(
             "{} is still running. Close it and try again.",
@@ -251,6 +264,7 @@ fn beside(root: &Path, what: &str) -> PathBuf {
 }
 
 /// Starts the installed application in the user's home folder, as its Start menu shortcut does.
+/// The exit code is 0, or 3 when the application is installed but could not be started.
 ///
 /// Without `__COMPAT_LAYER`: Windows starts a setup program with its Program Compatibility
 /// Assistant's layer in the environment, and a process created with that variable runs with the
@@ -270,7 +284,7 @@ pub fn launch(root: &Path, args: &Args) -> i32 {
         }
         Err(e) => {
             args.log(&format!("couldn't start {}: {e}", exe.display()));
-            1
+            3
         }
     }
 }
@@ -344,7 +358,7 @@ mod tests {
 
         let refused = install_payload(&payload, &p, &documents, false, &|_| {});
 
-        assert!(refused.is_err());
+        assert!(refused.is_err_and(|why| why.contains("holds files that are not")));
         assert_eq!(
             std::fs::read_to_string(documents.join("thesis.txt")).unwrap(),
             "years of work"
@@ -358,6 +372,14 @@ mod tests {
     fn dir_is_absolute_and_spelled_as_windows_spells_it() {
         let p = Product::release("1.2.3");
         assert_eq!(folder(Some(Path::new(r"relative\app")), &p), None);
+        for odd in [
+            r"\\?\C:\Apps\Rune",
+            r"\\.\C:\Apps\Rune",
+            r"\Apps\Rune",
+            r"C:Apps\Rune",
+        ] {
+            assert_eq!(folder(Some(Path::new(odd)), &p), None, "{odd}");
+        }
         assert_eq!(
             folder(Some(Path::new(r"C:/Apps\.\CodeNomad\..\Rune\")), &p),
             Some(PathBuf::from(r"C:\Apps\Rune"))

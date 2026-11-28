@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::{
     FOLDERID_Desktop, FOLDERID_Documents, FOLDERID_Downloads, FOLDERID_LocalAppData,
-    FOLDERID_Profile, FOLDERID_ProgramFiles, FOLDERID_Programs, FOLDERID_RoamingAppData,
-    FOLDERID_UserProgramFiles, FOLDERID_Windows, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    FOLDERID_Music, FOLDERID_Pictures, FOLDERID_Profile, FOLDERID_ProgramFiles,
+    FOLDERID_ProgramFilesX86, FOLDERID_Programs, FOLDERID_Public, FOLDERID_RoamingAppData,
+    FOLDERID_SkyDrive, FOLDERID_UserProgramFiles, FOLDERID_Videos, FOLDERID_Windows,
+    KF_FLAG_DEFAULT, SHGetKnownFolderPath,
 };
 use windows::core::GUID;
 
@@ -50,7 +52,8 @@ pub fn taskbar_pins() -> Option<PathBuf> {
 }
 
 /// The folders an uninstall must never delete as a whole: the profile, the application data
-/// roots, the program folders, Windows, the Desktop, Documents, Downloads and the Start menu.
+/// roots, the program folders, Windows, the Start menu, OneDrive, the public profile and the
+/// user's Desktop, Documents, Downloads, Pictures, Music and Videos.
 pub fn protected() -> Vec<PathBuf> {
     [
         &FOLDERID_Profile,
@@ -58,7 +61,13 @@ pub fn protected() -> Vec<PathBuf> {
         &FOLDERID_RoamingAppData,
         &FOLDERID_UserProgramFiles,
         &FOLDERID_ProgramFiles,
+        &FOLDERID_ProgramFilesX86,
         &FOLDERID_Windows,
+        &FOLDERID_Public,
+        &FOLDERID_SkyDrive,
+        &FOLDERID_Pictures,
+        &FOLDERID_Music,
+        &FOLDERID_Videos,
         &FOLDERID_Desktop,
         &FOLDERID_Documents,
         &FOLDERID_Downloads,

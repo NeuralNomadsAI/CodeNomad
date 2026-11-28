@@ -17,11 +17,12 @@ use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{IShellLinkW, SHStrDupW, ShellLink};
 use windows::core::{HSTRING, Interface};
 
-/// This thread's stay in COM, left when dropped. Declare it before any shell link, so the links
-/// are released first.
-struct Com(bool);
+/// This thread's stay in COM, left when dropped. Declare it before any COM or Windows Runtime
+/// object, so they are released first. Every call into either holds one: a thread that relies on
+/// another thread's stay loses it when that thread leaves.
+pub(crate) struct Com(bool);
 
-fn com() -> Com {
+pub(crate) fn com() -> Com {
     // SAFETY: joins this thread to COM; a thread already in COM in the other model keeps its
     // mode (the call fails and nothing is left later), and shell links work in both.
     Com(unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok())

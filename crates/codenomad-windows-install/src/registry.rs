@@ -84,6 +84,7 @@ pub fn remove_identities(p: &Product) -> Vec<String> {
         };
         for name in names.filter(ours).collect::<Vec<_>>() {
             if parent == IDENTITIES {
+                let _com = crate::shortcut::com();
                 let id = HSTRING::from(&name);
                 _ = ToastNotificationManager::History().and_then(|h| h.ClearWithId(&id));
             }
