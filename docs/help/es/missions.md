@@ -120,7 +120,7 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa: nada continúa ni se lanza hasta que la reanude; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
-Un símbolo de pausa en el color de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
+Un reloj de arena en el color de acento significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
 
 Seleccionar o pulsar/barrer iconos verdes confirma resultados; el menú del chevrón ofrece **Marcar como leído**. Para **Ejecución correcta por revisar**, selecciona explícitamente la fila recurrente en la ventana activa o usa **Marcar como leído**. El icono vuelve a espera si la programación sigue activa; en caso contrario, a neutro. Los resultados nuevos que llegan a una fila ya seleccionada permanecen sin leer. Las tareas retiradas conservan historial.
 

@@ -137,7 +137,7 @@ The flag shows the Mission's state; its chevron carries its tasks' attention sta
 | Orange pause symbol | Paused: nothing continues or launches until you resume it. |
 | Orange warning triangle | Interrupted, with an action to continue. |
 | Green | A Mission, task or successful scheduled run awaits review in this window. |
-| Accent pause symbol with a small static neutral line below | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
+| Accent hourglass | **Waiting for scheduled run**: the next wake is confirmed. The accent follows your palette. |
 | Accent icon alone | Prepared Mission or a task that has not started. |
 | Neutral | Reviewed completion, stopped schedule or **State unconfirmed**; read the status text. |
 
