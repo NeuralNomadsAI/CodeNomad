@@ -4,10 +4,11 @@ use rune_theme_codenomad::git_panel::ButtonLook::Flat;
 pub(super) fn view(s: &State, ui: &Ui) -> El {
     let name = t("gitPanel.filter");
     let mut body = theme::saved_scroll::<State>("git-history-list", &ui.history_scroll).child(
-        theme::header().child(
+        theme::header().key("git-filter-bar").child(
             layout::hinted_field(&ui.filter, name)
                 .label(name)
                 .input_mode(rune::InputMode::Search)
+                .autofill(rune::Autofill::Off)
                 .on_edit(edit(s, |ui| &mut ui.filter))
                 .build(&field_kit(dark()))
                 .key("git-filter"),
@@ -39,11 +40,17 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         let content = col()
             .full_width()
             .separate(Space::Xs)
-            .child(text(subject).text_role(TextRole::Button).wrap_anywhere())
+            .child(
+                text(subject)
+                    .text_role(TextRole::Button)
+                    .wrap_anywhere()
+                    .content_direction(),
+            )
             .child(if refs.is_empty() {
                 el()
             } else {
-                theme::history_refs(refs)
+                let tooltip = refs.clone();
+                theme::history_refs(refs).literal_direction().help(tooltip)
             })
             .child(theme::history_meta(author, short));
         body = body.child(
@@ -66,7 +73,8 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         && ui.history.page.is_some()
         && ui.requests.slot(Lane::History).error.is_none()
     {
-        body = body.child(theme::note(t("gitPanel.emptyHistory"), "status"));
+        body =
+            body.child(theme::note(t("gitPanel.emptyHistory"), "status").key("git-history-empty"));
     }
     if ui.history.page.as_ref().is_some_and(|page| page.has_more) {
         body = body.child(
@@ -77,11 +85,13 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
                 ui.loading() || !ui.online,
                 |ui, _| ui.more(),
             )
+            .full_width()
             .key("git-history-more"),
         );
     }
     if ui.loading() {
-        body = body.child(theme::note(t("instanceInfo.loading"), "status"));
+        body =
+            body.child(theme::note(t("instanceInfo.loading"), "status").key("git-history-loading"));
     }
     body
 }

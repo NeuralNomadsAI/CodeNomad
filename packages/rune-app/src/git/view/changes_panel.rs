@@ -14,27 +14,26 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
         }));
     let status = ui.requests.slot(Lane::Changes);
     if ui.changes.count() == 0 && (ui.loading() || ui.changes.ready() && status.error.is_none()) {
-        body = body.child(theme::note(
-            t(if ui.loading() {
-                "instanceInfo.loading"
-            } else {
-                "instanceShell.gitChanges.empty"
-            }),
-            "status",
-        ));
+        let (key, label) = if ui.loading() {
+            ("git-changes-loading", "instanceInfo.loading")
+        } else {
+            ("git-changes-empty", "instanceShell.gitChanges.empty")
+        };
+        body = body.child(theme::note(t(label), "status").key(key));
     }
     if ui.backend.session.is_empty() {
-        body = body.child(theme::note(
-            t("instanceShell.gitChanges.noSessionSelected"),
-            "status",
-        ));
+        body = body.child(
+            theme::note(t("instanceShell.gitChanges.noSessionSelected"), "status")
+                .key("git-no-session"),
+        );
     }
-    for section in SECTIONS {
+    for (pos, section) in SECTIONS.iter().copied().enumerate() {
+        let last = pos + 1 == SECTIONS.len();
         let i = changes::index(section);
         let count = ui.changes.section(section).count();
         let open = ui.changes.open[i];
         let name = section_label(section);
-        let mut group = theme::section()
+        let mut group = theme::section(last)
             .key(section.key())
             .role("group")
             .label(name)
@@ -73,6 +72,7 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
                 );
                 group = group.child(
                     layout::action_row()
+                        .key(format!("git-hidden-{}", section.key()))
                         .pad(Space::Sm)
                         .inset_surface()
                         .child(theme::count(label))
@@ -102,7 +102,10 @@ pub(super) fn view(s: &State, ui: &Ui, width: f32, overlay: &mut Vec<El>) -> El 
 }
 
 fn commit_box(s: &State, ui: &Ui) -> El {
-    let mut group = theme::context().role("group").label(t("gitPanel.actions"));
+    let mut group = theme::context()
+        .key("git-commit-box")
+        .role("group")
+        .label(t("gitPanel.actions"));
     for section in SECTIONS {
         let actions = ui.changes.action_rows(section);
         if let Some(first) = actions.first() {
@@ -132,6 +135,7 @@ fn commit_box(s: &State, ui: &Ui) -> El {
                     !ui.can_change_index(),
                     move |ui, tx| ui.move_paths(&target, tx.focused()),
                 )
+                .full_width()
                 .key(format!("git-bulk-{}", section.key())),
             );
         }

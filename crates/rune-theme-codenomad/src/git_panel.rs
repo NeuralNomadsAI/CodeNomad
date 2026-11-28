@@ -107,8 +107,17 @@ pub fn saved_scroll<S: 'static>(key: &'static str, bookmark: &ScrollBookmark) ->
     bookmark.apply::<S>(scroll(), key)
 }
 
-pub fn section() -> El {
-    col().full_width().items_stretch()
+pub fn section(last: bool) -> El {
+    let group = col().full_width().items_stretch();
+    if last {
+        group
+    } else {
+        let t = tokens(dark());
+        let border = t.metric("gitContext", "borderBottomWidth").px();
+        group
+            .border_sides([0.0, 0.0, border, 0.0], t.color("border-divider"))
+            .border_layout()
+    }
 }
 
 pub fn file_row(selected: bool) -> El {
@@ -227,6 +236,13 @@ pub fn count(label: String) -> El {
 
 pub fn branch(name: String) -> El {
     let t = tokens(dark());
+    let size = t.number("font-size-sm").px();
+    let font = rune::TextStyle::new(size, t.number("font-weight-bold").px())
+        .lh(size * t.number("line-height-normal").px());
+    let mut label = text(name.clone()).font(font).truncate().content_direction();
+    if !name.is_empty() {
+        label = label.help(name);
+    }
     row()
         .remaining()
         .items_center()
@@ -236,17 +252,36 @@ pub fn branch(name: String) -> El {
                 .color(t.color("text-muted"))
                 .a11y_hidden(),
         )
-        .child(text(name).text_role(TextRole::Small).truncate())
+        .child(label)
 }
 
 pub fn chrome() -> El {
+    let t = tokens(dark());
+    let border = t.metric("readerHeader", "borderBottomWidth").px();
     row()
         .full_width()
         .items_center()
         .flex_wrap()
         .separate(Space::Xs)
         .pad(Space::Sm)
-        .fill(tokens(dark()).color("surface-secondary"))
+        .fill(t.color("surface-chrome"))
+        .border_sides([0.0, 0.0, border, 0.0], t.color("border-divider"))
+        .border_layout()
+}
+
+pub fn diff_notice(label: impl Into<String>) -> El {
+    let t = tokens(dark());
+    let border = t.metric("gitContext", "borderBottomWidth").px();
+    text(label)
+        .role("status")
+        .text_role(TextRole::Label)
+        .color(t.color("text-secondary"))
+        .full_width()
+        .px(t.space(Space::Md).px())
+        .py(t.space(Space::Sm).px())
+        .border_sides([0.0, 0.0, border, 0.0], t.color("border-base"))
+        .border_layout()
+        .wrap()
 }
 
 pub fn note(label: impl Into<String>, role: &'static str) -> El {
@@ -333,5 +368,94 @@ mod tests {
         }
         assert!(!rt.state.hidden);
         assert_eq!(rt.state.bookmark.0.get(), (offset, false));
+    }
+
+    #[test]
+    fn chrome_branch_section_and_diff_notice_follow_light_and_dark_tokens() {
+        fn find_node<'a>(node: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+            if node.get("key").and_then(|v| v.as_str()) == Some(key) {
+                return Some(node);
+            }
+            node.get("children")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .find_map(|child| find_node(child, key))
+        }
+
+        for dark in [false, true] {
+            let mut rt = rune::Runtime::new(
+                dark,
+                |&dark, cx| {
+                    crate::layout::render_with_dark(cx, dark, |_| {
+                        col()
+                            .full_width()
+                            .child(chrome().key("chrome"))
+                            .child(branch("feat/rust-server".into()).key("branch"))
+                            .child(diff_notice("Whitespace only").key("notice"))
+                            .child(section(false).key("section-mid"))
+                            .child(section(true).key("section-last"))
+                    })
+                },
+                (420.0, 280.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+            let t = tokens(dark);
+            let elements = rt.elements();
+
+            let chrome_el = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("chrome"))
+                .expect("chrome element");
+            assert_eq!(chrome_el.fill, t.color("surface-chrome"));
+            assert_eq!(chrome_el.border_color, Some(t.color("border-divider")));
+
+            let branch_el = elements
+                .iter()
+                .find(|el| el.help.as_deref() == Some("feat/rust-server"))
+                .expect("branch title with tooltip for truncated names");
+            assert_eq!(t.number("font-size-sm").px(), 12.0);
+            assert_eq!(t.number("font-weight-bold").px(), 700.0);
+            assert!(
+                branch_el.rect[3]
+                    >= t.number("font-size-sm").px() * t.number("line-height-normal").px() - 0.5,
+                "branch title height must match 12px line height"
+            );
+
+            let notice_el = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("notice"))
+                .expect("diff_notice element");
+            assert_eq!(t.text(TextRole::Label).size, t.number("font-size-sm").px());
+            assert_eq!(notice_el.text_color, Some(t.color("text-secondary")));
+            assert_eq!(notice_el.border_color, Some(t.color("border-base")));
+            let expected_notice_min_h =
+                t.text(TextRole::Label).line_px() + 2.0 * t.space(Space::Sm).px();
+            assert!(
+                notice_el.rect[3] >= expected_notice_min_h,
+                "diff_notice height {} must match 12px TextRole::Label + padding ({expected_notice_min_h})",
+                notice_el.rect[3]
+            );
+            let a11y = rt.accessibility_json();
+            let notice_node = find_node(&a11y, "notice").expect("notice a11y node");
+            assert_eq!(notice_node["role"], "status");
+            assert_eq!(notice_node["name"], "Whitespace only");
+
+            let mid_section = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("section-mid"))
+                .expect("non-last section");
+            assert_eq!(mid_section.border_color, Some(t.color("border-divider")));
+
+            let last_section = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("section-last"))
+                .expect("last section");
+            assert_eq!(
+                last_section.border_color, None,
+                "last section must omit bottom border matching Solid last:border-b-0"
+            );
+        }
     }
 }
