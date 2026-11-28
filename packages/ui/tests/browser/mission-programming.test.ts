@@ -128,3 +128,20 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     assert.deepEqual(writes.slice(0, 2), ["DELETE /missions/calendars/cal_review", "DELETE /missions/C"])
   } finally { await page.close() }
 })
+
+test("a programmed Mission without tasks unfolds from its chevron like any other", async () => {
+  const { page, state, open } = await setup()
+  try {
+    state.missions = [{ ...mission("A", "Daily review", "prepared"), tasks: [] } as MissionMap, { ...mission("B", "Other work"), tasks: [] } as MissionMap]
+    await open()
+    const chevron = (key: string) => page.locator(`.mission-row[data-mission-key="mission:${key}"] .session-item-expander:not(.session-item-expander--spacer)`)
+    await chevron("A").waitFor()
+    assert.equal(await chevron("B").count(), 0, "an ordinary Mission without tasks has none")
+    // The chevron selects it and shows its programming; folding hides it again.
+    await chevron("A").click()
+    await page.locator('.mission-row[data-mission-key="mission:A"] .mission-row-select[aria-current=true]').waitFor()
+    assert.match(await facts(page), /Launch when Every day · 09:00 · UTC/)
+    await chevron("A").click()
+    await missionDetail(page).locator(".mission-schedule-facts").waitFor({ state: "hidden" })
+  } finally { await page.close() }
+})
