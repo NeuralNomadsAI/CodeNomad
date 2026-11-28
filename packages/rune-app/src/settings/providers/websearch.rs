@@ -10,6 +10,8 @@ use codenomad_client::{
 use rune::Waker;
 
 mod view;
+#[cfg(test)]
+pub(super) use view::API_KEY_AUTOFILL;
 pub(super) use view::view;
 
 type ScopeKey = (String, String, Option<String>);
@@ -504,5 +506,23 @@ impl WebSearch {
     #[cfg(test)]
     pub(super) fn is_idle(&self) -> bool {
         !self.busy() && !self.trailing
+    }
+
+    #[cfg(test)]
+    pub(super) fn seed_for_view_test(
+        &mut self,
+        expanded: bool,
+        snapshot: Option<Snapshot>,
+        active_id: &str,
+        loading: bool,
+    ) {
+        self.expanded = expanded;
+        self.snapshot = snapshot;
+        self.active_id = active_id.to_owned();
+        self.read_flight = loading.then(|| {
+            let (cancel, _) = bounded(1);
+            let (_, rx) = bounded(1);
+            (cancel, rx)
+        });
     }
 }
