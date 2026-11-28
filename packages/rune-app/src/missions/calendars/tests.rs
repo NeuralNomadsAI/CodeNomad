@@ -436,15 +436,15 @@ fn ui_renders_calendars_pre_first_launch_history_and_inline_editor() {
 #[test]
 fn hide_cancels_calendar_read_and_ignores_stale_completion() {
     let mut panel = test_panel("http://127.0.0.1:1/");
-    let (cancel, cancelled) = bounded(1);
+    let (cancel, cancelled) = CancelToken::new();
     panel.calendars.active_read = Some((7, cancel));
     panel.calendars.owed_refresh = true;
     panel.calendars.cancel();
-    assert!(cancelled.is_closed());
+    assert!(cancelled.is_cancelled());
     assert!(!panel.calendars.owed_refresh);
 
     // A stale completion for serial 7 is discarded.
-    let (cancel2, _) = bounded(1);
+    let (cancel2, _) = CancelToken::new();
     panel.calendars.active_read = Some((8, cancel2));
     panel
         .calendars
@@ -702,120 +702,169 @@ fn http_crud_pause_resume_delete_and_auth_expired_round_trip() {
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
-    let mut panel = test_panel("http://127.0.0.1:1/");
-    panel
-        .calendars
-        .fixture_set_entries(vec![decode_calendar(calendar_json(
-            "cal_a", "Original", false, None, None, None,
-        ))]);
+    crate::platform::block_on(async {
+        let http = crate::files::test_http::Http::new().await;
+        let mut backend = http.backend.clone();
+        backend.workspace = "ws_1".into();
+        let (wake_tx, wake_rx) = bounded(16);
+        let mut panel = Panel::new(
+            backend,
+            Some("proj_1".into()),
+            Reads::default(),
+            Arc::new(move || {
+                let _ = wake_tx.try_send(());
+            }),
+        );
+        panel
+            .calendars
+            .fixture_set_entries(vec![decode_calendar(calendar_json(
+                "cal_a", "Original", false, None, None, None,
+            ))]);
 
-    // Simulate an in-flight GET started before a mutation.
-    let (cancel_read, read_cancelled) = bounded(1);
-    panel.calendars.active_read = Some((1, cancel_read));
-    panel.calendars.owed_refresh = true;
-    panel.calendars.serial = 1;
+        // Simulate an in-flight GET started before a mutation.
+        let (cancel_read, read_cancelled) = CancelToken::new();
+        panel.calendars.active_read = Some((1, cancel_read));
+        panel.calendars.owed_refresh = true;
+        panel.calendars.serial = 1;
 
-    // Starting a mutation cancels the older GET and clears pre-mutation owed_refresh.
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
-    panel.toggle_calendar_pause("cal_a");
-    assert!(read_cancelled.is_closed());
-    assert!(!panel.calendars.busy_read());
-    assert!(!panel.calendars.owed_refresh);
-    let mutation_serial = panel.calendars.active_mutation.expect("mutation active");
+        // Starting a mutation cancels the older GET, clears pre-mutation owed_refresh, and holds
+        // the real POST open on the fixture server so no transport error can race completion.
+        panel.toggle_calendar_pause("cal_a");
+        assert!(read_cancelled.is_cancelled());
+        assert!(!panel.calendars.busy_read());
+        assert!(!panel.calendars.owed_refresh);
+        assert!(panel.calendars.busy_mutation());
+        let pause_req = http.accept().await;
+        assert!(
+            pause_req
+                .header
+                .starts_with("POST /api/workspaces/ws_1/missions/calendars/cal_a/pause "),
+            "unexpected mutation request: {}",
+            pause_req.header
+        );
 
-    // A stale GET completion from serial 1 cannot overwrite anything.
-    panel
-        .calendars
-        .out
-        .try_send(Completion {
-            kind: OpKind::Read,
-            serial: 1,
-            outcome: Ok(CalendarOutcome::Ok(vec![decode_calendar(calendar_json(
-                "cal_a",
-                "Stale Before Mutation",
-                false,
-                None,
-                None,
-                None,
-            ))])),
-        })
-        .unwrap();
+        // A stale GET completion from serial 1 cannot overwrite anything while the mutation is active.
+        panel
+            .calendars
+            .out
+            .try_send(Completion {
+                kind: OpKind::Read,
+                serial: 1,
+                outcome: Ok(CalendarOutcome::Ok(vec![decode_calendar(calendar_json(
+                    "cal_a",
+                    "Stale Before Mutation",
+                    false,
+                    None,
+                    None,
+                    None,
+                ))])),
+            })
+            .unwrap();
 
-    // A passive refresh arriving while the mutation is in flight does NOT start a concurrent GET.
-    panel
-        .calendars
-        .refresh(&panel.backend, &panel.reads, &panel.wake);
-    assert!(!panel.calendars.busy_read());
-    assert!(panel.calendars.owed_refresh);
+        // A passive refresh arriving while the mutation is in flight does NOT start a concurrent GET.
+        panel
+            .calendars
+            .refresh(&panel.backend, &panel.reads, &panel.wake);
+        assert!(!panel.calendars.busy_read());
+        assert!(panel.calendars.owed_refresh);
+        let (changed, mutated) =
+            panel
+                .calendars
+                .poll(true, &panel.backend, &panel.reads, &panel.wake);
+        assert!(!changed);
+        assert!(!mutated);
+        assert_eq!(panel.calendars.entries[0].title, "Original");
 
-    // Mutation finishes with the authoritative paused snapshot, then dispatches the deferred read.
-    panel
-        .calendars
-        .out
-        .try_send(Completion {
-            kind: OpKind::Mutate,
-            serial: mutation_serial,
-            outcome: Ok(CalendarOutcome::Ok(vec![decode_calendar(calendar_json(
-                "cal_a", "Original", true, None, None, None,
-            ))])),
-        })
-        .unwrap();
-    let (changed, mutated) = panel
-        .calendars
-        .poll(true, &panel.backend, &panel.reads, &panel.wake);
-    assert!(changed);
-    assert!(mutated);
-    assert!(panel.calendars.entries[0].paused);
-    assert!(
-        panel.calendars.busy_read(),
-        "deferred refresh runs after mutation settles"
-    );
-    panel.calendars.cancel();
+        // Mutation settles with the authoritative paused snapshot, then dispatches the deferred GET.
+        while wake_rx.try_recv().is_ok() {}
+        pause_req
+            .reply(
+                200,
+                json!({
+                    "calendars": [calendar_json("cal_a", "Original", true, None, None, None)]
+                }),
+            )
+            .await;
+        crate::files::test_http::wait(wake_rx.recv()).await.unwrap();
+        let (changed, mutated) =
+            panel
+                .calendars
+                .poll(true, &panel.backend, &panel.reads, &panel.wake);
+        assert!(changed);
+        assert!(mutated);
+        assert!(panel.calendars.entries[0].paused);
+        assert!(
+            panel.calendars.busy_read(),
+            "deferred refresh runs after mutation settles"
+        );
+        let deferred = http.accept().await;
+        assert!(
+            deferred
+                .header
+                .starts_with("GET /api/workspaces/ws_1/missions/calendars "),
+            "unexpected deferred refresh request: {}",
+            deferred.header
+        );
+        panel.calendars.cancel();
+        deferred.disconnected().await;
 
-    // A 404 calendar-missing mutation while hidden does not start a background read.
-    panel.calendars.active_mutation = Some(98);
-    panel
-        .calendars
-        .out
-        .try_send(Completion {
-            kind: OpKind::Mutate,
-            serial: 98,
-            outcome: Ok(CalendarOutcome::Missing),
-        })
-        .unwrap();
-    let (changed, mutated) = panel
-        .calendars
-        .poll(false, &panel.backend, &panel.reads, &panel.wake);
-    assert!(changed);
-    assert!(!mutated);
-    assert!(!panel.calendars.busy_read());
+        // A 404 calendar-missing mutation while hidden does not start a background read.
+        panel.calendars.active_mutation = Some(98);
+        panel
+            .calendars
+            .out
+            .try_send(Completion {
+                kind: OpKind::Mutate,
+                serial: 98,
+                outcome: Ok(CalendarOutcome::Missing),
+            })
+            .unwrap();
+        let (changed, mutated) =
+            panel
+                .calendars
+                .poll(false, &panel.backend, &panel.reads, &panel.wake);
+        assert!(changed);
+        assert!(!mutated);
+        assert!(!panel.calendars.busy_read());
+        http.quiet().await;
 
-    // A 404 calendar-missing mutation while visible schedules a follow-up resync read.
-    panel.calendars.active_mutation = Some(99);
-    panel
-        .calendars
-        .out
-        .try_send(Completion {
-            kind: OpKind::Mutate,
-            serial: 99,
-            outcome: Ok(CalendarOutcome::Missing),
-        })
-        .unwrap();
-    let (changed, mutated) = panel
-        .calendars
-        .poll(true, &panel.backend, &panel.reads, &panel.wake);
-    assert!(changed);
-    assert!(!mutated);
-    assert_eq!(
-        panel.calendars.feedback,
-        Some("missions.scheduleList.conflict")
-    );
-    assert!(
-        panel.calendars.busy_read(),
-        "Missing triggers follow-up read while visible"
-    );
-    panel.calendars.cancel();
+        // A 404 calendar-missing mutation while visible schedules a follow-up resync read.
+        panel.calendars.active_mutation = Some(99);
+        panel
+            .calendars
+            .out
+            .try_send(Completion {
+                kind: OpKind::Mutate,
+                serial: 99,
+                outcome: Ok(CalendarOutcome::Missing),
+            })
+            .unwrap();
+        let (changed, mutated) =
+            panel
+                .calendars
+                .poll(true, &panel.backend, &panel.reads, &panel.wake);
+        assert!(changed);
+        assert!(!mutated);
+        assert_eq!(
+            panel.calendars.feedback,
+            Some("missions.scheduleList.conflict")
+        );
+        assert!(
+            panel.calendars.busy_read(),
+            "Missing triggers follow-up read while visible"
+        );
+        let resync = http.accept().await;
+        assert!(
+            resync
+                .header
+                .starts_with("GET /api/workspaces/ws_1/missions/calendars "),
+            "unexpected resync request: {}",
+            resync.header
+        );
+        panel.calendars.cancel();
+        resync.disconnected().await;
+        http.quiet().await;
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -823,7 +872,7 @@ fn mutation_cancels_inflight_read_and_defers_passive_refresh_until_settled() {
 fn passive_refresh_does_not_flicker_loading_and_recovers_after_transient_first_error() {
     let mut panel = test_panel("http://127.0.0.1:1/");
     // While an initial/passive read is running with no entries, section does not flicker into view.
-    let (cancel, _rx) = bounded(1);
+    let (cancel, _rx) = CancelToken::new();
     panel.calendars.active_read = Some((1, cancel));
     let mut rt = Runtime::new(
         (panel, TextEdit::new("")),
@@ -852,7 +901,7 @@ fn passive_refresh_does_not_flicker_loading_and_recovers_after_transient_first_e
                 None,
                 None,
             ))]);
-        let (cancel2, _rx2) = bounded(1);
+        let (cancel2, _rx2) = CancelToken::new();
         s.0.calendars.active_read = Some((2, cancel2));
         tx.instant();
     });
@@ -883,7 +932,7 @@ fn passive_refresh_does_not_flicker_loading_and_recovers_after_transient_first_e
     // A transient initial read error keeps the empty section hidden without permanently blocking
     // subsequent passive recovery reads.
     let mut recovering = test_panel("http://127.0.0.1:1/");
-    recovering.calendars.active_read = Some((3, bounded(1).0));
+    recovering.calendars.active_read = Some((3, CancelToken::new().0));
     recovering
         .calendars
         .out
@@ -902,8 +951,6 @@ fn passive_refresh_does_not_flicker_loading_and_recovers_after_transient_first_e
     assert!(recovering.calendars.unavailable);
     assert!(!recovering.calendars.failed);
 
-    let rt_tokio = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt_tokio.enter();
     recovering
         .calendars
         .refresh(&recovering.backend, &recovering.reads, &recovering.wake);

@@ -1,4 +1,4 @@
-use super::detail::read_window;
+use super::detail::{CancelToken, read_window};
 use crate::{
     platform::{self, reads::Reads},
     strings::t,
@@ -27,7 +27,7 @@ pub(super) struct Observation {
     current_end: Option<u64>,
     revision: Option<u64>,
     seen_revision: Option<u64>,
-    active: Option<(u64, Receiver<Result<Activity>>)>,
+    active: Option<(u64, CancelToken, Receiver<Result<Activity>>)>,
     pending: Option<u64>,
     failed: Option<u64>,
     due: Option<f64>,
@@ -114,6 +114,12 @@ impl Observation {
         }
     }
 
+    pub fn mark_cancel(&self) {
+        if let Some((_, cancel, _)) = &self.active {
+            cancel.mark_aborted();
+        }
+    }
+
     pub fn cancel(&mut self) {
         self.active = None;
         self.pending = None;
@@ -150,7 +156,7 @@ impl Observation {
         if let Some((offset, result)) = self
             .active
             .as_ref()
-            .and_then(|(offset, inbox)| inbox.try_recv().ok().map(|result| (*offset, result)))
+            .and_then(|(offset, _, inbox)| inbox.try_recv().ok().map(|result| (*offset, result)))
         {
             self.active = None;
             self.settled_at = Some(now);
@@ -224,13 +230,13 @@ impl Observation {
             .map(|page| page.window.order.as_str());
         let read = backend.mission_activity(project, id, offset, order);
         let (out, inbox) = bounded(1);
-        self.active = Some((offset, inbox));
+        let (cancel, signal) = CancelToken::new();
+        self.active = Some((offset, cancel, inbox));
         let reads = reads.clone();
         let wake = wake.clone();
         platform::spawn(async move {
-            let (_cancel, alive) = bounded(1);
             let read = async {
-                read_window(read?, &reads, &alive)
+                read_window(read?, &reads, &signal)
                     .await
                     .ok_or("cancelled Mission observation")?
             };
@@ -239,7 +245,8 @@ impl Observation {
                     .await
                     .ok_or("Mission observation timed out")?
             };
-            if let Some(result) = codenomad_client::runtime::until_closed(&out, task).await
+            if let Some(result) = signal.run(task).await
+                && !signal.is_cancelled()
                 && out.send(result).await.is_ok()
             {
                 wake();
@@ -449,7 +456,7 @@ mod tests {
     fn lifecycle_burst_owes_one_observation_after_settlement_and_hiding_revokes_it() {
         let mut state = Observation::default();
         let (send, inbox) = bounded(1);
-        state.active = Some((0, inbox));
+        state.active = Some((0, CancelToken::new().0, inbox));
         state.invalidate(1.0);
         state.invalidate(2.0);
         send.try_send(Ok(page(7, 100.0, 0, 2))).ok().unwrap();
@@ -473,7 +480,7 @@ mod tests {
 
         // Re-adopting at revision 3 restores the actor; an offset-0 failure clears it again.
         let (send, inbox) = bounded(1);
-        state.active = Some((0, inbox));
+        state.active = Some((0, CancelToken::new().0, inbox));
         let mut p = page(3, 100.0, 0, 1);
         p.actors.push(codenomad_client::missions::Actor {
             session_id: "ses_worker".into(),
@@ -487,7 +494,7 @@ mod tests {
         assert!(state.includes_actor("ses_worker"));
 
         let (send2, inbox2) = bounded(1);
-        state.active = Some((0, inbox2));
+        state.active = Some((0, CancelToken::new().0, inbox2));
         send2.try_send(Err("network".into())).ok().unwrap();
         assert!(state.settle(Some(3), 2.0, &wake));
         assert!(!state.includes_actor("ses_worker"));
