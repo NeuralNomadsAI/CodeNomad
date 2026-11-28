@@ -113,6 +113,81 @@ fn is_qualification_arg(arg: &str) -> bool {
 }
 
 #[cfg(any(target_os = "windows", test))]
+fn is_drive_relative(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && !matches!(bytes.get(2), Some(b'/' | b'\\'))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn is_absolute_lexical(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\');
+    let unc = raw.starts_with("\\\\") || raw.starts_with("//");
+    let posix = !cfg!(windows) && raw.starts_with('/');
+    drive || unc || posix
+}
+
+/// Normalizes `CLI_CONFIG` using the same directory/`config.json` -> `config.yaml` and default-path
+/// collapse rules as `host::config::resolve_desktop_config_path`, returning `None` when a relative
+/// or tilde path cannot be anchored lexically.
+#[cfg(any(target_os = "windows", test))]
+fn normalize_cli_config(raw: &str, cwd: Option<&str>, home: Option<&str>) -> Option<String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Some(String::new());
+    }
+    let home = home
+        .map(str::trim)
+        .filter(|h| !h.is_empty() && is_absolute_lexical(h));
+    let expanded = if value == "~" {
+        home?.to_owned()
+    } else if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        format!("{}/{rest}", home?)
+    } else if is_drive_relative(value) {
+        return None;
+    } else if is_absolute_lexical(value) {
+        value.to_owned()
+    } else {
+        let dir = cwd
+            .map(str::trim)
+            .filter(|c| !c.is_empty() && is_absolute_lexical(c))?;
+        format!("{dir}/{value}")
+    };
+    let mut normalized = normalize_lexical_path(&expanded);
+    let leaf = normalized.rsplit('/').next().unwrap_or("");
+    let ext = leaf
+        .rsplit_once('.')
+        .filter(|(stem, _)| !stem.is_empty())
+        .map(|(_, ext)| ext);
+    if ext.is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+        let prefix_len = normalized.len() - leaf.len();
+        normalized = format!("{}config.yaml", &normalized[..prefix_len]);
+    } else if !ext.is_some_and(|e| e.eq_ignore_ascii_case("yaml") || e.eq_ignore_ascii_case("yml"))
+    {
+        if !normalized.ends_with('/') {
+            normalized.push('/');
+        }
+        normalized.push_str("config.yaml");
+    }
+    if let Some(h) = home {
+        let default = normalize_lexical_path(&format!("{h}/.config/codenomad/config.yaml"));
+        if normalized == default {
+            return Some(String::new());
+        }
+    }
+    Some(normalized)
+}
+
+#[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
 struct ScopeInputs<'a> {
     args: &'a [String],
@@ -121,6 +196,10 @@ struct ScopeInputs<'a> {
     disabled: bool,
     direct_scoped: bool,
     profile: Option<&'a str>,
+    update_channel: Option<&'a str>,
+    cli_config: Option<&'a str>,
+    home: Option<&'a str>,
+    cwd: Option<&'a str>,
     host_root: Option<&'a str>,
     state_dir: Option<&'a str>,
     backend: Option<&'a str>,
@@ -141,7 +220,26 @@ fn resolve_scope_id(input: ScopeInputs<'_>) -> Option<String> {
     {
         return None;
     }
-    let profile_key = match input.profile.map(str::trim).filter(|p| !p.is_empty()) {
+    let root_key = input
+        .host_root
+        .filter(|v| !v.trim().is_empty())
+        .map(normalize_lexical_path)
+        .unwrap_or_default();
+    let raw_profile = input
+        .profile
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .or_else(|| {
+            if root_key.is_empty() {
+                input
+                    .update_channel
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+            } else {
+                None
+            }
+        });
+    let profile_key = match raw_profile {
         Some(raw) => {
             let valid = crate::host::profile_name(raw).ok()?;
             if matches!(valid.as_str(), "default" | "stable") {
@@ -152,11 +250,14 @@ fn resolve_scope_id(input: ScopeInputs<'_>) -> Option<String> {
         }
         None => String::from("default"),
     };
-    let root_key = input
-        .host_root
-        .filter(|v| !v.trim().is_empty())
-        .map(normalize_lexical_path)
-        .unwrap_or_default();
+    let config_key = if root_key.is_empty() {
+        match input.cli_config {
+            Some(raw) => normalize_cli_config(raw, input.cwd, input.home)?,
+            None => String::new(),
+        }
+    } else {
+        String::new()
+    };
     let state_key = input
         .state_dir
         .filter(|v| !v.trim().is_empty())
@@ -169,6 +270,7 @@ fn resolve_scope_id(input: ScopeInputs<'_>) -> Option<String> {
         .unwrap_or_default();
     let digest = fnv1a_128(&[
         ("profile", &profile_key),
+        ("config", &config_key),
         ("root", &root_key),
         ("state", &state_key),
         ("backend", &backend_key),
@@ -184,9 +286,21 @@ fn current_scope_id(allow_new_window: bool) -> Option<String> {
         .all(|key| super::setting(key).is_some());
     let disabled = super::setting("RUNE_DISABLE_SINGLE_INSTANCE").as_deref() == Some("1");
     let profile = super::setting("CODENOMAD_PROFILE");
+    let update_channel = super::setting("CODENOMAD_UPDATE_CHANNEL");
+    let cli_config = super::setting("CLI_CONFIG");
     let host_root = super::setting("RUNE_HOST_ROOT");
     let state_dir = super::setting("RUNE_STATE_DIR");
     let backend = super::setting("RUNE_BACKEND");
+    let home = super::setting("USERPROFILE")
+        .or_else(|| {
+            let drive = super::setting("HOMEDRIVE")?;
+            let path = super::setting("HOMEPATH")?;
+            Some(format!("{drive}{path}"))
+        })
+        .or_else(|| super::setting("HOME"));
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
     resolve_scope_id(ScopeInputs {
         args: &args,
         allow_new_window,
@@ -194,6 +308,10 @@ fn current_scope_id(allow_new_window: bool) -> Option<String> {
         disabled,
         direct_scoped,
         profile: profile.as_deref(),
+        update_channel: update_channel.as_deref(),
+        cli_config: cli_config.as_deref(),
+        home: home.as_deref(),
+        cwd: cwd.as_deref(),
         host_root: host_root.as_deref(),
         state_dir: state_dir.as_deref(),
         backend: backend.as_deref(),
@@ -468,5 +586,159 @@ mod tests {
             json!({"focusExistingWindowOnSecondLaunch": false}),
         );
         assert!(!should_focus_existing(&s));
+    }
+
+    #[test]
+    fn scope_id_aligns_with_update_channel_and_cli_config() {
+        let home = Some(r"C:\Users\Alice");
+        let base = resolve_scope_id(ScopeInputs {
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+
+        // CODENOMAD_UPDATE_CHANNEL acts as desktop profile fallback and matches CODENOMAD_PROFILE.
+        let dev_profile = resolve_scope_id(ScopeInputs {
+            profile: Some("dev"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        let dev_channel = resolve_scope_id(ScopeInputs {
+            update_channel: Some("DEV"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(dev_profile, dev_channel);
+        assert_ne!(dev_channel, base);
+        assert_eq!(
+            resolve_scope_id(ScopeInputs {
+                update_channel: Some("stable"),
+                home,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some(base.as_str())
+        );
+        assert_eq!(
+            resolve_scope_id(ScopeInputs {
+                profile: Some("   "),
+                update_channel: Some("dev"),
+                home,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some(dev_profile.as_str())
+        );
+        let beta_override = resolve_scope_id(ScopeInputs {
+            profile: Some("beta"),
+            update_channel: Some("dev"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(beta_override, dev_profile);
+        assert!(
+            resolve_scope_id(ScopeInputs {
+                update_channel: Some("../bad"),
+                home,
+                ..Default::default()
+            })
+            .is_none()
+        );
+
+        // Explicit CLI_CONFIG pointing at the default config collapses to the default scope.
+        for default_spelling in [
+            "~/.config/codenomad",
+            r"~\.config\codenomad\config.yaml",
+            r"C:\Users\Alice\.config\codenomad\config.json",
+            r"\\?\c:/users/alice/.config/codenomad/sub/../config.yaml",
+        ] {
+            assert_eq!(
+                resolve_scope_id(ScopeInputs {
+                    cli_config: Some(default_spelling),
+                    home,
+                    ..Default::default()
+                })
+                .as_deref(),
+                Some(base.as_str()),
+                "{default_spelling}"
+            );
+        }
+
+        // Distinct CLI_CONFIG directories isolate scopes while equivalent spellings share one scope.
+        let work_dir = resolve_scope_id(ScopeInputs {
+            cli_config: Some(r"D:\Work"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(work_dir, base);
+        for equivalent in [
+            r"D:\Work\",
+            r"d:/work/config.yaml",
+            r"D:\Work\config.json",
+            r"\\?\D:\Work\nested\..\config.yaml",
+        ] {
+            assert_eq!(
+                resolve_scope_id(ScopeInputs {
+                    cli_config: Some(equivalent),
+                    home,
+                    ..Default::default()
+                })
+                .as_deref(),
+                Some(work_dir.as_str()),
+                "{equivalent}"
+            );
+        }
+        assert_eq!(
+            resolve_scope_id(ScopeInputs {
+                cli_config: Some(r".\Work"),
+                cwd: Some(r"D:\"),
+                home,
+                ..Default::default()
+            })
+            .as_deref(),
+            Some(work_dir.as_str())
+        );
+        let custom_yml = resolve_scope_id(ScopeInputs {
+            cli_config: Some(r"D:\Work\custom.yml"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_ne!(custom_yml, work_dir);
+
+        // Unanchored relative/tilde or drive-relative CLI_CONFIG fails closed.
+        for bad in ["relative/config.yaml", "~/custom", "C:work"] {
+            assert!(
+                resolve_scope_id(ScopeInputs {
+                    cli_config: Some(bad),
+                    ..Default::default()
+                })
+                .is_none(),
+                "{bad}"
+            );
+        }
+
+        // Isolated trial roots ignore desktop-only CODENOMAD_UPDATE_CHANNEL and CLI_CONFIG.
+        let trial_plain = resolve_scope_id(ScopeInputs {
+            profile: Some("trial-a"),
+            host_root: Some(r"D:\Tmp\TrialA"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        let trial_with_desktop_env = resolve_scope_id(ScopeInputs {
+            profile: Some("trial-a"),
+            update_channel: Some("../ignored"),
+            cli_config: Some(r"D:\Other"),
+            host_root: Some(r"D:\Tmp\TrialA"),
+            home,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(trial_plain, trial_with_desktop_env);
     }
 }
