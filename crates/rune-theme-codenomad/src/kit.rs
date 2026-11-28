@@ -7,8 +7,9 @@ use crate::{
 };
 use rune::{Color, Spring};
 use rune_kit::{
-    ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, Kit, Metrics, Motion, Palette,
-    Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css, glyphs,
+    ButtonMetrics, BySize, CheckboxColors, Elevation, FieldMetrics, IconButtonMetrics, Kit,
+    Metrics, Motion, Palette, Radius, StateColors, SwitchMetrics, TextAreaMetrics, Type, css,
+    glyphs,
 };
 use std::{ops::Deref, rc::Rc, sync::OnceLock};
 
@@ -191,6 +192,12 @@ pub(crate) fn build_from(
     };
     let shadow = |name| css::box_shadows(shadow_css(name), |color| color);
     let mut elevation = Elevation::default().with_input(Vec::new());
+    elevation.button_neutral = vec![rune::Shadow {
+        spread: 1.0,
+        color: c("border-base"),
+        inset: true,
+        ..rune::Shadow::default()
+    }];
     elevation.raised = shadow("panel-shadow");
     elevation.floating = shadow("popover-shadow");
     elevation.overlay = shadow("panel-shadow-strong");
@@ -268,6 +275,33 @@ pub(crate) fn build_from(
             extra_large: ButtonMetrics {
                 height: t.length(Length::TouchTarget).px(),
                 padding_x: pad_lg,
+                radius: button_radius,
+                icon: icon_lg,
+            },
+        }),
+        icon_button: Some(BySize {
+            mini: IconButtonMetrics {
+                size: t.length(Length::ControlSmall).px() - t.space(Space::Xs).px(),
+                radius: button_radius,
+                icon: icon_sm,
+            },
+            small: IconButtonMetrics {
+                size: t.length(Length::IconButton).px(),
+                radius: button_radius,
+                icon: icon_md,
+            },
+            regular: IconButtonMetrics {
+                size: t.length(Length::Control).px(),
+                radius: button_radius,
+                icon: icon_md,
+            },
+            large: IconButtonMetrics {
+                size: t.length(Length::TouchCompact).px(),
+                radius: button_radius,
+                icon: icon_lg,
+            },
+            extra_large: IconButtonMetrics {
+                size: t.length(Length::TouchTarget).px(),
                 radius: button_radius,
                 icon: icon_lg,
             },

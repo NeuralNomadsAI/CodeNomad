@@ -42,23 +42,43 @@ pub fn icon_button<S: 'static>(
     press: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
     let name = name.into();
+    let dark = dark();
+    let state = if disabled {
+        State::Disabled
+    } else {
+        State::Rest
+    };
     let button = IconButton::new(glyph)
-        .variant(IconButtonVariant::GhostMuted)
         .control_size(ControlSize::Small)
         .label(name.clone())
         .help(name)
-        .state(if disabled {
-            State::Disabled
-        } else if active == Some(true) {
-            State::Pressed
-        } else {
-            State::Rest
-        })
-        .on_press_tx(press)
-        .build(&kit(dark()));
+        .state(state)
+        .on_press_tx(press);
     match active {
-        Some(active) => button.checked(active),
-        None => button,
+        Some(is_active) => {
+            let t = crate::tokens(dark);
+            let mut k = kit(dark).clone();
+            if is_active {
+                let active_bg = t.color("icon-toggle-active-bg");
+                let active_hover = active_bg.alpha(0.15);
+                k.c.bg_button_neutral = active_bg;
+                k.c.hover = active_hover;
+                k.c.pressed = active_hover;
+                k.c.text_base = t.color("text-primary");
+            } else {
+                k.c.bg_button_neutral = t.color("surface-canvas");
+                k.c.hover = t.color("surface-hover");
+                k.c.pressed = t.color("surface-hover");
+                k.c.text_base = t.color("icon-button-color");
+            }
+            button
+                .variant(IconButtonVariant::Neutral)
+                .build(&k)
+                .checked(is_active)
+        }
+        None => button
+            .variant(IconButtonVariant::GhostMuted)
+            .build(&kit(dark)),
     }
 }
 

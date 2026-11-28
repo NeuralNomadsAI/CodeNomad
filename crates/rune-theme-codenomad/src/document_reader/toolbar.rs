@@ -45,11 +45,11 @@ pub fn wrap_button<S: 'static>(
                 }))
                 .a11y_hidden(),
         )
-        .hover(t.color(if active {
-            "icon-toggle-active-bg"
+        .hover(if active {
+            t.color("icon-toggle-active-bg").alpha(0.15)
         } else {
-            "surface-hover"
-        }))
+            t.color("surface-hover")
+        })
         .on_key(move |s: &mut S, key, tx| {
             if key.key != rune::Key::Enter || key.mods != rune::Mods::default() {
                 return false;
