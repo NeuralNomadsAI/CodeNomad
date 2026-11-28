@@ -2,7 +2,13 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { serverApi } from "../lib/api-client"
-import { BARE_PATH_LISTING_DEADLINE_MS, BARE_PATH_TTL_MS, clearBarePathCaches, fileNamesInDirectory } from "./markdown-bare-paths"
+import {
+  BARE_PATH_LISTING_DEADLINE_MS,
+  BARE_PATH_MAX_CACHE_ENTRIES,
+  BARE_PATH_TTL_MS,
+  clearBarePathCaches,
+  fileNamesInDirectory,
+} from "./markdown-bare-paths"
 
 type Entry = { name: string; type: string }
 
@@ -209,6 +215,25 @@ describe("directory existence cache", () => {
       await fileNamesInDirectory("inst", "/repo", "docs")
       await fileNamesInDirectory("other", "/repo", "src")
       assert.equal(stub.calls.length, 3)
+    } finally { stub.restore() }
+  })
+
+  it("retains hot entries under LRU eviction and keeps over 64 directories cached", async () => {
+    clearBarePathCaches()
+    const stub = patchListing(async () => [])
+    try {
+      await fileNamesInDirectory("inst", "/repo", "hot")
+      for (let i = 0; i < 80; i++) await fileNamesInDirectory("inst", "/repo", `dir-${i}`)
+      // All 81 entries fit without thrashing past the former 64-entry cap.
+      await fileNamesInDirectory("inst", "/repo", "hot")
+      assert.equal(stub.calls.length, 81)
+      // Touching `hot` keeps it alive while older idle entries evict past the cap.
+      for (let i = 80; i < BARE_PATH_MAX_CACHE_ENTRIES + 5; i++) {
+        await fileNamesInDirectory("inst", "/repo", `dir-${i}`)
+      }
+      const beforeHot = stub.calls.length
+      await fileNamesInDirectory("inst", "/repo", "hot")
+      assert.equal(stub.calls.length, beforeHot, "recently used entry must not be evicted")
     } finally { stub.restore() }
   })
 })
