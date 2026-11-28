@@ -1,6 +1,6 @@
 use super::{connection, panel_keys, right_panel, sidebar};
 use crate::{State, strings};
-use rune::{El, Tx, col, text};
+use rune::{El, Tx, text};
 use rune_theme_codenomad::{
     layout::Layout,
     shell::{
@@ -526,23 +526,130 @@ fn header(s: &State, project: bool, docked: [Option<f32>; 2], touch: bool) -> El
     } else {
         &s.chat_title
     };
+    let left_docked = project && docked[0].is_some();
+    let active_conversation = crate::workspace::active_session(s).is_some()
+        || s.agent.is_some()
+        || !s.chat_title.is_empty();
+    let meter = (project || active_conversation).then(|| context_meter(s));
+    let center_title = (!left_docked && !title.is_empty())
+        .then(|| shell::panel_title(title).key("chat-title").role("heading"));
+    let center_width = if s.shell.width > 0.0 {
+        (s.shell.width - docked[0].unwrap_or(0.0) - docked[1].unwrap_or(0.0)).max(0.0)
+    } else {
+        0.0
+    };
+    let show_connection_label = !touch && (center_width == 0.0 || center_width >= 420.0);
+    let mut actions = Vec::with_capacity(9);
+    if let Some(meter) = meter {
+        actions.push(meter);
+    }
+    actions.push(shell::spacer());
+    if let Some(heading) = center_title {
+        actions.push(heading);
+        actions.push(shell::spacer());
+    }
+    if let Some(rename) = super::tab_rename::trigger(s, touch) {
+        actions.push(rename);
+    }
+    actions.push(super::command_palette::trigger(s, touch));
+    if let Some(search) = crate::timeline::search::trigger(s) {
+        actions.push(search);
+    }
+    actions.push(crate::files::view::toggle(s));
+    actions.push(shell::connection_indicator(
+        connection_dot(s),
+        connection(s),
+        show_connection_label,
+    ));
+    if let Some(retry) = connection_retry(s) {
+        actions.push(retry);
+    }
     let reserve = |i: usize| project && docked[i].is_none();
-    shell::header(
-        reserve(0),
-        reserve(1),
-        touch,
-        [
-            shell::spacer(),
-            shell::panel_title(title).key("chat-title").role("heading"),
-            shell::spacer(),
-            super::tab_rename::trigger(s, touch).unwrap_or_else(col),
-            super::command_palette::trigger(s, touch),
-            crate::timeline::search::trigger(s).unwrap_or_else(col),
-            crate::files::view::toggle(s),
-            connection_warning(s).unwrap_or_else(col),
-        ],
+    shell::header(reserve(0), reserve(1), touch, actions).key("session-header")
+}
+
+fn context_meter(s: &State) -> El {
+    let usage = s
+        .messages
+        .iter()
+        .rev()
+        .find_map(|row| (row.role == "assistant").then_some(row.usage).flatten())
+        .or_else(|| s.agent.as_ref().and_then(|agent| agent.usage));
+    let used = usage.map_or(0, |u| {
+        u.input
+            .saturating_add(u.cache_read)
+            .saturating_add(u.cache_write)
+            .saturating_add(u.output)
+            .saturating_add(u.reasoning)
+    });
+    let avail = s
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.current.as_ref())
+        .and_then(|model| {
+            model["limit"]["context"]
+                .as_u64()
+                .or_else(|| model["contextWindow"].as_u64())
+                .or_else(|| model["context_limit"].as_u64())
+        })
+        .filter(|limit| *limit > 0);
+    let locale = strings::locale();
+    let used_label = strings::t("instanceShell.metrics.usedLabel");
+    let avail_label = strings::t("instanceShell.metrics.availableLabel");
+    let used_compact = rune_theme_codenomad::usage::numbers::compact(locale, used);
+    let used_exact = rune_theme_codenomad::usage::numbers::exact(locale, used);
+    let (avail_compact, avail_exact) = match avail {
+        Some(limit) => (
+            rune_theme_codenomad::usage::numbers::compact(locale, limit),
+            rune_theme_codenomad::usage::numbers::exact(locale, limit),
+        ),
+        None => ("--".to_owned(), "--".to_owned()),
+    };
+    let ratio = avail.map(|limit| {
+        let denom = if limit >= used {
+            limit
+        } else {
+            limit.saturating_add(used)
+        };
+        (used as f32 / denom.max(1) as f32).clamp(0.0, 1.0)
+    });
+    let tooltip = format!("{used_label}: {used_exact} / {avail_label}: {avail_exact}");
+    shell::context_meter(
+        used_label,
+        &used_compact,
+        avail_label,
+        &avail_compact,
+        ratio,
+        &tooltip,
     )
-    .key("session-header")
+}
+
+fn connection_dot(s: &State) -> shell::ServiceDot {
+    match s.phase {
+        crate::Phase::Ready | crate::Phase::Streaming => shell::ServiceDot::Ready,
+        crate::Phase::Loading
+        | crate::Phase::Reconnecting
+        | crate::Phase::StreamDisconnected { .. } => shell::ServiceDot::Pending,
+        crate::Phase::Failed => shell::ServiceDot::Error,
+        #[cfg(target_arch = "wasm32")]
+        crate::Phase::WorkspaceMissing => shell::ServiceDot::Pending,
+        #[cfg(target_arch = "wasm32")]
+        crate::Phase::RestoreFailed => shell::ServiceDot::Error,
+    }
+}
+
+fn connection_retry(s: &State) -> Option<El> {
+    let failed = s.phase == crate::Phase::Failed;
+    #[cfg(target_arch = "wasm32")]
+    let failed = failed || s.phase == crate::Phase::RestoreFailed;
+    failed.then(|| {
+        crate::components::button_tx(
+            "connection-retry",
+            strings::t("sessionList.loadError.retry"),
+            false,
+            crate::screen::action_tx(&s.input_scope, crate::retry_connection),
+        )
+    })
 }
 
 fn connection_warning(s: &State) -> Option<El> {
@@ -550,17 +657,11 @@ fn connection_warning(s: &State) -> Option<El> {
     if s.phase == crate::Phase::WorkspaceMissing {
         return Some(text(connection(s)).role("status"));
     }
-    let failed = s.phase == crate::Phase::Failed;
-    #[cfg(target_arch = "wasm32")]
-    let failed = failed || s.phase == crate::Phase::RestoreFailed;
     match &s.phase {
         phase if phase.reconnecting() => Some(text(connection(s)).role("status")),
-        _ if failed => Some(crate::components::button_tx(
-            "connection-retry",
-            strings::t("sessionList.loadError.retry"),
-            false,
-            crate::screen::action_tx(&s.input_scope, crate::retry_connection),
-        )),
-        _ => None,
+        _ => connection_retry(s),
     }
 }
+
+#[cfg(test)]
+mod header_right_panel_tests;

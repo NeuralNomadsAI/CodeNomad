@@ -206,30 +206,132 @@ pub fn panel_tabs<S: 'static>(
     chosen: usize,
     activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
 ) -> El {
+    panel_tabs_dir(title, labels, chosen, false, activate)
+}
+
+pub fn panel_tabs_dir<S: 'static>(
+    title: &str,
+    labels: &[&str],
+    chosen: usize,
+    rtl: bool,
+    activate: impl Fn(&mut S, usize, &mut Tx) + Clone + 'static,
+) -> El {
     let dark = layout::dark();
-    // Solid's project and right-panel strips share the same tab height.
-    let height = tokens(dark).metric("tabActive", "height").px();
-    row().role("tablist").label(title).focus_group().children(
-        labels.iter().copied().enumerate().map(|(index, label)| {
+    let t = tokens(dark);
+    let height = t.metric("tabActive", "height").px();
+    let top_w = t.metric("tabActive", "borderTopWidth").px();
+    let bottom_w = t.metric("tabActive", "borderBottomWidth").px();
+    let tab_left_w = t.metric("tabActive", "borderLeftWidth").px();
+    let tab_right_w = t.metric("tabActive", "borderRightWidth").px();
+    let pad_left = t.metric("tabActive", "paddingLeft").px();
+    let pad_right = t.metric("tabActive", "paddingRight").px();
+    let edge = t.color("tab-border");
+    let focus_ring = t.color("focus-ring-color");
+    let label_font = t.text(TextRole::Label);
+    row()
+        .role("tablist")
+        .label(title)
+        .focus_group()
+        .items_end()
+        .children(labels.iter().copied().enumerate().map(|(index, label)| {
+            let active = index == chosen;
+            let start_w = if index == 0 { tab_left_w } else { 0.0 };
+            let end_w = tab_right_w;
+            let (left_w, right_w) = if rtl {
+                (end_w, start_w)
+            } else {
+                (start_w, end_w)
+            };
+            let background = t.color(if active {
+                "surface-secondary"
+            } else {
+                "surface-shade-light"
+            });
+            let hover = t.color(if active {
+                "surface-hover-overlay"
+            } else {
+                "tab-inactive-hover-bg"
+            });
+            let ink = t.color(if active {
+                "tab-active-text"
+            } else {
+                "tab-inactive-text"
+            });
             let activate = activate.clone();
             let action = Rc::new(move |s: &mut S, tx: &mut Tx| activate(s, index, tx));
             let press = action.clone();
-            Button::new(label)
-                .variant(if index == chosen {
-                    ButtonVariant::Ghost
-                } else {
-                    ButtonVariant::GhostMuted
-                })
-                .control_size(ControlSize::Small)
-                .on_press_tx(move |s, tx| press(s, tx))
-                .build(&kit(dark))
-                .h(height)
+            let space = action.clone();
+            row()
                 .key(format!("right-panel-tab-{index}"))
                 .role("tab")
-                .focus_selected(index == chosen)
-                .on_key(enter_action(action))
-        }),
-    )
+                .label(label)
+                .focusable(true)
+                .focus_selected(active)
+                .position_in_set(index + 1, labels.len())
+                .h(height)
+                .pl(pad_left)
+                .pr(pad_right)
+                .center()
+                .radius(0.0)
+                .fill(background)
+                .hover(hover)
+                .border_sides(
+                    [top_w, right_w, if active { 0.0 } else { bottom_w }, left_w],
+                    edge,
+                )
+                .border_layout()
+                .focus_ring(top_w, -top_w, focus_ring)
+                .on_press_tx(move |s, tx| press(s, tx))
+                .on_key(move |s, event, tx| {
+                    if event.mods != rune::Mods::default() {
+                        return false;
+                    }
+                    match event.key {
+                        rune::Key::Enter => {
+                            action(s, tx);
+                            true
+                        }
+                        rune::Key::Text(ref value) if value == " " => {
+                            space(s, tx);
+                            true
+                        }
+                        _ => false,
+                    }
+                })
+                .child(text(label).font(label_font).color(ink).a11y_hidden())
+        }))
+}
+
+pub fn right_panel_header(left: bool, right: bool, touch: bool, tabs: El) -> El {
+    let t = tokens(layout::dark());
+    let inset = |reserve| {
+        if reserve {
+            t.space(Space::Xs).px() + control_size(touch) + t.space(Space::Sm).px()
+        } else {
+            t.space(Space::Sm).px()
+        }
+    };
+    let border = t.metric("tabActive", "borderBottomWidth").px();
+    let edge = t.color("tab-border");
+    row()
+        .w_full()
+        .h(t.length(Length::PanelHeader).px())
+        .items_end()
+        .fill(t.color("surface-shade-light"))
+        .child(
+            el().w(inset(left))
+                .h_full()
+                .border_sides([0.0, 0.0, border, 0.0], edge)
+                .border_layout(),
+        )
+        .child(tabs)
+        .child(
+            el().grow(1.0)
+                .min_w(inset(right))
+                .h_full()
+                .border_sides([0.0, 0.0, border, 0.0], edge)
+                .border_layout(),
+        )
 }
 
 pub fn open_titlebar_menu<S: 'static>(
@@ -461,6 +563,118 @@ pub fn status_dot(state: ServiceDot) -> El {
         .a11y_hidden()
 }
 
+pub fn context_meter(
+    used_label: &str,
+    used_value: &str,
+    available_label: &str,
+    available_value: &str,
+    ratio: Option<f32>,
+    tooltip: &str,
+) -> El {
+    let t = tokens(layout::dark());
+    let ring = t.length(Length::Icon).px() + 2.0;
+    let inner = t.space(Space::Sm).px();
+    let dial_fill = ratio.filter(|value| *value > 0.0).map(|value| {
+        if value >= 0.8 {
+            t.color("status-error")
+        } else if value >= 0.6 {
+            t.color("status-warning")
+        } else {
+            t.color("status-success")
+        }
+    });
+    let label_font = rune::TextStyle::new(
+        t.number("font-size-xs").px(),
+        t.number("font-weight-medium").px(),
+    );
+    let value_font = rune::TextStyle::new(
+        t.text(TextRole::Small).size,
+        t.number("font-weight-semibold").px(),
+    );
+    let muted = t.color("text-muted");
+    let primary = t.color("text-primary");
+    let used_upper = used_label.to_uppercase();
+    let avail_upper = available_label.to_uppercase();
+    let dial = row()
+        .key("context-meter-dot")
+        .size(ring, ring)
+        .center()
+        .radius(ring * 0.5)
+        .fill(t.color("surface-secondary"))
+        .border(1.0, t.color("border-base"))
+        .border_layout()
+        .a11y_hidden()
+        .children(dial_fill.map(|color| {
+            el().size(inner, inner)
+                .radius(inner * 0.5)
+                .fill(color)
+                .a11y_hidden()
+        }));
+    let values = row()
+        .key("context-meter-values")
+        .center_y()
+        .gap(t.space(Space::Xs).px())
+        .px(t.space(Space::Sm).px())
+        .py(t.space(Space::Xs).px() * 0.5)
+        .radius(t.length(Length::ChipRadius).px())
+        .fill(t.color("surface-secondary"))
+        .border(1.0, t.color("border-base"))
+        .border_layout()
+        .a11y_hidden()
+        .child(text(used_upper).font(label_font).color(muted).a11y_hidden())
+        .child(
+            text(used_value)
+                .font(value_font)
+                .color(primary)
+                .a11y_hidden(),
+        )
+        .child(
+            text("/")
+                .font(t.text(TextRole::Small))
+                .color(muted)
+                .a11y_hidden(),
+        )
+        .child(
+            text(avail_upper)
+                .font(label_font)
+                .color(muted)
+                .a11y_hidden(),
+        )
+        .child(
+            text(available_value)
+                .font(value_font)
+                .color(primary)
+                .a11y_hidden(),
+        );
+    row()
+        .key("context-meter")
+        .center_y()
+        .gap(t.space(Space::Xs).px())
+        .role("status")
+        .label(tooltip)
+        .help(tooltip)
+        .child(dial)
+        .child(values)
+}
+
+pub fn connection_indicator(state: ServiceDot, label: &str, show_label: bool) -> El {
+    let t = tokens(layout::dark());
+    row()
+        .key("connection-status")
+        .center_y()
+        .gap(t.space(Space::Xs).px())
+        .role("status")
+        .label(label)
+        .help(label)
+        .child(status_dot(state))
+        .children(show_label.then(|| {
+            text(label)
+                .font(t.text(TextRole::Small))
+                .color(t.color("text-muted"))
+                .a11y_hidden()
+        }))
+}
+
 pub fn compact_switch<S: 'static>(
     label: &str,
     checked: bool,
@@ -637,6 +851,59 @@ mod tests {
                 storage
                     .lines()
                     .any(|line| line == format!("export const {key} = {value}"))
+            );
+        }
+    }
+
+    #[test]
+    fn context_meter_and_right_panel_header_render_in_light_and_dark() {
+        for dark in [false, true] {
+            let mut rt = rune::Runtime::new(
+                0_usize,
+                |chosen, _| {
+                    let tabs = panel_tabs_dir(
+                        "Right panel",
+                        &["Status", "Files", "Missions"],
+                        *chosen,
+                        true,
+                        |s, i, _| *s = i,
+                    );
+                    col()
+                        .child(right_panel_header(false, true, false, tabs))
+                        .child(context_meter(
+                            "Used",
+                            "28",
+                            "Avail",
+                            "128K",
+                            Some(0.25),
+                            "Used: 28 / Avail: 128000",
+                        ))
+                },
+                (360.0, 120.0),
+                rune::Env::new(dark, 1.0),
+            );
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let active = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("right-panel-tab-0"))
+                .expect("active tab");
+            let inactive = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("right-panel-tab-1"))
+                .expect("inactive tab");
+            assert_eq!(active.radius, 0.0);
+            assert_ne!(active.fill, inactive.fill);
+            let dot = elements
+                .iter()
+                .find(|el| el.key.as_deref() == Some("context-meter-dot"))
+                .expect("context-meter-dot");
+            let dot_prefix = format!("{}/", dot.path);
+            assert!(
+                elements
+                    .iter()
+                    .any(|el| el.path.starts_with(&dot_prefix) && el.fill.a > 0.0),
+                "non-zero ratio paints inner dial indicator (dark={dark})"
             );
         }
     }
