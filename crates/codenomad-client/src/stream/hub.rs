@@ -76,6 +76,7 @@ impl GuardHook {
 #[derive(Default)]
 struct SubscriberSignals {
     conversation: Option<(String, String)>,
+    session_directory: Option<String>,
     closed: Option<Sender<()>>,
     placement: Option<Sender<()>>,
     inbox: Option<crate::inbox::InboxWire>,
@@ -130,6 +131,25 @@ impl Subscriber {
             .is_some_and(|(w, s)| w == workspace && s == session)
     }
 
+    fn matches_session_moved_away(
+        &self,
+        workspace: &str,
+        session: &str,
+        destination: Option<&str>,
+        foreign_workspace: bool,
+    ) -> bool {
+        if !self.matches_conversation(workspace, session) {
+            return false;
+        }
+        if foreign_workspace {
+            return true;
+        }
+        match (self.signals.session_directory.as_deref(), destination) {
+            (Some(bound_dir), Some(dest_dir)) => !crate::server_path::same(bound_dir, dest_dir),
+            _ => true,
+        }
+    }
+
     fn signal_closed(&self) {
         if let Some(inbox) = &self.signals.inbox {
             inbox.invalidate_closed();
@@ -176,6 +196,7 @@ impl Subscriber {
             super::sessions::note_inbox_frame(
                 workspace,
                 session,
+                self.signals.session_directory.as_deref(),
                 inbox,
                 self.signals.history_revision.as_deref(),
                 self.signals.upstream.as_deref(),
@@ -518,7 +539,9 @@ impl SharedStream {
                 FrameClass::WorkspaceLocationChanged(id) => {
                     hub.note_workspace_location_change(id);
                 }
-                FrameClass::SessionMoved { workspace, session } => {
+                FrameClass::SessionMoved {
+                    workspace, session, ..
+                } => {
                     hub.note_session_location_change(workspace, session);
                 }
                 FrameClass::SessionDeleted { .. } | FrameClass::None => {}
@@ -526,8 +549,17 @@ impl SharedStream {
             inner.subscribers.retain(|sub| {
                 let session_moved = matches!(
                     &class,
-                    FrameClass::SessionMoved { workspace, session }
-                        if sub.matches_conversation(workspace, session)
+                    FrameClass::SessionMoved {
+                        workspace,
+                        session,
+                        destination,
+                        foreign_workspace,
+                    } if sub.matches_session_moved_away(
+                        workspace,
+                        session,
+                        destination.as_deref(),
+                        *foreign_workspace,
+                    )
                 );
                 let session_deleted = matches!(
                     &class,
@@ -690,11 +722,25 @@ impl SharedStream {
 
 enum FrameClass {
     None,
-    ReplayStatus { id: String, connected: bool },
-    ReplayStopped { id: String, error: bool },
+    ReplayStatus {
+        id: String,
+        connected: bool,
+    },
+    ReplayStopped {
+        id: String,
+        error: bool,
+    },
     WorkspaceLocationChanged(String),
-    SessionMoved { workspace: String, session: String },
-    SessionDeleted { workspace: String, session: String },
+    SessionMoved {
+        workspace: String,
+        session: String,
+        destination: Option<String>,
+        foreign_workspace: bool,
+    },
+    SessionDeleted {
+        workspace: String,
+        session: String,
+    },
 }
 
 fn classify_frame(kind: &str, data: &str) -> FrameClass {
@@ -763,9 +809,16 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
                 .as_str()
                 .or_else(|| value["event"]["data"]["id"].as_str())
                 .unwrap_or("");
+            let dest = &value["event"]["data"]["location"];
+            let foreign_workspace = dest.get("workspaceID").is_some();
+            let destination = (!foreign_workspace)
+                .then(|| dest["directory"].as_str().map(str::to_owned))
+                .flatten();
             return FrameClass::SessionMoved {
                 workspace: workspace.to_owned(),
                 session: session.to_owned(),
+                destination,
+                foreign_workspace,
             };
         }
         if value["event"]["type"] == "session.deleted"
@@ -1101,6 +1154,7 @@ pub(super) async fn read_shared(
     let signals = SubscriberSignals {
         conversation: (!backend.workspace.is_empty() && !backend.session.is_empty())
             .then(|| (backend.workspace.clone(), backend.session.clone())),
+        session_directory: backend.session_directory.clone(),
         closed: Some(state.closed_signal()),
         placement: state.placement_signal(),
         inbox: state.catalogue.is_none().then(|| state.inbox.clone()),
