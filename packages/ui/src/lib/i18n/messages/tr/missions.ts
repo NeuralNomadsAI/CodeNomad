@@ -327,7 +327,6 @@ export const missionMessages = {
   "missions.control.report.late": "Görev kaldırıldıktan veya misyon durdurulduktan sonra bildirildi",
   "missions.control.history.before": "Önce",
   "missions.control.history.after": "Sonra",
-  "missions.recurrence.instructionsTooLong": "Yinelenen başlangıç talimatlarını {limit} karakterle sınırlayın.",
   "missions.recurrence.sourceInputTooLong": "Talimatlar ve takip edilen konuşma bağlamı {limit} karaktere sığmalıdır. Talimatları kısaltın veya konuşmaları kaldırın.",
   "missions.recurrence.sourceLocationUnavailable": "Kaynak konumunu yenileyin.",
   "missions.cleanup.error.revisionConflict": "Görev değişti. Silmeden önce iptal edip yeniden seçin.",

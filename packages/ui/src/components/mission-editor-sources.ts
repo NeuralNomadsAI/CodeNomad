@@ -4,7 +4,7 @@ import { captureBackendOperation } from "../lib/backend-operation"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { buildProjectSessionListOptions, normalizeSessionDirectory } from "../stores/session-list-options"
-import { isMissionPickerSource, type MissionConditionKind } from "./mission-scheduling-data"
+import { isMissionPickerSource, type MissionCriterionKind } from "./mission-scheduling-data"
 import type { MissionSchedulingSourceLists } from "./mission-scheduling-sources"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 import { backgroundReads } from "../lib/background-read-queue"
@@ -26,8 +26,8 @@ function conversationTitleQuery(query: string): string {
 }
 
 /** Bounded source pages per selected event kind. Open source pickers own continuation. */
-export function createMissionEditorSources(props: { instanceId: string; projectID?: string; target?: string
-  directory: () => string | undefined; kinds: () => readonly (MissionConditionKind | "coordinator-session")[]; active: () => boolean
+export function createMissionEditorSources(props: { instanceId: string; projectID?: string
+  directory: () => string | undefined; kinds: () => readonly (MissionCriterionKind | Kind)[]; active: () => boolean
   selected: () => readonly { kind: Kind; id: string }[]
   captureView: () => (() => boolean) }) {
   const [sources, setSources] = createSignal<MissionSchedulingSourceLists>({})
@@ -58,19 +58,11 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
       setPinLoading(new Set(ids)); setPinFailed(new Set<string>())
       void Promise.allSettled(ids.map(id => backgroundReads.run(signal, async () => {
         if (!/^[A-Za-z0-9_.:-]{1,240}$/.test(id)) throw new Error("Invalid source")
-        if (id === props.target) throw new Error("Source cycle")
-        if (kind === "conversation-message" || kind === "coordinator-session") {
-          const source = await getRootClient(props.instanceId).session.get({ sessionID: id }, { signal })
-          if (source.id !== id || props.projectID && source.projectID !== props.projectID
-            || normalizeSessionDirectory(source.location.directory) !== normalizeSessionDirectory(directory)
-            || isReservedMissionScheduleSessionID(id) || kind === "coordinator-session" && source.parentID) throw new Error("Foreign source")
-          return { id, label: source.title || id }
-        }
-        const read = await backendOf(props.instanceId).api.fetchMissionSchedule(props.instanceId, id, { directory }, signal), { document } = read
-        if (!document || document.id !== id
-          || !document.configuration.roots.some(root => normalizeSessionDirectory(root.directory) === normalizeSessionDirectory(directory))
-          || document.kind !== (kind === "schedule-success" ? "schedule" : "one-time")) throw new Error("Source unavailable")
-        return { id, label: document.configuration.title }
+        const source = await getRootClient(props.instanceId).session.get({ sessionID: id }, { signal })
+        if (source.id !== id || props.projectID && source.projectID !== props.projectID
+          || normalizeSessionDirectory(source.location.directory) !== normalizeSessionDirectory(directory)
+          || isReservedMissionScheduleSessionID(id) || kind === "coordinator-session" && source.parentID) throw new Error("Foreign source")
+        return { id, label: source.title || id }
       }))).then(results => {
         if (!current()) return
         const rows = results.flatMap(result => !signal.aborted && result.status === "fulfilled" ? [result.value] : [])
@@ -113,16 +105,10 @@ export function createMissionEditorSources(props: { instanceId: string; projectI
               && normalizeSessionDirectory(row.location.directory) === normalizeSessionDirectory(directory)))
             .map(row => ({ id: row.id, label: row.title || row.id })), next: page.cursor?.next }
         }
-        if (kind === "branch-commits") {
-          const page = await backendOf(props.instanceId).api.fetchLocalGitBranches(props.instanceId, directory, signal)
-          if (!Array.isArray(page.branches) || page.branches.length > 200
-            || page.branches.some(ref => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length > 1024)) throw new Error("Invalid local branch page")
-          return { rows: page.branches.map(ref => ({ id: ref, label: ref.slice("refs/heads/".length) })), next: undefined }
-        }
-        const page = await backendOf(props.instanceId).api.fetchMissionSchedules(props.instanceId, { directory, after, limit: 8 }, signal)
-        if (props.projectID && page.projectID !== props.projectID || page.schedules.length > 8) throw new Error("Foreign source page")
-        return { rows: page.schedules.filter(row => row.id !== props.target && row.kind === (kind === "schedule-success" ? "schedule" : "one-time"))
-          .map(row => ({ id: row.id, label: row.configuration.title })), next: page.next }
+        const page = await backendOf(props.instanceId).api.fetchLocalGitBranches(props.instanceId, directory, signal)
+        if (!Array.isArray(page.branches) || page.branches.length > 200
+          || page.branches.some(ref => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length > 1024)) throw new Error("Invalid local branch page")
+        return { rows: page.branches.map(ref => ({ id: ref, label: ref.slice("refs/heads/".length) })), next: undefined }
       }
       const timer = setTimeout(() => { void read().then(page => {
         if (!current()) return

@@ -327,7 +327,6 @@ export const missionMessages = {
   "missions.control.report.late": "在任务退役或任务组停止后上报",
   "missions.control.history.before": "之前",
   "missions.control.history.after": "之后",
-  "missions.recurrence.instructionsTooLong": "请将定期启动指令限制在 {limit} 个字符以内。",
   "missions.recurrence.sourceInputTooLong": "指令与跟踪对话上下文总计必须在 {limit} 个字符以内。请缩短指令或移除跟踪对话。",
   "missions.recurrence.sourceLocationUnavailable": "请刷新来源位置。",
   "missions.cleanup.error.revisionConflict": "任务已更改。请取消并重新选择后再删除。",

@@ -327,7 +327,6 @@ export const missionMessages = {
   "missions.control.report.late": "Informado tras retirar la tarea o detener la misión",
   "missions.control.history.before": "Antes",
   "missions.control.history.after": "Después",
-  "missions.recurrence.instructionsTooLong": "Limita las instrucciones de inicio recurrente a {limit} caracteres.",
   "missions.recurrence.sourceInputTooLong": "Las instrucciones y el contexto seguido deben caber en {limit} caracteres. Acorta las instrucciones o elimina conversaciones seguidas.",
   "missions.recurrence.sourceLocationUnavailable": "Actualiza la ubicación de las fuentes.",
   "missions.cleanup.error.revisionConflict": "La misión cambió. Cancela y vuelve a seleccionarla antes de eliminarla.",

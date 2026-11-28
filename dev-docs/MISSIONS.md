@@ -746,12 +746,10 @@ stable prefix with the shared native source reader and launch envelope; unavaila
 moved, excluded or over-capacity sources block with an explanation. The original
 first-Play intent retains this text across acknowledgement loss and exact retries.
 Stored execution roots outside the editor's single directory-only scope stay read-only.
-`mission-editor-schedule.ts` owns its passive capability read by view
-identity, client and native generation, and fences its response by that owner and
-visibility; only a changed owner returns Scheduling to its first-read state. Config, plugin and reconnection events revalidate the visible
-editor's capability with one read in flight and at most one trailing read. Task revisions
-and transcript releases read nothing. During a successful revalidation the shown fields,
-values, focus and open picker stay unchanged, with no indicator.
+The form keeps schedules above events (`orderMissionCriteria`, `mission-scheduling-data.ts`): a card that becomes
+a schedule joins the schedules, and a card added after an event is an event. The service directory its sources need
+is the native Location's, read once an event criterion, an existing coordinator conversation or a followed
+conversation needs it. Followed conversations show for a Mission launched once.
 Create stores a paused Mission, or a paused programmed Mission when its launch criteria repeat or name an event.
 **Start automatically** defaults off, outside Scheduling. When selected, only the direct positive creation
 acknowledgement may continue the captured user intention through guarded Play;
@@ -828,7 +826,7 @@ Editor reads and the body display cache share only the pure wire-slice validator
 descriptor-pinned content independently of the display cache.
 
 Source choices use explicit project pages on demand, one reader per event kind listed
-in the criteria (`mission-editor-sources.ts`). Schedule documents page by eight;
+in the criteria (`mission-editor-sources.ts`);
 conversation choices use native session pages, and local branch choices use the owned
 directory's bounded local ref listing (`GET /api/workspaces/:id/git-branches`, at most
 200 refs under `refs/heads/`, including branches without a worktree). The read uses

@@ -9,6 +9,6 @@ test("once-now summaries use the same ordered connectors and keep following cron
   const translate = (key: string) => key.replace("missions.scheduling.", "")
   assert.deepEqual(describeMissionCriteria({ when: [now, { ...event, paths: [...event.paths] }] }, translate, "en"),
     ["source.now", "connector.if · condition.files-changed · a.ts"])
-  assert.deepEqual(describeMissionCriteria({ when: [{ ...event, paths: [...event.paths] }, now, daily] }, translate, "en"),
-    ["condition.files-changed · a.ts", "connector.else · source.now", "connector.or · shortcut.daily · 09:00 · UTC"])
+  assert.deepEqual(describeMissionCriteria({ when: [now, daily, { ...event, paths: [...event.paths] }] }, translate, "en"),
+    ["source.now", "connector.or · shortcut.daily · 09:00 · UTC", "connector.if · condition.files-changed · a.ts"])
 })

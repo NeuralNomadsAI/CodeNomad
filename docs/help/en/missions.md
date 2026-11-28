@@ -94,11 +94,10 @@ Choose **Repository activity → Event**, then any optional filters in the same 
 
 Forge checks use `gh`, `glab` or `tea` on the OpenCode execution host, including with CodeNomad closed; public repositories can use anonymous access. Self-hosted forges require a CLI signed in to that host. **github.com** also offers account notifications and Dependabot alerts through signed-in `gh`, with [notification access](https://docs.github.com/en/rest/activity/notifications) or [alert read access](https://docs.github.com/en/rest/dependabot/alerts). Notifications preserve read status; alerts include fixed or dismissed items. Stored notifications with an empty **GitHub repository** cover the account. First Start sets the reference.
 
-An event can follow another schedule's success, a completed one-time Mission, commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
+An event can follow commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
 
 - **or** combines adjacent schedules, or adjacent events.
 - **if**: events after schedules are their conditions. At each scheduled time, one of those events must have changed since the last successful passage.
-- **else**: schedules after events are a fallback. At their time, they run only if the criteria above launched no passage since that schedule's previous slot, or since it was armed. Events after the fallback condition that fallback.
 
 Events at the beginning can launch a passage on each new occurrence; trigger events are checked every 15 minutes. First Start establishes the source reference. A successful passage advances it; failed work keeps it. Passages do not overlap.
 
@@ -110,7 +109,7 @@ You can ask an agent to prepare the schedule using its current root conversation
 
 A saved policy that the editor cannot represent stays under **Stored scheduling policy** until you explicitly replace it. Review any retained end or launch limit before editing.
 
-In **Followed conversations**, use **Add conversation** and choose a conversation, including for an immediate Mission. Before Play, change a selection or use its × button to remove it.
+In **Followed conversations**, use **Add conversation** and choose a conversation, for an immediate Mission. Before Play, change a selection or use its × button to remove it.
 
 Choose **New commits on a local branch** to watch a local Git ref, or **New commits on a remote branch** and enter the branch name (for example `dev`). The remote check reads the detected repository directly, without a local fetch. Several commits between checks produce one passage.
 

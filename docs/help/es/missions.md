@@ -88,9 +88,9 @@ Elige **Actividad del repositorio → Evento** y los filtros opcionales en la mi
 
 Las comprobaciones usan `gh`, `glab` o `tea` en el host OpenCode, incluso con CodeNomad cerrado; los repositorios públicos permiten acceso anónimo. Las forjas autohospedadas requieren una CLI conectada a ese host. **github.com** ofrece además notificaciones y alertas Dependabot mediante `gh` conectado, con acceso a [notificaciones](https://docs.github.com/en/rest/activity/notifications) o [lectura de alertas](https://docs.github.com/en/rest/dependabot/alerts). Las notificaciones conservan su estado de lectura; las alertas incluyen las corregidas o descartadas. Las notificaciones guardadas con **Repositorio de GitHub** vacío cubren la cuenta. El primer inicio fija la referencia.
 
-Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
+Los eventos siguen commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
 
-**o** une horarios vecinos o eventos vecinos. **si** convierte eventos después de horarios en condiciones: alguno debe haber cambiado desde la última pasada exitosa. **si no** convierte horarios posteriores a eventos en respaldo: nada de arriba debe haber lanzado una pasada desde su horario anterior o su activación. Los eventos posteriores condicionan ese respaldo.
+**o** une horarios vecinos o eventos vecinos. **si** convierte eventos después de horarios en condiciones: alguno debe haber cambiado desde la última pasada exitosa.
 
 Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la referencia; el éxito la avanza y el fallo la conserva. Las pasadas no se solapan.
 
@@ -102,7 +102,7 @@ Puedes pedir a un agente que prepare la programación con su conversación raíz
 
 Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
-En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
 
 Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
 

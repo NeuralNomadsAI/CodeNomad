@@ -90,9 +90,9 @@ Wählen Sie **Repository-Aktivität → Ereignis**, danach optionale Filter in d
 
 Forge-Prüfungen verwenden `gh`, `glab` oder `tea` auf dem OpenCode-Host, auch bei geschlossenem CodeNomad; öffentliche Repositorys erlauben anonymen Zugriff. Selbst gehostete Forges erfordern eine dort angemeldete CLI. **github.com** bietet außerdem Kontobenachrichtigungen und Dependabot-Warnungen über angemeldetes `gh` mit [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) oder [Lesezugriff auf Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Benachrichtigungen behalten ihren Lesestatus; Warnungen umfassen behobene oder verworfene Einträge. Gespeicherte Benachrichtigungen mit leerem **GitHub-Repository** umfassen das Konto. Der erste Start setzt die Referenz.
 
-Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
+Ereignisse beziehen sich auf lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
 
-**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
+**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein.
 
 Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Durchläufe überlappen nicht.
 
@@ -104,7 +104,7 @@ Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterh
 
 Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
-Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
+Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
 
 Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
 

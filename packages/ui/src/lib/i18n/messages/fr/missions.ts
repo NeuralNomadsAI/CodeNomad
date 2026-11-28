@@ -327,7 +327,6 @@ export const missionMessages = {
   "missions.control.report.late": "Rapport reçu après le retrait de la tâche ou l’arrêt de la mission",
   "missions.control.history.before": "Avant",
   "missions.control.history.after": "Après",
-  "missions.recurrence.instructionsTooLong": "Limitez les instructions de démarrage récurrent à {limit} caractères.",
   "missions.recurrence.sourceInputTooLong": "Les instructions et le contexte des conversations suivies doivent tenir dans {limit} caractères. Raccourcissez les instructions ou retirez des conversations.",
   "missions.recurrence.sourceLocationUnavailable": "Actualisez l’emplacement des sources.",
   "missions.cleanup.error.revisionConflict": "Mission modifiée. Annulez et resélectionnez-la avant de supprimer.",
