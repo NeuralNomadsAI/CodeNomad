@@ -15,7 +15,7 @@ use crate::{
 use codenomad_client::missions::{CalendarLaunch, CalendarView};
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, attachment, catalogue,
+    Space, TextRole, attachment,
     document_reader::editor as modal,
     file_row_actions::icons as row_icons,
     git_panel::{self as theme, ButtonLook::Flat},
@@ -71,7 +71,10 @@ pub(crate) fn view<S: 'static>(ui: &Panel, owner: Scoped<S>, open_task: Option<O
     if calendars.failed {
         let retry_owner = owner.clone();
         section = section
-            .child(theme::note(t("missions.scheduleList.readFailed"), "alert"))
+            .child(theme::note(
+                t("missions.control.reader.unavailable"),
+                "alert",
+            ))
             .child(
                 layout::action_row().child(
                     theme::button(
@@ -320,11 +323,11 @@ pub(crate) fn delete_confirmation<S: 'static>(
     on_confirm: fn(&mut S, bool, &mut Tx),
 ) -> Option<El> {
     let (_, title) = panel.calendars.pending_delete()?;
-    let prompt = catalogue::format(
-        locale(),
-        "missions.scheduleList.confirm.delete",
-        &[("title", title)],
-    );
+    let prompt = if title.is_empty() {
+        t("missions.control.delete").to_owned()
+    } else {
+        format!("{}: {title}", t("missions.control.delete"))
+    };
     Some(modal::confirmation(
         layout::dark(),
         &prompt,

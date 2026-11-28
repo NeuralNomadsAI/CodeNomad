@@ -26,24 +26,6 @@ fn enter_activate(action: Action) -> impl Fn(&mut State, &KeyEvent, &mut Tx) -> 
     }
 }
 
-fn compact_icon_action(
-    key: &'static str,
-    glyph: &'static git_panel::Glyph,
-    label: &'static str,
-    disabled: bool,
-    press: impl Fn(&mut State, &mut Tx) + 'static,
-) -> El {
-    let action: Action = Rc::new(press);
-    let click = action.clone();
-    let button =
-        git_panel::icon_button(glyph, label, disabled, None, move |s, tx| click(s, tx)).key(key);
-    if disabled {
-        button
-    } else {
-        button.on_key(enter_activate(action))
-    }
-}
-
 pub fn view(
     s: &State,
     bounds: rune_theme_codenomad::interruption::SessionLayout,
@@ -93,23 +75,7 @@ pub fn view(
                     ),
                 )
             }),
-        )
-        .children((!s.messages.is_empty()).then(|| {
-            compact_icon_action(
-                "oldest",
-                &shell::icons::UP,
-                t("messageSection.scroll.toFirstAriaLabel"),
-                s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
-                screen::action_tx(&scope, crate::chat::reader::oldest),
-            )
-        }))
-        .child(compact_icon_action(
-            "latest",
-            &git_panel::CHEVRON_DOWN,
-            t("rune.latest"),
-            false,
-            screen::action_tx(&scope, crate::latest),
-        ));
+        );
     if !s.composer.shell_mode && s.composer.picker.command_unavailable(&s.draft.text) {
         let refresh: Action = Rc::new(screen::action_tx(&scope, |s, _| {
             s.composer.picker.refresh_commands(&s.reads, &s.wake);

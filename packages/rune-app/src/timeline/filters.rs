@@ -97,7 +97,10 @@ pub(super) fn project(
         }
         run = row.then_some(kind);
         if !hidden || kind == MarkerKind::Tool {
-            visible.push(Marker::from(marker));
+            let mut projected = Marker::from(marker);
+            projected.pending =
+                kind == MarkerKind::Tool && keep.contains(&(marker.message, marker.ordinal));
+            visible.push(projected);
         }
     }
     (visible, folded)

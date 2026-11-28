@@ -5,7 +5,6 @@ import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { missionActorResumeInput } from "./native-actor-lifecycle"
-import type { MissionPreparationNative } from "./mission-preparation"
 import type { MissionDocumentSources } from "./mission-document-one-time"
 import type { MissionNativeAcknowledgement } from "./lifecycle-model"
 import { prepareNativeDocumentSources } from "../opencode/missions/native-scheduled-passage-sources"
@@ -69,10 +68,6 @@ export async function preparationFixture(directory = "/fixture", sources?: Missi
         return { nativeAcknowledgement: ack }
       } },
   })
-  const native: MissionPreparationNative = { read: async id => structuredClone(sessions.get(id)), empty: async session => {
-    const check = (): true => { if (occupied.has(session.id)) throw new Error("coordinator not empty"); return true }
-    check(); return check
-  } }
   const creation = { requestID: "preparation_original", objective: "Original instructions", template: "custom" as const,
     ...(watchedConversationIDs === undefined ? {} : { watchedConversationIDs }) }
   const mission = (await control.create(creation)).mission
@@ -83,15 +78,8 @@ export async function preparationFixture(directory = "/fixture", sources?: Missi
     profiles: { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m", variant: "precise" } },
       roles: { developer: { agent: "worker", model: { providerID: "p", id: "m", variant: "fast" } } } } }
   const request = { missionID: mission.id, requestID: "preparation_edit", expectedRevision: original.revision, configuration }
-  return { control, store, storage, read, mission, original, creation, native, request, values, sessions, occupied, admissions,
+  return { control, store, storage, read, mission, original, creation, request, values, sessions, occupied, admissions,
     get created() { return created }, fail: (at: string) => { fault = at } }
-}
-
-export function scheduledPreparation(f: Awaited<ReturnType<typeof preparationFixture>>,
-  timing: import("./launch-policy").MissionLegacyLaunchPolicy["timing"] = { kind: "every", intervalMs: 900000 }): import("./launch-policy").MissionConfiguration {
-  const selection = f.request.configuration.profiles.coordinator
-  return { ...f.request.configuration, template: "custom", profiles: { coordinator: selection, roles: { specialist: selection } },
-    profileID: "profile", executionHost: "host", launch: { ...f.request.configuration.launch, timing } }
 }
 
 /** Production source composition, with bounded native transport observations. */

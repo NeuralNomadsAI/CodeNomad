@@ -413,12 +413,6 @@ depth editor writes `experimental.subagent_depth` alone, and
 malformed or duplicated. Existing file-byte expectations and the
 physical replacement lock fence concurrent writers.
 
-Missions schedule activation reads these documents and writes none. A discovered
-explicit OFF or native environment OFF refuses preparation; an enabled Location
-receives a ready proof. `native-schedule-settings-activation.ts` acknowledges
-readiness after the effective native Location setting reads ON,
-under the acquired connection and host/distro authority.
-
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the
 durable configured state, and `config.updated` and `plugin.updated` trigger

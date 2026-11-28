@@ -14,6 +14,9 @@ use tokio_util::sync::CancellationToken;
 pub(in crate::missions) async fn agent_command(app: Shared, scope: Scope, row: Value, raw: Value) -> Result<Value, Error> {
     let invalid = || input_invalid();
     let input = raw.as_object().ok_or_else(invalid)?;
+    if let Some(program) = input.get("program") {
+        return super::super::calendars::agent_program(app, scope, row, program).await;
+    }
     let action = raw["action"].as_str().ok_or_else(invalid)?;
     let cancel = CancellationToken::new();
     let _disconnect = cancel.clone().drop_guard();

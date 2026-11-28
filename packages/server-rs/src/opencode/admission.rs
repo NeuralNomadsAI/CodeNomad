@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::daemon::Endpoint;
 
-pub const MINIMUM_VERSION: &str = "2.3.2";
+pub const MINIMUM_VERSION: &str = "2.4.2";
 
 /// Why no connection: an unsupported daemon (HTTP 426 on workspace creation) or any other failure.
 #[derive(Clone, Debug, PartialEq)]
@@ -22,7 +22,7 @@ impl fmt::Display for Refusal {
             Refusal::Unsupported { actual, reason } => {
                 let why = match *reason {
                     "native_contract" => format!(
-                        "requires the background subagent report contract, native image generation, replay, Code Mode job ordering and Mission Automations of {MINIMUM_VERSION}"
+                        "requires the background subagent report contract, native image generation, replay, Code Mode job ordering, Mission Automations and the browser permission check of {MINIMUM_VERSION}"
                     ),
                     "session_environment" => "requires PUT /api/session/{sessionID}/environment with variables".into(),
                     _ => "does not expose the canonical session, permission, Form and inbox API contract".into(),

@@ -19,7 +19,7 @@ use super::{
 };
 use crate::{Shared, shared::fastify};
 
-const RECOMMENDED_VERSION: &str = "2.3.2";
+const RECOMMENDED_VERSION: &str = "2.4.2";
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// One bounded `execFile`: exit status, spawn or timeout error (`missing` for ENOENT) and output.
@@ -360,16 +360,16 @@ mod tests {
 
     #[test]
     fn versions_parse_and_order_like_the_reference() {
-        assert_eq!(parse_version(&ran(0, "\n opencode 2.3.2\n", "")).version.as_deref(), Some("2.3.2"));
-        assert_eq!(parse_version(&ran(0, "", "v2.4.0+build.1")).version.as_deref(), Some("2.4.0+build.1"));
+        assert_eq!(parse_version(&ran(0, "\n opencode 2.4.2\n", "")).version.as_deref(), Some("2.4.2"));
+        assert_eq!(parse_version(&ran(0, "", "v2.5.0+build.1")).version.as_deref(), Some("2.5.0+build.1"));
         assert_eq!(parse_version(&ran(0, "custom-label", "")).version.as_deref(), Some("custom-label"));
         assert!(parse_version(&ran(0, "", "")).valid && parse_version(&ran(0, "", "")).version.is_none());
         assert_eq!(parse_version(&ran(2, "", " boom ")).error.as_deref(), Some("Exited with code 2: boom"));
         assert_eq!(parse_version(&ran(1, "", "")).error.as_deref(), Some("Exited with code 1"));
         assert_eq!(compare("2.10.0", "2.9.9"), Ordering::Greater);
         assert_eq!(compare("0.0.0-beta-9", "0.0.0-beta-10"), Ordering::Less);
-        assert_eq!(compare("2.3.2", "2.3.2"), Ordering::Equal);
-        assert!(comparable("0.0.0-beta-3") && comparable("2.3.2") && !comparable("2.3.2+x") && !comparable("unknown"));
+        assert_eq!(compare("2.4.2", "2.4.2"), Ordering::Equal);
+        assert!(comparable("0.0.0-beta-3") && comparable("2.4.2") && !comparable("2.4.2+x") && !comparable("unknown"));
     }
 
     #[test]

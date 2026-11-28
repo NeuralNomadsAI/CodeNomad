@@ -3,13 +3,16 @@ use crate::transport::{
     HistoryEdge::{After, Before},
 };
 use crate::{
-    State, screen,
+    Phase, State, screen,
     strings::{locale, t},
 };
 use rune::El;
 use rune_theme_codenomad::{
-    layout,
+    Space,
+    layout::{self, Layout},
+    settings,
     timeline::{self, icons},
+    transcript,
 };
 
 #[derive(Default, Clone, Copy)]
@@ -391,6 +394,26 @@ pub(crate) fn view(
 ) -> El {
     let t = &s.transcript_display.timeline;
     let scope = s.input_scope.clone();
+    let locale = locale();
+    let oldest = (!s.messages.is_empty()).then(|| {
+        transcript::scroll_button(
+            "oldest",
+            crate::strings::t("messageSection.scroll.toFirstAriaLabel"),
+            true,
+            s.paging || s.phase.reconnecting() || s.phase == Phase::Failed || s.stream_offline,
+            screen::action_tx(&s.input_scope, crate::chat::reader::oldest),
+        )
+    });
+    let latest = (!s.messages.is_empty() || s.history_detached).then(|| {
+        transcript::scroll_button(
+            "latest",
+            crate::strings::t("rune.latest"),
+            false,
+            false,
+            screen::action_tx(&s.input_scope, crate::latest),
+        )
+    });
+    let scroll_controls = transcript::scroll_controls(locale, oldest, latest);
     let measured_fits = cx.layout_with("conversation-history", |rect| timeline::fits(rect[2]));
     let threshold_probe = measured_fits
         .filter(|&fits| fits != timeline::fits(t.width))
@@ -417,9 +440,11 @@ pub(crate) fn view(
                 tx.live_only();
             }
         })
-        .child(timeline::transcript_lane(history));
+        .child(timeline::transcript_lane_with_controls(
+            history,
+            scroll_controls,
+        ));
     let scope = s.input_scope.clone();
-    let locale = locale();
     if super::demanded(s)
         && (t.has_raw_markers || !t.markers.is_empty())
         && let Some(rail) = timeline::view(
@@ -445,10 +470,11 @@ pub(crate) fn view(
     area = area.children(threshold_probe);
     let notice = match notice_key(s) {
         Some("timeline-destination-filtered") => Some(
-            rune::text(crate::strings::t("history.destinationFiltered"))
-                .key("timeline-destination-filtered")
-                .role("alert")
-                .wrap(),
+            settings::palette::save_error(crate::strings::t("history.destinationFiltered"))
+                .full_width()
+                .inset_surface()
+                .pad(Space::Xs)
+                .key("timeline-destination-filtered"),
         ),
         Some(key) => {
             let (label, action) = if key == "timeline-jump-retry" {
@@ -465,7 +491,9 @@ pub(crate) fn view(
             Some(
                 layout::action_row()
                     .key(key)
-                    .child(rune::text(crate::strings::t(label)))
+                    .role("status")
+                    .inset_surface()
+                    .child(settings::stats::caption(crate::strings::t(label)).remaining())
                     .child(layout::button_tx(
                         crate::strings::t("messageSection.search.retry"),
                         false,
@@ -508,7 +536,11 @@ fn glyph(s: &State, index: usize) -> timeline::Marker<'_> {
         Tool => (
             "messageTimeline.tool.fallbackLabel",
             &icons::LAYOUT_GRID,
-            "message-tool-border",
+            if m.pending {
+                "session-status-permission-fg"
+            } else {
+                "message-tool-border"
+            },
         ),
         Compaction => (
             "messageTimeline.segment.compaction.label",

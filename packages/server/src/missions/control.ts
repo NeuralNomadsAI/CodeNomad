@@ -33,7 +33,7 @@ import {
 import { COMPLETED_FINAL_ONLY, buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
-import { displayMissionText, truncateMissionText } from "./truncate-text"
+import { truncateMissionText } from "./truncate-text"
 import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
@@ -56,13 +56,9 @@ import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { consumeAutomaticStart, type AutomaticStart } from "./automatic-start"
-import { recoveredPreparation, preparationResult, scheduledPreparationResult, type PreparationResult } from "./preparation-result"
-import { missionPreparationCreation, normalizedPreparationOptions, samePreparationOptions } from "./preparation-input"
-import { assertScheduledPreparation, recoveredScheduledPreparation } from "./scheduled-preparation"
+import { recoveredPreparation, preparationResult, type PreparationResult } from "./preparation-result"
+import { assertSamePreparation, missionPreparationCreation, normalizedPreparationOptions, samePreparationOptions } from "./preparation-input"
 import { missionPreparationIdentity } from "./preparation-identity"
-import { missionScheduleID } from "./mission-schedule-contract"
-import { missionScheduleView } from "./mission-schedule-view"
-import { readMissionSchedulePage } from "./mission-schedule-list"
 import { missionIsRunning, missionPausedInstruction, type MissionLifecycleInput } from "./lifecycle-model"
 import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
 import { compareModelError, freezeCompareProfiles, parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
@@ -77,7 +73,6 @@ import { prepareMissionOneTimeDocument, prepareMissionOneTimeControl, acknowledg
   missionOneTimeStartText, type MissionDocumentAccess } from "./mission-document-one-time"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 import { finishMissionDocumentDeletion, prepareMissionDocumentDeletion } from "./mission-document-deletion"
-import { configureMissionPreparation, type MissionPreparationNative, type MissionPreparationRequest } from "./mission-preparation"
 import { nativeDocumentID } from "./launch-policy"
 export { MissionControlError } from "./control-error"
 import type {
@@ -769,15 +764,6 @@ export class MissionControl {
     })
   }
 
-  configurePreparation(input: MissionPreparationRequest, native: MissionPreparationNative, current: () => true,
-    admitted?: (document: import("./mission-document").MissionDocument) => void) {
-    return this.mutate(() => {
-      if (!this.options.documents) throw new Error("Mission preparation document unavailable")
-      return this.options.documents(store => configureMissionPreparation(this.journal, store, this.options.sessions, native,
-        structuredClone(input), () => { this.assertActive(); return current() }, this.options.now?.() ?? Date.now(), admitted))
-    })
-  }
-
   lifecycle(input: MissionLifecycleInput, automaticStart?: AutomaticStart): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
       if (automaticStart) {
@@ -1289,12 +1275,6 @@ export class MissionControl {
     const read = await this.hintedSelection(sessionID, input.missionID)
     const mission = input.missionID ? read.missions.some(item => item.id === input.missionID)
       ? this.visibleMission(read, sessionID, input.missionID) : undefined : this.membership(read, sessionID)
-    if (!mission && input.missionID && this.options.documents) {
-      const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(input.missionID!))
-      if (doc && !("deletedAt" in doc))
-        return { mission: null, actor: null, templates: missionRecipeCatalog(), schedule: missionScheduleView(doc),
-          ...(doc.creation?.creationDefaults ? { selection: doc.creation.creationDefaults } : {}) }
-    }
     if (!mission && input.missionID) this.visibleMission(read, sessionID, input.missionID)
     return mission ? this.inspection(mission, sessionID) : {
       mission: null,
@@ -1306,21 +1286,9 @@ export class MissionControl {
   /** Project missions, newest first, without task or report text. */
   async listMissions(sessionID: string) {
     const caller = await this.ownedSession(sessionID)
-    const missions: Array<ReturnType<typeof missionListEntry> | { missionID: string; title: string; relation: "prepared" | "project"; kind: "schedule" | "one-time";
-      template: MissionMap["template"]; status: string; revision: number; createdAt: number }> = this.options.storage.isolated
-        ? (await this.snapshot()).missions.map(mission => missionListEntry(mission, missionRelation(mission, sessionID) ?? "project"))
-        : await this.journal.readHints(hints => hints.toolSummaries(sessionID))
-    if (this.options.documents) {
-      let after: string | undefined
-      do {
-        const page = await readMissionSchedulePage(this.options.storage, this.options.project, { after })
-        for (const doc of page.schedules) if (!missions.some(item => item.missionID === doc.id))
-          missions.push({ missionID: doc.id, title: displayMissionText(doc.configuration.title),
-            relation: doc.creation?.author?.coordinatorSessionID === sessionID ? "prepared" : "project", kind: doc.kind,
-            template: doc.configuration.template, status: doc.state, revision: doc.revision, createdAt: doc.createdAt })
-        after = page.next
-      } while (after)
-    }
+    const missions = this.options.storage.isolated
+      ? (await this.snapshot()).missions.map(mission => missionListEntry(mission, missionRelation(mission, sessionID) ?? "project"))
+      : await this.journal.readHints(hints => hints.toolSummaries(sessionID))
     const fresh = await this.ownedSession(sessionID)
     this.assertActive()
     if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while listing Missions", "foreign-session")
@@ -1328,9 +1296,7 @@ export class MissionControl {
   }
 
   /** Separate creation through the editor's pipeline; recovered replies only observe. */
-  prepare(sessionID: string, input: MissionPrepareRequest & { launch?: undefined }): Promise<{ mission: MissionMap; preparation: PreparationResult }>
-  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }>
-  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
+  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     input = structuredClone(input)
     // Serialize identity lookup with creation for this author's exact request;
     // unrelated requests and project mutations keep their own lanes.
@@ -1338,13 +1304,14 @@ export class MissionControl {
       () => this.prepareCurrent(sessionID, input))
   }
 
-  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
+  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     const caller = await this.ownedSession(sessionID)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const originalInput = structuredClone(input)
-    const scheduling = normalizedPreparationOptions(input)
-    if (scheduling.coordinatorSessionID && scheduling.kind !== "schedule") throw missionRecoveryControlError("prepare-refused")
+    // A launch that repeats or names an event is a programmed Mission; a prepared Mission takes a new coordinator.
+    const options = normalizedPreparationOptions(input)
+    if (options.kind === "schedule" || options.coordinatorSessionID) throw missionRecoveryControlError("prepare-refused")
     const snapshot = await this.snapshot()
     const currentSource = await missionPreparationSource(snapshot, caller, id => this.ownedSession(id))
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
@@ -1355,42 +1322,14 @@ export class MissionControl {
     const requestID = identity.requestID
     const source = identity.sourceMissionID ? { id: identity.sourceMissionID } : undefined
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
-    const intentID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
-    const scheduleID = missionScheduleID(this.options.project.id, this.options.project.canonical, requestID)
-    const missionID = scheduling.kind === "schedule" ? scheduleID : intentID
+    const intentID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`, missionID = intentID
     const author = { coordinatorSessionID: sessionID, ...(source ? { missionID: source.id } : {}) }
     if (this.options.documents) {
-      const saved = await (this.options.documentReads ?? this.options.documents)(async store => {
-        const other = await store.read(scheduling.kind === "schedule" ? intentID : scheduleID)
-        if (other) throw missionRecoveryControlError("prepare-conflict")
-        return store.read(missionID)
-      })
+      const saved = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
       if (saved) {
         if ("deletedAt" in saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
-        if (saved.creation?.author) assertScheduledPreparation(saved, author, requestID, originalInput)
-        else if (scheduling.kind === "schedule" || !samePreparationOptions({}, originalInput))
-          throw missionRecoveryControlError("prepare-conflict")
-        if (scheduling.kind === "schedule") {
-          // Native observation alone cannot settle the backend's retained
-          // physical permit. Its exact receipt path is read-only on recovery.
-          try {
-            const result = await sendPreparation(sessionID, { ...input, requestID, observeOnly: true,
-              profiles: saved.configuration.profiles, taskMode: saved.configuration.taskMode,
-              ...(saved.creation?.creationDefaults ? { creationDefaults: saved.creation.creationDefaults } : {}),
-              ...(source ? { missionID: source.id } : {}) })
-            const fresh = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
-            if (!fresh || "deletedAt" in fresh) throw new Error("Mission preparation receipt unavailable")
-            assertScheduledPreparation(fresh, author, requestID, originalInput)
-            const preparation = scheduledPreparationResult(result, missionScheduleView(fresh), requestID)
-            if (preparation.outcome !== "uncertain") await this.creationIntents.settled(intentID)
-            return { preparation }
-          } catch {
-            const recovered = recoveredScheduledPreparation(saved)
-            return { preparation: { outcome: "uncertain", phase: saved.creation?.automaticStart?.attempted ? "start" : "creation",
-              requestID: saved.creation?.automaticStart?.attempted ? saved.creation.automaticStart.requestID : requestID,
-              missionID, target: recovered.target } }
-          }
-        }
+        if (saved.creation?.author) assertSamePreparation(saved, author, requestID, originalInput)
+        else if (!samePreparationOptions({}, originalInput)) throw missionRecoveryControlError("prepare-conflict")
       }
     }
     const uncertain = () => Object.assign(missionRecoveryControlError("prepare-uncertain"), {
@@ -1460,19 +1399,6 @@ export class MissionControl {
       ? { outcome: "prepared" as const, acknowledgement: (result as { mission: unknown; acknowledgement?: unknown }).acknowledgement,
         target: { kind: "one-time" as const, mission: (result as { mission: MissionMap }).mission } }
       : result as PreparationResult
-    if (scheduling.kind === "schedule" && this.options.documents) {
-      const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
-      if (!doc && !retained && !retainedDocument && returned?.outcome === "refused" && returned.phase === "creation"
-        && !returned.target && typeof returned.code === "string" && /^[a-z0-9-]{1,80}$/.test(returned.code)) {
-        await this.creationIntents.settled(intentID)
-        return { preparation: { outcome: "refused", phase: "creation", code: returned.code } }
-      }
-      if (!doc || "deletedAt" in doc || returned?.target?.kind !== "schedule" || returned.target.document.document?.id !== missionID) throw uncertain()
-      assertScheduledPreparation(doc, author, requestID, originalInput)
-      const preparation = scheduledPreparationResult(returned, missionScheduleView(doc), requestID)
-      await this.creationIntents.settled(intentID)
-      return { preparation }
-    }
     const returnedID = returned?.target?.kind === "one-time" ? returned.target.mission.id : undefined
     const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
     if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {

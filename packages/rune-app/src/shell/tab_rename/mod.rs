@@ -24,6 +24,7 @@ pub(crate) struct Rename {
     open: bool,
     scope: Option<Rc<()>>,
     tab_key: Option<String>,
+    target_folder: Option<String>,
     input: TextEdit,
     return_focus: Option<String>,
     viewport: (f32, f32),
@@ -35,6 +36,7 @@ impl Rename {
         self.open = false;
         self.scope = None;
         self.tab_key = None;
+        self.target_folder = None;
         self.input = TextEdit::new("");
         self.return_focus = None;
         self.close_control = WindowCloseState::default();
@@ -106,7 +108,7 @@ pub(crate) fn open_for_tab(s: &mut State, tab_key: &str, tx: &mut Tx) -> bool {
     open_for_tab_with_return_focus(s, tab_key, None, tx)
 }
 
-fn open_for_tab_with_return_focus(
+pub(crate) fn open_for_tab_with_return_focus(
     s: &mut State,
     tab_key: &str,
     explicit_return: Option<String>,
@@ -147,6 +149,34 @@ fn open_for_tab_with_return_focus(
     rename.open = true;
     rename.scope = Some(scope);
     rename.tab_key = Some(tab_key.to_owned());
+    rename.target_folder = None;
+    rename.input = input;
+    rename.return_focus = return_focus;
+    tx.focus_when_shown(FOCUS, true);
+    tx.instant();
+    true
+}
+
+pub(crate) fn open_for_folder(
+    s: &mut State,
+    folder: &str,
+    initial_name: &str,
+    return_focus: Option<String>,
+    tx: &mut Tx,
+) -> bool {
+    if is_open(s) || blocked_for_open(s) || folder.trim().is_empty() {
+        return false;
+    }
+    super::Panels::dismiss_outside(s, tx);
+    let mut input = TextEdit::new(initial_name);
+    input.set_selection(0, initial_name.len());
+    input.focused = true;
+    let scope = s.input_scope.clone();
+    let rename = &mut s.tab_rename;
+    rename.open = true;
+    rename.scope = Some(scope);
+    rename.tab_key = None;
+    rename.target_folder = Some(folder.to_owned());
     rename.input = input;
     rename.return_focus = return_focus;
     tx.focus_when_shown(FOCUS, true);
@@ -179,12 +209,21 @@ pub(crate) fn commit(s: &mut State, tx: &mut Tx) {
     if !is_open(s) {
         return;
     }
-    let Some(tab_key) = s.tab_rename.tab_key.clone() else {
-        close_with_focus(s, tx);
-        return;
-    };
     let raw = s.tab_rename.input.text.clone();
-    workspace::rename_tab(s, &tab_key, &raw);
+    if let Some(tab_key) = s.tab_rename.tab_key.clone() {
+        let folder = workspace::tab_folder(s, &tab_key);
+        workspace::rename_tab(s, &tab_key, &raw);
+        if let Some(folder) = folder {
+            let trimmed = raw.trim();
+            let next = (!trimmed.is_empty()).then_some(trimmed);
+            crate::launcher::persist_recent_name(s, &folder, next);
+        }
+    } else if let Some(folder) = s.tab_rename.target_folder.clone() {
+        if raw.trim().is_empty() {
+            return;
+        }
+        crate::launcher::rename_recent(s, &folder, &raw);
+    }
     close_with_focus(s, tx);
 }
 

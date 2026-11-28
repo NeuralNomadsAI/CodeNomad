@@ -86,9 +86,7 @@ async function open(extraForms: Array<{ id: string; sessionID: string; title: st
       if (held) { marksReady(); await marksGate }
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
-    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: [] } })
     if (path.endsWith("/missions/calendars")) return route.fulfill({ json: { calendars: [] } })
-    if (path.endsWith("/schedule") && request.method() === "GET") return route.fulfill({ json: { document: null, pending: false } })
     if (path.endsWith("/content")) {
       const response = await app.inject({ method: "GET", url: request.url().replace(/^.*\/api\/workspaces\/fixture\//, "/api/workspaces/workspace/") })
       return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })

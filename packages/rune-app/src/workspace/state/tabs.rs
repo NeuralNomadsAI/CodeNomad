@@ -326,6 +326,53 @@ pub fn tab_rename_seed(s: &State, tab_key: &str) -> Option<String> {
     )
 }
 
+pub fn tab_folder(s: &State, tab_key: &str) -> Option<String> {
+    let ui = s.workspace.as_ref()?;
+    ui.entries
+        .iter()
+        .find(|entry| entry.key == tab_key)
+        .and_then(|entry| match &entry.saved {
+            Tab::Workspace(w) => Some(w.folder.clone()),
+            Tab::Blank => None,
+        })
+}
+
+fn apply_folder_name(
+    ui: &mut super::Ui,
+    folder: &str,
+    backend_id: &Option<String>,
+    server_id: &Option<String>,
+    raw_name: &str,
+) -> bool {
+    let next_name = sanitize_project_name(raw_name);
+    let mut changed = false;
+    for entry in &mut ui.entries {
+        if let Tab::Workspace(w) = &mut entry.saved
+            && super::same_folder(&w.folder, folder)
+            && &w.backend_id == backend_id
+            && (backend_id.is_none() || &w.server_id == server_id)
+            && w.project_name != next_name
+        {
+            w.project_name = next_name.clone();
+            changed = true;
+        }
+    }
+    for w in &mut ui.closed {
+        if super::same_folder(&w.folder, folder)
+            && &w.backend_id == backend_id
+            && (backend_id.is_none() || &w.server_id == server_id)
+            && w.project_name != next_name
+        {
+            w.project_name = next_name.clone();
+            changed = true;
+        }
+    }
+    if changed {
+        ui.changed();
+    }
+    changed
+}
+
 pub fn rename_tab(s: &mut State, tab_key: &str, raw_name: &str) -> bool {
     let Some(ui) = &mut s.workspace else {
         return false;
@@ -343,29 +390,79 @@ pub fn rename_tab(s: &mut State, tab_key: &str, raw_name: &str) -> bool {
     else {
         return false;
     };
-    let next_name = sanitize_project_name(raw_name);
-    let mut changed = false;
-    for entry in &mut ui.entries {
-        if let Tab::Workspace(w) = &mut entry.saved
-            && super::same_folder(&w.folder, &folder)
-            && w.backend_id == backend_id
-            && (backend_id.is_none() || w.server_id == server_id)
-            && w.project_name != next_name
+    apply_folder_name(ui, &folder, &backend_id, &server_id, raw_name)
+}
+
+fn current_backend_scope(s: &State) -> (Option<String>, Option<String>) {
+    s.screen
+        .launcher()
+        .map_or((None, None), super::backend_scope)
+}
+
+pub fn open_tab_for_folder(s: &State, folder: &str) -> Option<String> {
+    let ui = s.workspace.as_ref()?;
+    let (backend_id, server_id) = current_backend_scope(s);
+    ui.entries.iter().find_map(|entry| match &entry.saved {
+        Tab::Workspace(w)
+            if super::same_folder(&w.folder, folder)
+                && w.backend_id == backend_id
+                && (backend_id.is_none() || w.server_id == server_id) =>
         {
-            w.project_name = next_name.clone();
-            changed = true;
+            Some(entry.key.clone())
+        }
+        _ => None,
+    })
+}
+
+pub fn workspace_recent_folders(s: &State) -> Vec<(String, Option<String>, bool, Option<String>)> {
+    let Some(ui) = s.workspace.as_ref() else {
+        return Vec::new();
+    };
+    let (backend_id, server_id) = current_backend_scope(s);
+    let matches_scope = |w: &Workspace| {
+        w.backend_id == backend_id && (backend_id.is_none() || w.server_id == server_id)
+    };
+    let mut rows = Vec::new();
+    for entry in &ui.entries {
+        if let Tab::Workspace(w) = &entry.saved
+            && matches_scope(w)
+        {
+            rows.push((
+                w.folder.clone(),
+                w.project_name.clone(),
+                w.temporary,
+                Some(entry.key.clone()),
+            ));
         }
     }
-    for w in &mut ui.closed {
-        if super::same_folder(&w.folder, &folder)
-            && w.backend_id == backend_id
-            && (backend_id.is_none() || w.server_id == server_id)
-            && w.project_name != next_name
-        {
-            w.project_name = next_name.clone();
-            changed = true;
+    for w in ui.closed.iter().rev() {
+        if matches_scope(w) {
+            rows.push((w.folder.clone(), w.project_name.clone(), w.temporary, None));
         }
     }
+    rows
+}
+
+pub fn rename_folder(s: &mut State, folder: &str, raw_name: &str) -> bool {
+    let (backend_id, server_id) = current_backend_scope(s);
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    apply_folder_name(ui, folder, &backend_id, &server_id, raw_name)
+}
+
+pub fn remove_closed_recent(s: &mut State, folder: &str) -> bool {
+    let (backend_id, server_id) = current_backend_scope(s);
+    let Some(ui) = &mut s.workspace else {
+        return false;
+    };
+    let before = ui.closed.len();
+    ui.closed.retain(|w| {
+        !(super::same_folder(&w.folder, folder)
+            && w.backend_id == backend_id
+            && (backend_id.is_none() || w.server_id == server_id))
+    });
+    let changed = ui.closed.len() != before;
     if changed {
         ui.changed();
     }

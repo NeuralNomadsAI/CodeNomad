@@ -1,4 +1,7 @@
-use super::{Gesture, Panel, Source, detail::read_window};
+use super::{
+    Gesture, Panel, Source,
+    detail::{CancelToken, read_window},
+};
 use crate::{
     platform,
     strings::{locale, t},
@@ -21,7 +24,7 @@ pub(super) struct Fields {
     part: Option<ControlPart>,
     revision: u64,
     shown: Option<ControlPage>,
-    flight: Option<Receiver<Result<ControlPage>>>,
+    flight: Option<(CancelToken, Receiver<Result<ControlPage>>)>,
     failed: Option<u64>,
     receipt: Option<ReceiptView>,
 }
@@ -69,6 +72,12 @@ impl ReceiptView {
 }
 
 impl Fields {
+    pub fn mark_cancel(&self) {
+        if let Some((cancel, _)) = &self.flight {
+            cancel.mark_aborted();
+        }
+    }
+
     pub fn cancel(&mut self) {
         *self = Self::default();
     }
@@ -102,7 +111,11 @@ impl Fields {
             self.cancel();
             return true;
         }
-        if let Some(result) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) {
+        if let Some(result) = self
+            .flight
+            .as_ref()
+            .and_then(|(_, inbox)| inbox.try_recv().ok())
+        {
             self.flight = None;
             match result {
                 Ok(page) => {
@@ -162,14 +175,13 @@ impl Panel {
         fields.revision = header.root.revision;
         fields.failed = Some(offset);
         let (out, inbox) = bounded(1);
-        fields.flight = Some(inbox);
+        let (cancel, signal) = CancelToken::new();
+        fields.flight = Some((cancel, inbox));
         let reads = self.reads.clone();
         let wake = self.wake.clone();
         platform::spawn(async move {
-            let (_hold, cancel) = bounded(1);
-            if let Some(Some(result)) =
-                codenomad_client::runtime::until_closed(&out, read_window(read, &reads, &cancel))
-                    .await
+            if let Some(result) = read_window(read, &reads, &signal).await
+                && !signal.is_cancelled()
                 && out.send(result).await.is_ok()
             {
                 wake();

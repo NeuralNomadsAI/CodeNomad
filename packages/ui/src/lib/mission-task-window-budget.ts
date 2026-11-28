@@ -5,8 +5,6 @@ import { MissionTaskPageReadError } from "./mission-task-read-lifetime"
 // escaped known rows (bindings, 2 nested reports, 4 report bodies) fit below 8 Mi
 // JSON units. Extensions share the remaining room, and never silently truncate.
 export const TASK_WINDOW_CHARACTERS = 8 * 1024 * 1024
-export const TASK_WINDOW_UTF8_BYTES = 3 * TASK_WINDOW_CHARACTERS
-export const TASK_WINDOW_WIRE_BYTES = 64 * 1024 * 1024
 export const TASK_WINDOW_TOKENS = 256 * 1024
 export const TASK_WINDOW_DEPTH = 24
 

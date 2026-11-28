@@ -3,6 +3,7 @@ use rune::{El, col, text};
 use rune_theme_codenomad::{
     document_reader,
     layout::{self, Layout},
+    transcript,
 };
 
 pub(super) fn frame(
@@ -21,7 +22,7 @@ pub(super) fn frame(
             .then(|| document_reader::mermaid(dark, source))
             .flatten();
     let preview = diagram.is_some();
-    let mut header = layout::action_row().child(text("mermaid"));
+    let mut actions = Vec::new();
     if !unfinished && (preview || source_only) {
         let label = t(if preview {
             "markdown.mermaid.source"
@@ -31,28 +32,26 @@ pub(super) fn frame(
         let button = layout::button(label, false, toggle)
             .key(format!("{key}-diagram-toggle"))
             .checked(preview);
-        header = header.child(button);
+        actions.push(button);
     }
     if !preview {
-        header = header.child(wrap);
+        actions.push(wrap);
     }
-    let mut block = col()
-        .key(key.clone())
-        .full_width()
-        .child(header.child(copy));
-    if let Some(diagram) = diagram {
-        block = block.child(document_reader::mermaid_frame(
+    actions.push(copy);
+    let body = if let Some(diagram) = diagram {
+        document_reader::mermaid_frame(
             dark,
             diagram
                 .key(format!("{key}-diagram"))
                 .label(t("markdown.mermaid.diagram")),
-        ));
+        )
     } else {
-        block = block
+        col()
+            .full_width()
             .children((!unfinished && !source_only).then(|| text(t("markdown.mermaid.failed"))))
-            .child(card);
-    }
-    block
+            .child(card)
+    };
+    transcript::code_block_frame(Some("mermaid"), actions, body).key(key)
 }
 
 #[cfg(test)]

@@ -106,7 +106,7 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
   let ordinary = false
   const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet,
     form: { get: async () => ({ ...form, state }) } },
-    rpc: () => ({ ...native, scheduleCarrierRead: async () => ({ owned: false }) }) }, assertCurrent: () => {},
+    rpc: () => ({ ...native }) }, assertCurrent: () => {},
     fetch: async (_url: unknown, init: { body: string }) => {
       ordinary = true
       await Effect.runPromise(Effect.provide(forms.reply({ id: form.id, answer: JSON.parse(init.body).answer }), graph))

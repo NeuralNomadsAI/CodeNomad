@@ -14,7 +14,7 @@ Remote connections use the same form and controls. Prefer HTTPS to protect netwo
 
 Choose **Create mission**. The form replaces the tree until you create or cancel. A confirmed creation selects the Mission; a refused creation leaves the form editable.
 
-Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes that new Mission's first start; recovery reads the original result. Agents can also list, inspect, start, pause, stop, resume, **Run now**, check, edit and delete any schedule in this project, including one you created in the editor. The same revision and admission checks apply; explicit scheduling OFF is preserved. An unconfirmed action keeps its original request for read-only status recovery.
+Ask an agent in any project conversation, including a subagent or scheduled run, to prepare a separate one-time or scheduled Mission. Its conversation stays unchanged; a new coordinator is the default. Keep the owning CodeNomad backend available. Explicitly requesting **Start automatically** authorizes that new Mission's first start; recovery reads the original result. Agents can also list, save, pause, resume and delete the scheduled Missions of this project, including those you created in the editor. An unconfirmed action keeps its original request for read-only status recovery.
 
 ### Configuration {#saved-briefs}
 
@@ -94,7 +94,7 @@ Choose **Repository activity → Event**, then any optional filters in the same 
 
 Forge checks use `gh`, `glab` or `tea` on the OpenCode execution host, including with CodeNomad closed; public repositories can use anonymous access. Self-hosted forges require a CLI signed in to that host. **github.com** also offers account notifications and Dependabot alerts through signed-in `gh`, with [notification access](https://docs.github.com/en/rest/activity/notifications) or [alert read access](https://docs.github.com/en/rest/dependabot/alerts). Notifications preserve read status; alerts include fixed or dismissed items. Stored notifications with an empty **GitHub repository** cover the account. First Start sets the reference.
 
-An event can follow commits on a local branch, new messages in a conversation, or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. The new-message criterion's selected conversation also supplies context to the passage. Changing the criterion type clears its source. Editing keeps stored conversation context.
+An event can follow commits on a local branch or changes to explicit files. Choose the source inside that criterion. Search ignores letter case, including accented letters. During a search, use **Load more sources** inside the picker to continue, whether or not the current page has matches. Changing the criterion type clears its source.
 
 - **or** combines adjacent schedules, or adjacent events.
 - **if**: events after schedules are their conditions. At each scheduled time, one of those events must have changed since the last successful passage.

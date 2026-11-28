@@ -109,6 +109,7 @@ pub struct Create {
     coordinator_session_id: Option<String>,
     profiles: Option<Value>,
     task_mode: Option<String>,
+    coordinator_goal: Option<bool>,
     #[serde(rename = "watchedConversationIDs")]
     watched_conversation_ids: Option<Vec<String>>,
 }
@@ -184,6 +185,9 @@ async fn create_once(
     if let Some(profiles) = profiles {
         input["profiles"] = profiles;
     }
+    if q.coordinator_goal == Some(true) {
+        input["coordinatorGoal"] = json!(true);
+    }
     if lifetime.is_cancelled() {
         return Err(unavailable());
     }
@@ -215,6 +219,134 @@ async fn create_once(
     scope.refresh(app).await?;
     if lifetime.is_cancelled() {
         return Err(unavailable());
+    }
+    let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, key.1), 24));
+    let attempt = Arc::new(Attempt { scope, input, mission });
+    app.mission_creations.dispatched(key, attempt.clone(), permit)?;
+    let result = attempt.create(app).await?;
+    if !attempt.acknowledgement(&result) || attempt.scope.refresh(app).await.is_err() {
+        return Err(creation_admission::uncertain());
+    }
+    if result["acknowledgement"] == "fresh" {
+        attempt.confirm_permissions(app, &result["mission"], false).await?;
+    }
+    Ok(result)
+}
+
+/// Prepares an ordinary prepared Mission for a programmed calendar inside a
+/// detached task that retains the worktree-deletion permit in `mission_creations`
+/// on uncertain outcomes, matching `create_once` and TS `prepareMissionCreation`.
+pub(super) async fn prepare_for_calendar(
+    app: &Shared,
+    base_scope: &Scope,
+    request_id: &str,
+    config: &Value,
+    coordinator_session_id: Option<&str>,
+    lifetime: &CancellationToken,
+) -> Result<String, Error> {
+    let request = js_trim(request_id).to_owned();
+    let wid = base_scope.workspace.id.to_string();
+    let raw = json!({
+        "requestId": request,
+        "objective": config["objective"],
+        "title": config["title"],
+        "notes": config["notes"],
+        "template": config["template"],
+        "profiles": config["profiles"],
+        "taskMode": config["taskMode"],
+        "coordinatorGoal": config["coordinatorGoal"],
+        "coordinatorSessionId": coordinator_session_id,
+        "directory": base_scope.dir,
+    });
+    app.mission_creations.register(&wid, &request, &raw)?;
+    let key = (wid, request);
+    let app_task = app.clone();
+    let scope = base_scope.clone();
+    let config = config.clone();
+    let coordinator = coordinator_session_id.map(str::to_owned);
+    let child = lifetime.child_token();
+    let _disconnect = child.clone().drop_guard();
+    // Detach so client disconnect cannot drop an already dispatched creation or its fence permit.
+    let result = tokio::spawn(async move {
+        let result =
+            prepare_for_calendar_once(&app_task, &key, scope, &config, coordinator.as_deref(), child).await;
+        app_task.mission_creations.finish(&key, &result);
+        result
+    })
+    .await
+    .map_err(|_| creation_admission::uncertain())??;
+    result["mission"]["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(creation_admission::uncertain)
+}
+
+async fn prepare_for_calendar_once(
+    app: &App,
+    key: &(String, String),
+    mut scope: Scope,
+    config: &Value,
+    coordinator_session_id: Option<&str>,
+    lifetime: CancellationToken,
+) -> Result<Value, Error> {
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
+    }
+    let template = config["template"].as_str().ok_or_else(creation_admission::invalid)?;
+    let objective = config["objective"].as_str().map(js_trim).ok_or_else(creation_admission::invalid)?;
+    let task_mode = config["taskMode"].as_str().unwrap_or("native");
+    let options = creation_admission::options(Some(task_mode), None, coordinator_session_id)?;
+    let profiles = creation_profiles(template, config.get("profiles").cloned())?;
+    let mut input = json!({
+        "requestID": key.1,
+        "objective": objective,
+        "template": template,
+        "taskMode": options.task_mode,
+        "prepared": true,
+        "expectedCoordinatorLocation": { "directory": scope.dir },
+    });
+    if let Some(title) = config.get("title").and_then(Value::as_str) {
+        input["title"] = json!(js_trim(title));
+    }
+    if let Some(notes) = config.get("notes").and_then(Value::as_str) {
+        input["notes"] = json!(notes);
+    }
+    if let Some(profiles) = profiles {
+        input["profiles"] = profiles;
+    }
+    if config.get("coordinatorGoal").and_then(Value::as_bool) == Some(true) {
+        input["coordinatorGoal"] = json!(true);
+    }
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
+    }
+    let (status, caps) = scope.call(app, "documentCapabilities", &json!({}), 10, 65536).await?;
+    if !status.is_success() || !document_capabilities(&caps["output"]) {
+        return Err(creation_unavailable("Unified Mission documents unavailable"));
+    }
+    if let Some(session) = &options.coordinator {
+        input["coordinatorSessionID"] = json!(session);
+        input["expectedCoordinatorLocation"] = scope.attach(app, session).await?;
+    } else if let Some(block) = crate::sessions::permission_mode::new_root(
+        app,
+        &scope.endpoint,
+        &scope.dir,
+        caps["output"]["rootPermissions"] == true,
+    )
+    .await
+    .map_err(|_| creation_unavailable("Mission root permissions unavailable"))?
+    {
+        input["permissions"] = block;
+    }
+    let permit = scope.permit().ok_or_else(|| {
+        (
+            Status::CONFLICT,
+            Json(json!({"error":"Worktree deletion is in progress","code":"creation-worktree-deleting"})),
+        )
+    })?;
+    scope.refresh(app).await?;
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
     }
     let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, key.1), 24));
     let attempt = Arc::new(Attempt { scope, input, mission });

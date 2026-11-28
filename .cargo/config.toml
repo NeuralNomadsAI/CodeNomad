@@ -1,0 +1,10 @@
+# Windows MSVC: link the Visual C++ runtime statically (`+crt-static`) so shipped
+# binaries require no Visual C++ Redistributable (`vcruntime140*.dll` / `msvcp140*.dll`),
+# while keeping the Universal CRT dynamic against Windows' built-in `ucrtbase.dll`
+# (`api-ms-win-crt-*` — hybrid CRT).
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = [
+    "-C", "target-feature=+crt-static",
+    "-C", "link-arg=/NODEFAULTLIB:libucrt.lib",
+    "-C", "link-arg=/DEFAULTLIB:ucrt.lib",
+]
