@@ -171,11 +171,34 @@ fn secondary_click_and_keyboard_on_new_tab_button_open_menu_and_restore_focus() 
         .and_then(|el| el.key);
     assert_eq!(focused.as_deref(), Some(NEW_TAB_KEY));
 
-    // Pressing Down while `+` is focused also opens NewInstanceLauncher.
+    // Pressing Down, ContextMenu, or Shift+F10 while `+` is focused opens NewInstanceLauncher.
     send_key(&mut rt, Key::Down, Mods::default());
     assert!(is_open(&rt.state));
     send_key(&mut rt, Key::Escape, Mods::default());
     assert!(!is_open(&rt.state));
+
+    send_key(&mut rt, Key::ContextMenu, Mods::default());
+    assert!(is_open(&rt.state));
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(!is_open(&rt.state));
+
+    send_key(
+        &mut rt,
+        Key::Function(10),
+        Mods {
+            shift: true,
+            ..Mods::default()
+        },
+    );
+    assert!(is_open(&rt.state));
+    send_key(&mut rt, Key::Escape, Mods::default());
+    assert!(!is_open(&rt.state));
+    let focused = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.focused)
+        .and_then(|el| el.key);
+    assert_eq!(focused.as_deref(), Some(NEW_TAB_KEY));
 }
 
 #[test]
@@ -276,4 +299,75 @@ fn command_palette_recent_tabs_opens_new_instance_launcher() {
         .find(|el| el.focused)
         .and_then(|el| el.key);
     assert_eq!(focused.as_deref(), Some("command-palette-toggle"));
+}
+
+#[test]
+fn failed_open_restores_focus_and_auth_or_reconnect_dismisses_menu() {
+    let mut rt = workspace_runtime(false);
+    rt.update(|s, tx| {
+        while s
+            .workspace
+            .as_ref()
+            .is_some_and(|ui| ui.tab_count() < workspace::MAX_TABS_LIMIT)
+        {
+            let i = s.workspace.as_ref().unwrap().tab_count();
+            workspace::new_tab(s, tx);
+            let filler = Project {
+                id: format!("filler-{i}"),
+                path: format!("/repos/filler-{i}"),
+                temporary: false,
+            };
+            workspace::opened(s, &filler);
+        }
+        workspace::select_index(s, 0, tx);
+        assert!(open_with_return_focus(s, Some(NEW_TAB_KEY.into()), tx));
+    });
+    settle(&mut rt);
+    rt.update(|s, _| {
+        set_query_for_test(s, "gamma");
+    });
+    settle(&mut rt);
+    send_key(&mut rt, Key::Enter, Mods::default());
+    assert!(!is_open(&rt.state));
+    assert_eq!(
+        rt.state.screen.launcher().and_then(|l| l.error),
+        Some("rune.open_error")
+    );
+    let focused = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.focused)
+        .and_then(|el| el.key);
+    assert_eq!(focused.as_deref(), Some(NEW_TAB_KEY));
+
+    // Authentication expiration dismisses NewInstanceLauncher.
+    rt.update(|s, tx| {
+        assert!(open(s, tx));
+    });
+    settle(&mut rt);
+    assert!(is_open(&rt.state));
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = true;
+        }
+    });
+    settle(&mut rt);
+    assert!(!is_open(&rt.state));
+
+    // Connection generation bump dismisses NewInstanceLauncher.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        assert!(open(s, tx));
+    });
+    settle(&mut rt);
+    assert!(is_open(&rt.state));
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.connection_generation += 1;
+        }
+    });
+    settle(&mut rt);
+    assert!(!is_open(&rt.state));
 }

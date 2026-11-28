@@ -491,3 +491,270 @@ fn command_palette_browse_directories_opens_dialog_and_restores_focus() {
         .and_then(|el| el.key);
     assert_eq!(focused.as_deref(), Some("command-palette-toggle"));
 }
+
+fn path_input_is_focused(rt: &Runtime<State>) -> bool {
+    rt.elements().into_iter().any(|el| {
+        el.focused && (el.key.as_deref() == Some(PATH_FOCUS) || el.path.ends_with(PATH_FOCUS))
+    })
+}
+
+#[test]
+fn path_input_keeps_focus_after_loads_and_preserves_typing_in_flight() {
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let entered_tx = Arc::new(std::sync::Mutex::new(entered_tx));
+    let base = spawn_filesystem_server(move |path| match path {
+        Some("/work/slow") => {
+            let _ = entered_tx.lock().unwrap().send(());
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3));
+            fs_reply(
+                "/work/slow",
+                Some("/work"),
+                Some("/work"),
+                "absolute",
+                json!([]),
+            )
+        }
+        Some("/work/sub") => fs_reply(
+            "/work/sub",
+            Some("/work"),
+            Some("/work"),
+            "absolute",
+            json!([]),
+        ),
+        _ => fs_reply(
+            "/work",
+            Some("/"),
+            Some("/work"),
+            "absolute",
+            json!([
+                { "name": "sub", "path": "/work/sub", "type": "directory" }
+            ]),
+        ),
+    });
+
+    let mut rt = state_with_backend(&base, english);
+    rt.update(|s, tx| {
+        assert!(open(s, Some("/work".into()), tx));
+    });
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && current_path_for_test(&rt.state) == "/work"
+    });
+    assert!(
+        path_input_is_focused(&rt),
+        "path input must keep focus after initial folder load"
+    );
+
+    // Navigate via keyboard (Down selects parent `..`, Down selects `sub`, Enter navigates).
+    send_key(&mut rt, Key::Down, Mods::default());
+    send_key(&mut rt, Key::Down, Mods::default());
+    send_key(&mut rt, Key::Enter, Mods::default());
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && current_path_for_test(&rt.state) == "/work/sub"
+    });
+    assert!(
+        path_input_is_focused(&rt),
+        "path input must keep focus after keyboard folder navigation"
+    );
+
+    // Start a slow load and edit the path while it is in flight; response must not clobber typing.
+    rt.update(|s, tx| {
+        navigate(s, Some("/work/slow".into()), tx);
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("slow request entered");
+    rt.update(|s, _| {
+        set_path_input_for_test(s, "/work/user-typed");
+    });
+    let _ = release_tx.send(());
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && current_path_for_test(&rt.state) == "/work/slow"
+    });
+    assert_eq!(
+        rt.state.shell.directory_browser.path_input.text,
+        "/work/user-typed"
+    );
+    assert!(path_input_is_focused(&rt));
+}
+
+#[test]
+fn stale_responses_are_fenced_and_auth_or_failed_open_handled() {
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Arc::new(std::sync::Mutex::new(release_rx));
+    let entered_tx = Arc::new(std::sync::Mutex::new(entered_tx));
+    let base = spawn_filesystem_server(move |path| match path {
+        Some("/work/slow") => {
+            let _ = entered_tx.lock().unwrap().send(());
+            let _ = release_rx
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(3));
+            fs_reply(
+                "/work/slow",
+                Some("/work"),
+                Some("/work"),
+                "absolute",
+                json!([]),
+            )
+        }
+        Some("/work/fast") => fs_reply(
+            "/work/fast",
+            Some("/work"),
+            Some("/work"),
+            "absolute",
+            json!([]),
+        ),
+        _ => fs_reply("/work", Some("/"), Some("/work"), "absolute", json!([])),
+    });
+
+    let mut rt = state_with_backend(&base, english);
+    rt.update(|s, tx| {
+        assert!(open_with_return_focus(
+            s,
+            Some("/work/slow".into()),
+            Some("project-tabs-new".into()),
+            tx
+        ));
+    });
+    entered_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("slow request started");
+
+    // Supersede `/work/slow` with `/work/fast`.
+    rt.update(|s, tx| {
+        navigate(s, Some("/work/fast".into()), tx);
+    });
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && current_path_for_test(&rt.state) == "/work/fast"
+    });
+    // Release the older `/work/slow` response and confirm it cannot overwrite `/work/fast`.
+    let _ = release_tx.send(());
+    thread::sleep(Duration::from_millis(50));
+    settle(&mut rt);
+    assert_eq!(current_path_for_test(&rt.state), "/work/fast");
+
+    // authentication_required dismisses the dialog cleanly on poll.
+    rt.update(|s, _| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = true;
+        }
+    });
+    settle(&mut rt);
+    assert!(!is_open(&rt.state));
+
+    // When opening a folder fails (e.g. MAX_TABS reached), confirming restores focus.
+    rt.update(|s, tx| {
+        if let Some(l) = s.screen.launcher_mut() {
+            l.authentication_required = false;
+        }
+        while s
+            .workspace
+            .as_ref()
+            .is_some_and(|ui| ui.tab_count() < workspace::MAX_TABS_LIMIT)
+        {
+            let i = s.workspace.as_ref().unwrap().tab_count();
+            workspace::new_tab(s, tx);
+            let filler = Project {
+                id: format!("filler-{i}"),
+                path: format!("/work/filler-{i}"),
+                temporary: false,
+            };
+            workspace::opened(s, &filler);
+        }
+        workspace::select_index(s, 0, tx);
+        assert!(open_with_return_focus(
+            s,
+            Some("/work/fast".into()),
+            Some("project-tabs-new".into()),
+            tx
+        ));
+    });
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && current_path_for_test(&rt.state) == "/work/fast"
+    });
+    click(&mut rt, OPEN_BUTTON);
+    assert!(!is_open(&rt.state));
+    assert_eq!(
+        rt.state.screen.launcher().and_then(|l| l.error),
+        Some("rune.open_error")
+    );
+    let focused = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.focused)
+        .and_then(|el| el.key);
+    assert_eq!(focused.as_deref(), Some("project-tabs-new"));
+}
+
+#[test]
+fn windows_drive_parent_navigation_and_normalize_folder_key() {
+    let base = spawn_filesystem_server(|path| match path {
+        Some("C:\\") => fs_reply(
+            "C:\\",
+            Some("drives"),
+            Some("C:\\Users\\Dev"),
+            "absolute",
+            json!([{ "name": "Users", "path": "C:\\Users", "type": "directory" }]),
+        ),
+        _ => fs_reply(
+            "drives",
+            None,
+            Some("C:\\Users\\Dev"),
+            "drives",
+            json!([
+                { "name": "C:\\", "path": "C:\\", "type": "directory" },
+                { "name": "D:\\", "path": "D:\\", "type": "directory" }
+            ]),
+        ),
+    });
+
+    let mut rt = state_with_backend(&base, english);
+    rt.update(|s, tx| {
+        assert!(open(s, Some("C:\\".into()), tx));
+    });
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading() && current_path_for_test(&rt.state) == "C:\\"
+    });
+    click(&mut rt, PARENT_BUTTON);
+    wait_until(&mut rt, |rt| {
+        !rt.state.shell.directory_browser.is_loading()
+            && rt.state.shell.directory_browser.folders.len() == 2
+    });
+    assert_eq!(current_path_for_test(&rt.state), "");
+    let open_btn = rt
+        .elements()
+        .into_iter()
+        .find(|el| el.key.as_deref() == Some(OPEN_BUTTON))
+        .expect("open button");
+    assert!(!open_btn.focusable);
+
+    assert_eq!(normalize_folder_key("C:"), "c:\\");
+    assert_eq!(normalize_folder_key("C:/"), "c:\\");
+    assert_eq!(normalize_folder_key("C:\\"), "c:\\");
+    assert_eq!(
+        normalize_folder_key("C:/Users/Dev/"),
+        normalize_folder_key("c:\\users\\dev")
+    );
+    assert_eq!(
+        normalize_folder_key("\\\\Server\\Share\\Repo\\"),
+        "\\\\server\\share\\repo"
+    );
+    assert_eq!(normalize_folder_key("/"), "/");
+    assert_eq!(normalize_folder_key("///"), "/");
+    assert_eq!(normalize_folder_key("/tmp/foo\\bar/"), "/tmp/foo\\bar");
+    assert_ne!(
+        normalize_folder_key("/tmp/Foo\\Bar"),
+        normalize_folder_key("/tmp/foo\\bar")
+    );
+}

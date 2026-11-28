@@ -14,7 +14,6 @@ pub(crate) use view::append_overlay;
 
 pub(super) const DIALOG_KEY: &str = "new-instance-launcher";
 pub(super) const SEARCH_FIELD: &str = "new-instance-launcher-search";
-pub(super) const SEARCH_FOCUS: &str = "new-instance-launcher-search/value/input";
 pub(super) const LIST_KEY: &str = "new-instance-launcher-list";
 pub(super) const BROWSE_BUTTON: &str = "new-instance-launcher-browse";
 pub(super) const TEMPORARY_BUTTON: &str = "new-instance-launcher-temporary";
@@ -35,6 +34,7 @@ pub(super) struct RecentEntry {
 pub(crate) struct LauncherMenu {
     open: bool,
     scope: Option<Rc<()>>,
+    connection_generation: Option<u64>,
     query: TextEdit,
     selected_path: Option<String>,
     ignore_pointer_hover: bool,
@@ -48,6 +48,7 @@ impl LauncherMenu {
     pub(crate) fn dismiss(&mut self) {
         self.open = false;
         self.scope = None;
+        self.connection_generation = None;
         self.query = TextEdit::new("");
         self.selected_path = None;
         self.ignore_pointer_hover = false;
@@ -113,8 +114,19 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         changed = true;
     }
-    if !is_open(s) && s.shell.new_instance_launcher.open {
+    if !is_open(s) {
+        if s.shell.new_instance_launcher.open {
+            s.shell.new_instance_launcher.dismiss();
+            return true;
+        }
+        return changed;
+    }
+    let current_conn_gen = s.screen.launcher().map(|l| l.connection_generation());
+    if blocked_by_higher_modal(s)
+        || current_conn_gen != s.shell.new_instance_launcher.connection_generation
+    {
         s.shell.new_instance_launcher.dismiss();
+        tx.instant();
         return true;
     }
     changed
@@ -140,16 +152,18 @@ pub(crate) fn open_with_return_focus(
     });
     Panels::dismiss_outside(s, tx);
     let scope = s.input_scope.clone();
+    let connection_generation = s.screen.launcher().map(|l| l.connection_generation());
     let menu = &mut s.shell.new_instance_launcher;
     menu.dismiss();
     menu.open = true;
     menu.scope = Some(scope);
+    menu.connection_generation = connection_generation;
     menu.query = TextEdit::new("");
     menu.query.focused = true;
     menu.ignore_pointer_hover = true;
     menu.return_focus = return_focus;
     tx.scroll_to_instant(LIST_KEY, 0.0, 0.0);
-    tx.focus_when_shown(SEARCH_FOCUS, true);
+    tx.focus_when_shown(SEARCH_FIELD, true);
     tx.instant();
     true
 }
@@ -274,11 +288,14 @@ pub(super) fn select_entry(s: &mut State, path: &str, tx: &mut Tx) {
     let Some(entry) = entries.into_iter().find(|entry| entry.path == path) else {
         return;
     };
+    let return_focus = s.shell.new_instance_launcher.return_focus.take();
     s.shell.new_instance_launcher.dismiss();
     if let Some(index) = entry.open_tab_index {
         workspace::select_index(s, index, tx);
-    } else {
-        directory_browser::open_workspace_folder(s, &entry.path, tx);
+    } else if !directory_browser::open_workspace_folder(s, &entry.path, tx)
+        && let Some(target) = return_focus
+    {
+        tx.return_focus(target, tx.focus_visible());
     }
     tx.instant();
 }
@@ -381,11 +398,11 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             move_selection(s, -1, tx);
             true
         }
-        Key::Home => {
+        Key::Home if !tx.focus_within(SEARCH_FIELD) => {
             select_edge(s, false, tx);
             true
         }
-        Key::End => {
+        Key::End if !tx.focus_within(SEARCH_FIELD) => {
             select_edge(s, true, tx);
             true
         }
@@ -413,6 +430,6 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 
 #[cfg(test)]
 pub(super) fn set_query_for_test(s: &mut State, text: &str) {
-    s.shell.new_instance_launcher.query = TextEdit::new(text);
+    s.shell.new_instance_launcher.query.replace_text(text);
     s.shell.new_instance_launcher.selected_path = None;
 }

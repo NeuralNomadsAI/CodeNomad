@@ -23,6 +23,7 @@ pub(crate) type SelectCallback = Rc<dyn Fn(&mut State, String, &mut Tx)>;
 
 pub(super) const DIALOG_KEY: &str = "directory-browser";
 pub(super) const PATH_FIELD: &str = "directory-browser-path";
+#[cfg(test)]
 pub(super) const PATH_FOCUS: &str = "directory-browser-path/value/input";
 pub(super) const LIST_KEY: &str = "directory-browser-list";
 pub(super) const PARENT_BUTTON: &str = "directory-browser-parent";
@@ -47,6 +48,7 @@ struct InFlight {
     request_id: u64,
     connection_generation: u64,
     requested_path: Option<String>,
+    input_at_request: String,
     fallback_on_error: bool,
     rx: Receiver<Result<Folders, String>>,
 }
@@ -238,7 +240,7 @@ pub(crate) fn open_with_callback(
     let fallback_on_error = seed.is_some();
     start_load(s, seed, fallback_on_error);
     tx.scroll_to_instant(LIST_KEY, 0.0, 0.0);
-    tx.focus_when_shown(PATH_FOCUS, true);
+    tx.focus_when_shown(PATH_FIELD, true);
     tx.instant();
     true
 }
@@ -311,30 +313,45 @@ pub(super) fn confirm_path(s: &mut State, path: String, tx: &mut Tx) {
         if let Some(target) = return_focus {
             tx.return_focus(target, tx.focus_visible());
         }
-    } else {
-        open_workspace_folder(s, &path, tx);
+    } else if !open_workspace_folder(s, &path, tx)
+        && let Some(target) = return_focus
+    {
+        tx.return_focus(target, tx.focus_visible());
     }
     tx.instant();
 }
 
-pub(crate) fn open_workspace_folder(s: &mut State, path: &str, tx: &mut Tx) {
+pub(crate) fn open_workspace_folder(s: &mut State, path: &str, tx: &mut Tx) -> bool {
     if let Some(index) = open_tab_index_for_path(s, path) {
         workspace::select_index(s, index, tx);
-        return;
+        return true;
+    }
+    if s.screen.launcher().is_some_and(|l| l.pending) {
+        return false;
     }
     launcher::choose_project(s, path, tx);
+    s.screen.launcher().is_some_and(|l| l.pending)
 }
 
 pub(crate) fn normalize_folder_key(path: &str) -> String {
     let trimmed = path.trim();
     let stripped = trimmed.trim_end_matches(['/', '\\']);
     if stripped.is_empty() {
-        return trimmed.to_owned();
+        return if trimmed.starts_with('/') {
+            "/".to_owned()
+        } else if trimmed.starts_with('\\') {
+            "\\".to_owned()
+        } else {
+            trimmed.to_owned()
+        };
     }
-    if stripped.len() == 2 && stripped.as_bytes()[1] == b':' {
+    let bytes = stripped.as_bytes();
+    let is_drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    let is_unc = trimmed.starts_with("\\\\");
+    if is_drive && bytes.len() == 2 {
         return format!("{stripped}\\").to_ascii_lowercase();
     }
-    if trimmed.contains('\\') || (stripped.len() >= 2 && stripped.as_bytes()[1] == b':') {
+    if is_drive || is_unc {
         stripped.replace('/', "\\").to_ascii_lowercase()
     } else {
         stripped.to_owned()
@@ -351,6 +368,16 @@ pub(crate) fn open_tab_index_for_path(s: &State, path: &str) -> Option<usize> {
 }
 
 fn start_load(s: &mut State, path: Option<String>, fallback_on_error: bool) {
+    let input_at_request = s.shell.directory_browser.path_input.text.clone();
+    start_load_with_snapshot(s, path, fallback_on_error, input_at_request);
+}
+
+fn start_load_with_snapshot(
+    s: &mut State,
+    path: Option<String>,
+    fallback_on_error: bool,
+    input_at_request: String,
+) {
     let Some(backend) = s.shell.directory_browser.backend.clone() else {
         return;
     };
@@ -365,6 +392,7 @@ fn start_load(s: &mut State, path: Option<String>, fallback_on_error: bool) {
         request_id,
         connection_generation,
         requested_path: path.clone(),
+        input_at_request,
         fallback_on_error,
         rx,
     });
@@ -408,7 +436,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
         .launcher()
         .filter(|l| l.connection.is_some() && !l.authentication_required)
         .map(|l| l.connection_generation());
-    if current_conn_gen != Some(s.shell.directory_browser.connection_generation) {
+    if blocked_by_higher_modal(s)
+        || current_conn_gen != Some(s.shell.directory_browser.connection_generation)
+    {
         s.shell.directory_browser.dismiss();
         tx.instant();
         return true;
@@ -439,13 +469,17 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
             browser.parent_path = listing.parent;
             browser.home_path = listing.home;
             browser.folders = listing.folders;
-            browser.path_input = TextEdit::new(&next_path);
+            if !browser.path_input.is_composing()
+                && browser.path_input.text == finished.input_at_request
+            {
+                browser.path_input.replace_text(&next_path);
+            }
             browser.selected = None;
             browser.ignore_pointer_hover = true;
             browser.error = None;
         }
         Err(_) if finished.fallback_on_error && finished.requested_path.is_some() => {
-            start_load(s, None, false);
+            start_load_with_snapshot(s, None, false, finished.input_at_request);
         }
         Err(_) => {
             s.shell.directory_browser.error =
@@ -555,11 +589,11 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
             move_selection(s, -1, tx);
             true
         }
-        Key::Home if tx.focused() != Some(PATH_FOCUS) => {
+        Key::Home if !tx.focus_within(PATH_FIELD) => {
             select_edge(s, false, tx);
             true
         }
-        Key::End if tx.focused() != Some(PATH_FOCUS) => {
+        Key::End if !tx.focus_within(PATH_FIELD) => {
             select_edge(s, true, tx);
             true
         }
@@ -594,7 +628,7 @@ pub(crate) fn handle_key(s: &mut State, event: &KeyEvent, tx: &mut Tx) -> bool {
 
 #[cfg(test)]
 pub(super) fn set_path_input_for_test(s: &mut State, path: &str) {
-    s.shell.directory_browser.path_input = TextEdit::new(path);
+    s.shell.directory_browser.path_input.replace_text(path);
 }
 
 #[cfg(test)]
