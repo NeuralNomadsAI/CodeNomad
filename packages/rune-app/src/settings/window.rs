@@ -57,8 +57,8 @@ fn open_window(s: &mut State, providers: bool) {
         let target = providers::Target::capture(s);
         let opener = super::missions::opener_directory(s);
         let mut prefs = host.shared.borrow_mut();
+        prefs.missions.capture_opener(opener, target.as_ref());
         prefs.provider_target = target;
-        prefs.missions.capture_opener(opener);
         prefs.open_providers = true;
     }
     if let Some((window, token, request)) = &host.window
@@ -91,8 +91,8 @@ fn open_window(s: &mut State, providers: bool) {
     let opener = super::missions::opener_directory(s);
     {
         let mut prefs = host.shared.borrow_mut();
+        prefs.missions.capture_opener(opener, target.as_ref());
         prefs.provider_target = target;
-        prefs.missions.capture_opener(opener);
         prefs.open_providers = providers;
         prefs
             .memory

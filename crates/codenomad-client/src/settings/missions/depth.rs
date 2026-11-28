@@ -104,7 +104,11 @@ pub async fn read_subagent_depth(
     let value = read_json(response)
         .await
         .map_err(|_| SubagentDepthError::Failed)?;
-    parse_subagent_depth(&value).ok_or(SubagentDepthError::Failed)
+    let snapshot = parse_subagent_depth(&value).ok_or(SubagentDepthError::Failed)?;
+    if !crate::same_server_path(&snapshot.directory, directory) {
+        return Err(SubagentDepthError::Failed);
+    }
+    Ok(snapshot)
 }
 
 pub async fn set_subagent_depth(
@@ -114,13 +118,24 @@ pub async fn set_subagent_depth(
     depth: Option<u64>,
     expectation: &str,
 ) -> std::result::Result<(), SubagentDepthError> {
+    set_subagent_depth_checked(backend, workspace, directory, depth, expectation, || true).await
+}
+
+pub async fn set_subagent_depth_checked(
+    backend: &Backend,
+    workspace: &str,
+    directory: &str,
+    depth: Option<u64>,
+    expectation: &str,
+    can_send: impl FnOnce() -> bool,
+) -> std::result::Result<(), SubagentDepthError> {
     if !valid_id(workspace)
         || !crate::absolute_server_path(directory)
         || !valid_expectation(expectation)
     {
         return Err(SubagentDepthError::Failed);
     }
-    let response = backend
+    let request = backend
         .client
         .put(format!(
             "{}api/workspaces/{workspace}/subagent-depth",
@@ -130,7 +145,11 @@ pub async fn set_subagent_depth(
             "location": { "directory": directory },
             "depth": depth,
             "expectation": expectation,
-        }))
+        }));
+    if !can_send() {
+        return Err(SubagentDepthError::Failed);
+    }
+    let response = request
         .send()
         .await
         .map_err(|_| SubagentDepthError::Failed)?;

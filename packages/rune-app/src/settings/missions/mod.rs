@@ -8,7 +8,7 @@ mod library;
 mod pickers;
 mod shared;
 
-pub(super) use shared::{ConfigContext, ConfigEffects, Shared, opener_directory};
+pub(super) use shared::{ConfigContext, ConfigEffects, SendAuthority, Shared, opener_directory};
 
 use super::{
     preferences::{Owner, Preferences},
@@ -65,28 +65,13 @@ pub(super) enum Confirm {
     RefreshDepth,
 }
 
+#[derive(Default)]
 pub(super) struct Missions {
-    scope: MissionDefaultScope,
-    profiles_open: bool,
     catalog: catalog::State,
     open_picker: Option<Picker>,
     info_open: Option<InfoTip>,
     confirm: Option<Confirm>,
     wake: Option<Waker>,
-}
-
-impl Default for Missions {
-    fn default() -> Self {
-        Self {
-            scope: MissionDefaultScope::All,
-            profiles_open: false,
-            catalog: catalog::State::default(),
-            open_picker: None,
-            info_open: None,
-            confirm: None,
-            wake: None,
-        }
-    }
 }
 
 impl Missions {
@@ -110,18 +95,25 @@ impl Missions {
     pub fn poll(&mut self, prefs: &mut Preferences, wake: &Waker, active: bool) -> bool {
         self.wake = Some(wake.clone());
         let writes_changed = prefs.poll_missions_writes(wake);
-        let online_target = prefs
-            .provider_target
-            .as_ref()
-            .filter(|t| prefs.can_retry() && !prefs.is_transport_lost() && t.online());
+        let raw_target = prefs.provider_target.as_ref().filter(|_| prefs.can_retry());
+        let upstream_healthy = raw_target.is_none_or(|t| {
+            t.backend()
+                .client
+                .workspace_upstream_healthy(t.location().0)
+        });
+        let online = !prefs.is_transport_lost()
+            && raw_target.is_some_and(Target::online)
+            && upstream_healthy;
+        let online_target = raw_target.filter(|_| online);
         let config_disabled = prefs.missions.defaults.reloading
             || prefs.missions.defaults.needs_reload
             || (!prefs.missions.defaults.writing()
                 && !defaults::defaults_valid(prefs.config_loaded(), prefs.saved(Owner::Config)));
         let catalog_demanded = active && !config_disabled;
         let open_epoch = prefs.missions.open_epoch();
-        let (location_changed, location_failed) =
-            prefs.missions.poll_location(online_target, active, wake);
+        let (location_changed, location_failed) = prefs
+            .missions
+            .poll_location(raw_target, online, active, wake);
         let catalog_changed = self.catalog.poll(
             online_target,
             prefs.missions.pinned_directory(),
@@ -131,12 +123,16 @@ impl Missions {
             wake,
         );
         let depth_changed = if active {
-            let can_retry = prefs.can_retry();
-            let transport_lost = prefs.is_transport_lost();
-            let depth_target = prefs.provider_target.as_ref().filter(|_| can_retry);
-            prefs
-                .missions
-                .poll_depth(depth_target, location_failed, transport_lost, true, wake)
+            let transport_lost = prefs.is_transport_lost() || !upstream_healthy;
+            let authority = prefs.authority_handle();
+            prefs.missions.poll_depth(
+                raw_target,
+                location_failed,
+                transport_lost,
+                true,
+                &authority,
+                wake,
+            )
         } else {
             prefs.missions.suspend_reads();
             false
@@ -161,7 +157,12 @@ impl Missions {
         let prefs = shared.borrow();
         let has_target = prefs.can_retry()
             && !prefs.is_transport_lost()
-            && prefs.provider_target.as_ref().is_some_and(Target::online);
+            && prefs.provider_target.as_ref().is_some_and(|t| {
+                t.online()
+                    && t.backend()
+                        .client
+                        .workspace_upstream_healthy(t.location().0)
+            });
 
         let toggle_info = move |s: &mut S, tip: InfoTip| {
             if let Some(m) = access(s) {
@@ -189,6 +190,7 @@ impl Missions {
         let depth_card = prefs.missions.depth.view(
             active,
             has_target,
+            prefs.missions.pinned_directory(),
             self.info_open,
             self.open_picker,
             layers,
@@ -196,11 +198,12 @@ impl Missions {
             set_picker,
             move |s: &mut S, value| {
                 if access(s).is_some() {
-                    shared_depth_choose
-                        .borrow_mut()
+                    let mut prefs = shared_depth_choose.borrow_mut();
+                    let pinned = prefs.missions.pinned_directory().map(str::to_owned);
+                    prefs
                         .missions
                         .depth
-                        .choose(value, active, has_target);
+                        .choose(value, active, has_target, pinned.as_deref());
                 }
             },
             move |s: &mut S| {

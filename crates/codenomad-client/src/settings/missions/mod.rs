@@ -84,32 +84,44 @@ pub async fn patch_mission_preferences(
     patch_settings: Value,
     expected: &[MissionPreferenceExpectation],
 ) -> MissionPatchOutcome {
+    patch_mission_preferences_checked(backend, patch_settings, expected, || true)
+        .await
+        .unwrap_or(MissionPatchOutcome::Failed)
+}
+
+pub async fn patch_mission_preferences_checked(
+    backend: &Backend,
+    patch_settings: Value,
+    expected: &[MissionPreferenceExpectation],
+    can_send: impl FnOnce() -> bool,
+) -> Option<MissionPatchOutcome> {
     let body = json!({
         "patch": { "settings": patch_settings },
         "expected": expected.iter().map(MissionPreferenceExpectation::to_json).collect::<Vec<_>>(),
     });
-    let Ok(response) = backend
+    let request = backend
         .client
         .patch(format!("{}api/storage/config/ui", backend.base))
         .query(&[("conditional", "missions-v1")])
-        .json(&body)
-        .send()
-        .await
-    else {
-        return MissionPatchOutcome::Failed;
+        .json(&body);
+    if !can_send() {
+        return None;
+    }
+    let Ok(response) = request.send().await else {
+        return Some(MissionPatchOutcome::Failed);
     };
     match response.status() {
-        StatusCode::CONFLICT => return MissionPatchOutcome::Conflict,
+        StatusCode::CONFLICT => return Some(MissionPatchOutcome::Conflict),
         StatusCode::NOT_FOUND | StatusCode::NOT_IMPLEMENTED => {
-            return MissionPatchOutcome::Unsupported;
+            return Some(MissionPatchOutcome::Unsupported);
         }
-        status if !status.is_success() => return MissionPatchOutcome::Failed,
+        status if !status.is_success() => return Some(MissionPatchOutcome::Failed),
         _ => {}
     }
-    match read_json(response).await {
+    Some(match read_json(response).await {
         Ok(value) if confirms_patch(&value, &patch_settings) => MissionPatchOutcome::Applied(value),
         _ => MissionPatchOutcome::Failed,
-    }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

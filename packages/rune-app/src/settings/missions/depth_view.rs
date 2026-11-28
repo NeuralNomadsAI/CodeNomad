@@ -69,6 +69,7 @@ impl State {
         &self,
         active: bool,
         has_target: bool,
+        pinned_directory: Option<&str>,
         info_open: Option<InfoTip>,
         open_picker: Option<Picker>,
         layers: &mut Vec<El>,
@@ -77,7 +78,7 @@ impl State {
         choose: impl Fn(&mut S, String) + Clone + 'static,
         refresh: impl Fn(&mut S) + Clone + 'static,
     ) -> El {
-        let disabled = self.disabled(active, has_target);
+        let disabled = self.disabled(active, has_target, pinned_directory);
         let effective = self.snapshot.as_ref().and_then(|s| s.effective_depth);
         let inherit_label = if self
             .snapshot
@@ -134,22 +135,25 @@ impl State {
         let selected = self.selected_value();
         let current_index = values.iter().position(|v| v == selected).unwrap_or(0);
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        // Keep the picker focusable while Reading/Saving so the user can queue the next choice.
+        // Keep the picker focusable while Reading/Saving so the user can step or queue the next choice,
+        // while announcing busy state during in-flight work.
+        let locked = self.locked();
         let is_open = open_picker == Some(Picker::Depth) && !disabled;
         let labels_for_choose = labels.clone();
-        let picker = chrome::picker("mission-subagent-depth", t("missions.depth.label"), &refs)
-            .current(Some(refs[current_index]))
-            .disabled(disabled)
-            .open(is_open)
-            .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Depth)))
-            .on_close(move |s: &mut S| set_picker(s, None))
-            .on_choose(move |s: &mut S, value, _| {
-                set_picker(s, None);
-                if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
-                    choose(s, values[pos].clone());
-                }
-            });
-        let picker = chrome::build_picker(picker, layers);
+        let picker =
+            chrome::stepping_picker("mission-subagent-depth", t("missions.depth.label"), &refs)
+                .current(Some(refs[current_index]))
+                .disabled(disabled)
+                .open(is_open)
+                .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Depth)))
+                .on_close(move |s: &mut S| set_picker(s, None))
+                .on_choose(move |s: &mut S, value, _| {
+                    set_picker(s, None);
+                    if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
+                        choose(s, values[pos].clone());
+                    }
+                });
+        let picker = chrome::build_picker(picker, layers).busy(locked);
 
         let details = self.details();
         let info = chrome::info_tip(

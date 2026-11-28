@@ -267,9 +267,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else if s.memory_editor.shown() {
                 s.memory_editor.dismiss();
             } else if s.section == Section::Missions && s.missions.cancel_confirm() {
-                return true;
             } else if s.section == Section::Voice && s.speech.cancel_overlays() {
-                return true;
             } else if s.section == Section::Integrations && s.integrations.dismiss_overlay() {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();

@@ -389,8 +389,8 @@ pub(super) fn open(s: &mut State) {
     let target = Target::capture(s);
     let opener = super::missions::opener_directory(s);
     let mut prefs = s.settings.shared.borrow_mut();
+    prefs.missions.capture_opener(opener, target.as_ref());
     prefs.provider_target = target;
-    prefs.missions.capture_opener(opener);
     prefs
         .memory
         .show(s.settings.web.section == Section::General);
@@ -739,8 +739,10 @@ pub(super) fn view(
             panel.shown && panel.section == Section::Missions,
             &mut layers,
             |s: &mut State| {
+                let paired = !crate::platform::pairing::required(s);
                 let panel = &mut s.settings.web;
-                (panel.shown && panel.section == Section::Missions).then_some(&mut panel.missions)
+                (paired && panel.shown && panel.section == Section::Missions)
+                    .then_some(&mut panel.missions)
             },
         ),
         Section::Voice => panel.speech.view(
@@ -1052,6 +1054,9 @@ pub(super) fn view(
 }
 
 fn close_or_dismiss_overlay(s: &mut State) {
+    if s.settings.web.section == Section::Missions && s.settings.web.missions.cancel_confirm() {
+        return;
+    }
     if s.settings.web.section == Section::Integrations
         && s.settings.web.integrations.dismiss_overlay()
     {

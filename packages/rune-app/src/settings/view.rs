@@ -326,10 +326,10 @@ impl Window {
     }
 
     pub(super) fn close(&mut self, warn: impl FnOnce(&'static str)) {
-        self.providers.suspend();
-        self.integrations.suspend();
         self.missions.close();
         self.speech.close();
+        self.providers.suspend();
+        self.integrations.suspend();
         {
             let mut prefs = self.shared.borrow_mut();
             prefs.set_palette_preview(None);

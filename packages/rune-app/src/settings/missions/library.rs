@@ -9,7 +9,7 @@ use codenomad_client::{
     Receiver, bounded,
     settings::missions::{
         MissionPatchOutcome, MissionPreferenceExpectation, UserMissionModel,
-        normalize_mission_models, patch_mission_preferences, remove_mission_model_value,
+        normalize_mission_models, patch_mission_preferences_checked, remove_mission_model_value,
         valid_mission_models,
     },
 };
@@ -20,21 +20,34 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::atomic::Ordering};
+use std::collections::BTreeMap;
 
 enum Reply {
     Remove {
         outcome: MissionPatchOutcome,
-        guard: Option<(u64, u64)>,
+        pre_send_aborted: bool,
     },
     Reset {
         outcome: MissionPatchOutcome,
-        guard: Option<(u64, u64)>,
+        pre_send_aborted: bool,
     },
-    Reload {
-        snapshot: Option<Value>,
-        guard: Option<(u64, u64)>,
+}
+
+enum PendingOp {
+    Remove {
+        id: String,
+        confirmed_owner: String,
+        confirmed_expected: MissionPreferenceExpectation,
     },
+    Reset {
+        confirmed_owner: String,
+        confirmed_expected: MissionPreferenceExpectation,
+    },
+}
+
+enum ReconcileExpectation {
+    Removed(String),
+    Reset,
 }
 
 #[derive(Default)]
@@ -44,8 +57,13 @@ pub(super) struct State {
     failed: bool,
     needs_reload: bool,
     reconciliation_pending: bool,
+    pending_op: Option<PendingOp>,
     flight: Option<Receiver<Reply>>,
-    flight_is_reload: bool,
+    in_flight_expected: Option<ReconcileExpectation>,
+    reconcile_expected: Option<ReconcileExpectation>,
+    confirming: bool,
+    reconciling: bool,
+    reloading: bool,
 }
 
 pub(super) fn raw_models(snapshot: Option<&Value>) -> Option<&Value> {
@@ -64,21 +82,55 @@ impl State {
             *self = Self::default();
             return;
         }
-        // Cancel stale reload GETs across reconnect, while keeping in-flight mutations as barriers.
-        if self.flight_is_reload {
-            self.flight = None;
-            self.flight_is_reload = false;
+        if self.reloading {
+            self.reloading = false;
             self.pending_label = None;
         }
+        if self.pending_op.take().is_some() {
+            self.pending_label = None;
+            self.failed = true;
+            self.needs_reload = true;
+        }
+    }
+
+    pub(super) fn write_in_flight(&self) -> bool {
+        self.flight.is_some()
     }
 
     pub(super) fn pending(&self) -> bool {
         self.flight.is_some()
+            || self.pending_op.is_some()
+            || self.confirming
+            || self.reconciling
+            || self.reloading
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn draining(&self, can_start_write: bool, config_refreshing: bool) -> bool {
+        self.flight.is_some()
+            || (config_refreshing && (self.confirming || self.reconciling))
+            || (can_start_write && self.pending_op.is_some())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn needs_config_revalidation(&self) -> bool {
+        self.flight.is_some() || self.confirming || self.reconciling || self.pending_op.is_some()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn has_unconfirmed(&self) -> bool {
-        self.flight.is_some() || self.failed || self.needs_reload || self.reconciliation_pending
+        self.flight.is_some()
+            || self.pending_op.is_some()
+            || self.confirming
+            || self.reconciling
+            || self.failed
+            || self.needs_reload
+            || self.reconciliation_pending
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn pending_ops(&self) -> u32 {
+        u32::from(self.pending_op.is_some()) + u32::from(self.flight.is_some())
     }
 
     pub(super) fn select(&mut self, id: String) {
@@ -92,13 +144,12 @@ impl State {
             .find(|model| model.id == self.selected_id)
     }
 
-    pub(super) fn start_remove(
+    pub(super) fn queue_remove(
         &mut self,
         ctx: &ConfigContext<'_>,
         id: &str,
         confirmed_owner: &str,
         confirmed_expected: MissionPreferenceExpectation,
-        wake: &rune::Waker,
     ) -> bool {
         if self.pending()
             || self.needs_reload
@@ -106,7 +157,7 @@ impl State {
         {
             return false;
         }
-        let Some(backend) = ctx.backend.cloned() else {
+        let Some(backend) = ctx.backend else {
             return false;
         };
         let current_expected =
@@ -122,45 +173,27 @@ impl State {
             self.needs_reload = true;
             return false;
         }
-        let next = remove_mission_model_value(&models, id);
-        let guard = ctx.config_guard;
-        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.pending_label = Some("missions.models.removing");
         self.failed = false;
         self.reconciliation_pending = false;
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.flight = Some(inbox);
-        self.flight_is_reload = false;
-        platform::spawn(async move {
-            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
-                MissionPatchOutcome::Failed
-            } else {
-                patch_mission_preferences(
-                    &backend,
-                    json!({ "missionModels": next }),
-                    &[confirmed_expected],
-                )
-                .await
-            };
-            if out.send(Reply::Remove { outcome, guard }).await.is_ok() {
-                wake();
-            }
+        self.pending_op = Some(PendingOp::Remove {
+            id: id.to_owned(),
+            confirmed_owner: confirmed_owner.to_owned(),
+            confirmed_expected,
         });
         true
     }
 
-    pub(super) fn start_reset(
+    pub(super) fn queue_reset(
         &mut self,
         ctx: &ConfigContext<'_>,
         confirmed_owner: &str,
         confirmed_expected: MissionPreferenceExpectation,
-        wake: &rune::Waker,
     ) -> bool {
         if self.pending() || self.needs_reload || !ctx.config_loaded {
             return false;
         }
-        let Some(backend) = ctx.backend.cloned() else {
+        let Some(backend) = ctx.backend else {
             return false;
         };
         let current_expected =
@@ -170,105 +203,291 @@ impl State {
             self.needs_reload = true;
             return false;
         }
-        let guard = ctx.config_guard;
-        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.pending_label = Some("missions.models.resetting");
         self.failed = false;
         self.reconciliation_pending = false;
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.flight = Some(inbox);
-        self.flight_is_reload = false;
-        platform::spawn(async move {
-            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
-                MissionPatchOutcome::Failed
-            } else {
-                patch_mission_preferences(
-                    &backend,
-                    json!({ "missionModels": [] }),
-                    &[confirmed_expected],
-                )
-                .await
-            };
-            if out.send(Reply::Reset { outcome, guard }).await.is_ok() {
-                wake();
-            }
+        self.pending_op = Some(PendingOp::Reset {
+            confirmed_owner: confirmed_owner.to_owned(),
+            confirmed_expected,
         });
         true
     }
 
-    pub(super) fn start_reload(
-        &mut self,
-        ctx: &ConfigContext<'_>,
-        wake: &rune::Waker,
-    ) -> ConfigEffects {
+    pub(super) fn start_reload(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
-        if self.pending() || !ctx.can_retry {
+        if self.pending() || !ctx.can_retry || ctx.backend.is_none() {
             return effects;
         }
-        let Some(backend) = ctx.backend.cloned() else {
-            return effects;
-        };
         if ctx.transport_lost {
             effects.revalidate_transport = true;
         }
-        let guard = ctx.config_guard;
         self.pending_label = Some("missions.models.reloading");
         self.failed = false;
         self.reconciliation_pending = false;
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.flight = Some(inbox);
-        self.flight_is_reload = true;
-        platform::spawn(async move {
-            let snapshot = Owner::Config.read(&backend).await.ok();
-            if out.send(Reply::Reload { snapshot, guard }).await.is_ok() {
-                wake();
-            }
-        });
+        self.reloading = true;
+        effects.invalidate = true;
         effects.changed = true;
         effects
     }
 
-    pub(super) fn poll(&mut self) -> ConfigEffects {
+    pub(super) fn poll_replies(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
         let Some(reply) = self.flight.as_ref().and_then(|inbox| inbox.try_recv().ok()) else {
             return effects;
         };
         self.flight = None;
-        self.flight_is_reload = false;
-        self.pending_label = None;
+        let in_flight_expected = self.in_flight_expected.take();
         match reply {
-            Reply::Remove { outcome, guard } | Reply::Reset { outcome, guard } => match outcome {
-                MissionPatchOutcome::Applied(snapshot) => {
+            Reply::Remove {
+                outcome,
+                pre_send_aborted,
+            }
+            | Reply::Reset {
+                outcome,
+                pre_send_aborted,
+            } => match outcome {
+                MissionPatchOutcome::Applied(_) => {
                     self.selected_id.clear();
                     self.failed = false;
                     self.needs_reload = false;
                     self.reconciliation_pending = false;
-                    effects.applied = Some((snapshot, guard));
+                    self.reconcile_expected = None;
+                    self.confirming = true;
+                    effects.invalidate = true;
                 }
-                MissionPatchOutcome::Conflict
-                | MissionPatchOutcome::Unsupported
-                | MissionPatchOutcome::Failed => {
+                MissionPatchOutcome::Conflict | MissionPatchOutcome::Unsupported => {
                     self.failed = true;
                     self.needs_reload = true;
+                    self.reconcile_expected = None;
+                    if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                        self.reconciling = true;
+                        effects.invalidate = true;
+                    } else {
+                        self.pending_label = None;
+                    }
                 }
-            },
-            Reply::Reload { snapshot, guard } => match snapshot {
-                Some(snapshot) => {
-                    self.failed = false;
-                    self.needs_reload = false;
-                    self.reconciliation_pending = false;
-                    effects.applied = Some((snapshot, guard));
-                }
-                None => {
+                MissionPatchOutcome::Failed => {
                     self.failed = true;
                     self.needs_reload = true;
+                    if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                        self.reconciling = true;
+                        self.reconcile_expected = in_flight_expected;
+                        effects.invalidate = true;
+                    } else {
+                        self.reconcile_expected = None;
+                        self.pending_label = None;
+                    }
                 }
             },
         }
         effects.changed = true;
         effects.settled = true;
+        effects
+    }
+
+    pub(super) fn settle_config(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
+        if ctx.config_refreshing {
+            return effects;
+        }
+        if self.reloading {
+            self.reloading = false;
+            self.pending_label = None;
+            self.reconcile_expected = None;
+            if ctx.config_loaded {
+                self.failed = false;
+                self.needs_reload = false;
+                self.reconciliation_pending = false;
+            } else {
+                self.failed = true;
+                self.needs_reload = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if self.confirming {
+            self.confirming = false;
+            self.pending_label = None;
+            if !ctx.config_loaded {
+                self.failed = true;
+                self.needs_reload = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if self.reconciling {
+            self.reconciling = false;
+            self.pending_label = None;
+            let expected = self.reconcile_expected.take();
+            let confirmed = ctx.config_loaded
+                && models_valid(true, ctx.config_snapshot)
+                && expected.is_some_and(|exp| {
+                    let models = normalize_mission_models(raw_models(ctx.config_snapshot));
+                    match exp {
+                        ReconcileExpectation::Removed(id) => !models.iter().any(|m| m.id == id),
+                        ReconcileExpectation::Reset => models.is_empty(),
+                    }
+                });
+            if confirmed {
+                self.selected_id.clear();
+                self.failed = false;
+                self.needs_reload = false;
+                self.reconciliation_pending = false;
+            } else {
+                self.failed = true;
+                self.needs_reload = true;
+                if !ctx.config_loaded {
+                    self.reconciliation_pending = true;
+                }
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if !ctx.config_loaded && self.flight.is_none() && self.pending_op.take().is_some() {
+            self.pending_label = None;
+            self.failed = true;
+            self.needs_reload = true;
+            effects.changed = true;
+            effects.settled = true;
+        }
+        effects
+    }
+
+    pub(super) fn launch_next(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        #[cfg(test)] pre_patch_gate: &mut Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
+        if self.flight.is_some() || self.confirming || self.reconciling || self.reloading {
+            return effects;
+        }
+        let Some(op) = self.pending_op.take() else {
+            return effects;
+        };
+        let Some(backend) = ctx.backend.cloned() else {
+            self.pending_label = None;
+            self.failed = true;
+            self.needs_reload = true;
+            effects.changed = true;
+            return effects;
+        };
+        let current_expected =
+            MissionPreferenceExpectation::from_ui_config(ctx.config_snapshot, "missionModels");
+        let send_authority = ctx.send_authority(
+            &backend,
+            #[cfg(test)]
+            pre_patch_gate.take(),
+        );
+        match op {
+            PendingOp::Remove {
+                id,
+                confirmed_owner,
+                confirmed_expected,
+            } => {
+                if !models_valid(ctx.config_loaded, ctx.config_snapshot)
+                    || backend.client_id != confirmed_owner
+                    || current_expected != confirmed_expected
+                {
+                    self.pending_label = None;
+                    self.failed = true;
+                    self.needs_reload = true;
+                    effects.changed = true;
+                    return effects;
+                }
+                let models = normalize_mission_models(raw_models(ctx.config_snapshot));
+                if !models.iter().any(|model| model.id == id) {
+                    self.pending_label = None;
+                    self.failed = true;
+                    self.needs_reload = true;
+                    effects.changed = true;
+                    return effects;
+                }
+                let next = remove_mission_model_value(&models, &id);
+                let (out, inbox) = bounded(1);
+                let wake = wake.clone();
+                self.flight = Some(inbox);
+                self.in_flight_expected = Some(ReconcileExpectation::Removed(id));
+                platform::spawn(async move {
+                    let (outcome, pre_send_aborted) =
+                        if !send_authority.authorize_send(&backend).await {
+                            (MissionPatchOutcome::Failed, true)
+                        } else {
+                            match patch_mission_preferences_checked(
+                                &backend,
+                                json!({ "missionModels": next }),
+                                &[confirmed_expected],
+                                || send_authority.still_ok(&backend),
+                            )
+                            .await
+                            {
+                                Some(outcome) => (outcome, false),
+                                None => (MissionPatchOutcome::Failed, true),
+                            }
+                        };
+                    if out
+                        .send(Reply::Remove {
+                            outcome,
+                            pre_send_aborted,
+                        })
+                        .await
+                        .is_ok()
+                    {
+                        wake();
+                    }
+                });
+                effects.changed = true;
+            }
+            PendingOp::Reset {
+                confirmed_owner,
+                confirmed_expected,
+            } => {
+                if !ctx.config_loaded
+                    || backend.client_id != confirmed_owner
+                    || current_expected != confirmed_expected
+                {
+                    self.pending_label = None;
+                    self.failed = true;
+                    self.needs_reload = true;
+                    effects.changed = true;
+                    return effects;
+                }
+                let (out, inbox) = bounded(1);
+                let wake = wake.clone();
+                self.flight = Some(inbox);
+                self.in_flight_expected = Some(ReconcileExpectation::Reset);
+                platform::spawn(async move {
+                    let (outcome, pre_send_aborted) =
+                        if !send_authority.authorize_send(&backend).await {
+                            (MissionPatchOutcome::Failed, true)
+                        } else {
+                            match patch_mission_preferences_checked(
+                                &backend,
+                                json!({ "missionModels": [] }),
+                                &[confirmed_expected],
+                                || send_authority.still_ok(&backend),
+                            )
+                            .await
+                            {
+                                Some(outcome) => (outcome, false),
+                                None => (MissionPatchOutcome::Failed, true),
+                            }
+                        };
+                    if out
+                        .send(Reply::Reset {
+                            outcome,
+                            pre_send_aborted,
+                        })
+                        .await
+                        .is_ok()
+                    {
+                        wake();
+                    }
+                });
+                effects.changed = true;
+            }
+        }
         effects
     }
 

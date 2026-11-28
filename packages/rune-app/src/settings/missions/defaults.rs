@@ -1,17 +1,17 @@
 //! Compare-and-swap queue for `missionProfileDefaults` and `missionDeleteSessions`.
 use super::{ConfigContext, ConfigEffects};
-use crate::{backend::Backend, platform, settings::preferences::Owner};
+use crate::platform;
 use codenomad_client::{
     Receiver, bounded,
     settings::missions::{
         MissionDefaultScope, MissionExecution, MissionPatchOutcome, MissionPreferenceExpectation,
         MissionProfileDefault, MissionProfiles, MissionTaskMode, change_mission_profile,
-        encode_mission_defaults, normalize_mission_defaults, patch_mission_preferences,
+        encode_mission_defaults, normalize_mission_defaults, patch_mission_preferences_checked,
         set_mission_profile_role, valid_mission_defaults,
     },
 };
 use serde_json::{Value, json};
-use std::{collections::VecDeque, sync::atomic::Ordering};
+use std::collections::VecDeque;
 
 #[derive(Clone, Debug)]
 pub(super) enum DefaultsEdit {
@@ -41,20 +41,11 @@ enum Reply {
     Patch {
         outcome: MissionPatchOutcome,
         expected_encoded: Value,
-        guard: Option<(u64, u64)>,
-    },
-    ReloadAfterFailure {
-        snapshot: Option<Value>,
-        expected_encoded: Option<Value>,
-        guard: Option<(u64, u64)>,
-    },
-    ManualReload {
-        snapshot: Option<Value>,
-        guard: Option<(u64, u64)>,
+        pre_send_aborted: bool,
     },
     DeleteSessions {
         outcome: MissionPatchOutcome,
-        guard: Option<(u64, u64)>,
+        pre_send_aborted: bool,
     },
 }
 
@@ -63,8 +54,12 @@ pub(super) struct State {
     queued: VecDeque<DefaultsEdit>,
     in_flight_edit: Option<DefaultsEdit>,
     write_flight: Option<Receiver<Reply>>,
-    reload_flight: Option<Receiver<Reply>>,
+    defaults_confirming: bool,
+    reconciling: Option<Option<Value>>,
+    pending_delete: Option<bool>,
     delete_flight: Option<(bool, Receiver<Reply>)>,
+    delete_confirming: Option<bool>,
+    delete_reconciling: Option<bool>,
     reattach_pending: bool,
     pub(super) failed: bool,
     pub(super) needs_reload: bool,
@@ -170,23 +165,47 @@ impl State {
             return;
         }
         self.reattach_pending = true;
+        self.reloading = false;
+        if self.pending_delete.take().is_some() {
+            self.delete_failed = true;
+        }
+    }
+
+    pub(super) fn write_in_flight(&self) -> bool {
+        self.write_flight.is_some() || self.delete_flight.is_some()
     }
 
     pub(super) fn writing(&self) -> bool {
-        self.in_flight_edit.is_some() || !self.queued.is_empty() || self.write_flight.is_some()
+        self.in_flight_edit.is_some()
+            || !self.queued.is_empty()
+            || self.write_flight.is_some()
+            || self.defaults_confirming
+            || self.reconciling.is_some()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn draining(&self, config_read_failed: bool) -> bool {
+    pub(super) fn draining(&self, can_start_write: bool, config_refreshing: bool) -> bool {
         self.write_flight.is_some()
             || self.delete_flight.is_some()
-            || (!config_read_failed && !self.needs_reload && !self.queued.is_empty())
+            || (config_refreshing
+                && (self.defaults_confirming
+                    || self.delete_confirming.is_some()
+                    || self.delete_reconciling.is_some()
+                    || self.reconciling.is_some()))
+            || (can_start_write
+                && (self.pending_delete.is_some()
+                    || (!self.needs_reload && !self.queued.is_empty())))
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn needs_config_revalidation(&self) -> bool {
         self.write_flight.is_some()
             || self.delete_flight.is_some()
+            || self.defaults_confirming
+            || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
+            || self.reconciling.is_some()
+            || self.pending_delete.is_some()
             || (!self.needs_reload && !self.queued.is_empty())
     }
 
@@ -194,13 +213,43 @@ impl State {
     pub(super) fn has_unconfirmed(&self) -> bool {
         self.writing()
             || self.delete_flight.is_some()
+            || self.pending_delete.is_some()
+            || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
             || self.failed
             || self.delete_failed
             || self.needs_reload
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn pending_ops(&self) -> u32 {
+        let count = self.queued.len()
+            + usize::from(self.in_flight_edit.is_some())
+            + usize::from(self.pending_delete.is_some())
+            + usize::from(self.delete_flight.is_some());
+        u32::try_from(count).unwrap_or(u32::MAX)
+    }
+
+    pub(super) fn expected_after_pending(
+        &self,
+        snapshot: Option<&Value>,
+    ) -> MissionPreferenceExpectation {
+        if self.in_flight_edit.is_none() && self.queued.is_empty() {
+            MissionPreferenceExpectation::from_ui_config(snapshot, "missionProfileDefaults")
+        } else {
+            MissionPreferenceExpectation {
+                key: "missionProfileDefaults",
+                present: true,
+                value: Some(encode_mission_defaults(&self.shown(snapshot))),
+            }
+        }
+    }
+
     pub(super) fn busy_delete(&self) -> bool {
         self.delete_flight.is_some()
+            || self.pending_delete.is_some()
+            || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
     }
 
     pub(super) fn shown(&self, snapshot: Option<&Value>) -> Vec<MissionProfileDefault> {
@@ -217,6 +266,13 @@ impl State {
         if let Some((pending, _)) = &self.delete_flight {
             return *pending;
         }
+        if let Some(pending) = self
+            .pending_delete
+            .or(self.delete_confirming)
+            .or(self.delete_reconciling)
+        {
+            return pending;
+        }
         snapshot.is_some_and(|doc| doc["settings"]["missionDeleteSessions"] == true)
     }
 
@@ -228,128 +284,65 @@ impl State {
         self.queued.push_back(edit);
     }
 
-    pub(super) fn start_reload(
-        &mut self,
-        ctx: &ConfigContext<'_>,
-        wake: &rune::Waker,
-    ) -> ConfigEffects {
+    pub(super) fn start_reload(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
-        if self.writing() || self.reloading || !ctx.can_retry {
+        if self.writing() || self.reloading || !ctx.can_retry || ctx.backend.is_none() {
             return effects;
         }
-        let Some(backend) = ctx.backend.cloned() else {
-            return effects;
-        };
         if ctx.transport_lost {
             effects.revalidate_transport = true;
         }
         self.reloading = true;
         self.failed = false;
         self.delete_failed = false;
-        let guard = ctx.config_guard;
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.reload_flight = Some(inbox);
-        platform::spawn(async move {
-            let snapshot = Owner::Config.read(&backend).await.ok();
-            if out
-                .send(Reply::ManualReload { snapshot, guard })
-                .await
-                .is_ok()
-            {
-                wake();
-            }
-        });
+        effects.invalidate = true;
         effects.changed = true;
         effects
     }
 
-    pub(super) fn toggle_delete_sessions(
-        &mut self,
-        ctx: &ConfigContext<'_>,
-        next: bool,
-        wake: &rune::Waker,
-    ) -> bool {
-        if !ctx.config_loaded || self.delete_flight.is_some() {
+    pub(super) fn queue_delete_sessions(&mut self, ctx: &ConfigContext<'_>, next: bool) -> bool {
+        if !ctx.config_loaded || self.busy_delete() || ctx.backend.is_none() {
             return false;
         }
-        let Some(backend) = ctx.backend.cloned() else {
-            return false;
-        };
-        let expected = MissionPreferenceExpectation::from_ui_config(
-            ctx.config_snapshot,
-            "missionDeleteSessions",
-        );
-        let guard = ctx.config_guard;
-        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
         self.delete_failed = false;
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.delete_flight = Some((next, inbox));
-        platform::spawn(async move {
-            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
-                MissionPatchOutcome::Failed
-            } else {
-                patch_mission_preferences(
-                    &backend,
-                    json!({ "missionDeleteSessions": next }),
-                    &[expected],
-                )
-                .await
-            };
-            if out
-                .send(Reply::DeleteSessions { outcome, guard })
-                .await
-                .is_ok()
-            {
-                wake();
-            }
-        });
+        self.pending_delete = Some(next);
         true
     }
 
-    pub(super) fn poll(&mut self, ctx: &ConfigContext<'_>, wake: &rune::Waker) -> ConfigEffects {
+    pub(super) fn poll_replies(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
         let mut effects = ConfigEffects::default();
-        if self.reattach_pending && ctx.config_loaded && self.write_flight.is_none() {
-            self.reattach_pending = false;
-        }
-        if let Some(reply) = self
-            .reload_flight
-            .as_ref()
-            .and_then(|inbox| inbox.try_recv().ok())
+        if self.reattach_pending
+            && ctx.config_loaded
+            && !ctx.config_refreshing
+            && self.write_flight.is_none()
         {
-            self.reload_flight = None;
-            self.reloading = false;
-            if let Reply::ManualReload { snapshot, guard } = reply {
-                if let Some(snapshot) = snapshot {
-                    self.needs_reload = false;
-                    self.failed = false;
-                    effects.record_applied(snapshot, guard);
-                } else {
-                    self.failed = true;
-                    self.needs_reload = true;
-                }
-            }
-            effects.changed = true;
-            effects.settled = true;
+            self.reattach_pending = false;
         }
         if let Some(reply) = self
             .delete_flight
             .as_ref()
             .and_then(|(_, inbox)| inbox.try_recv().ok())
         {
-            self.delete_flight = None;
-            if let Reply::DeleteSessions { outcome, guard } = reply {
+            let pending_value = self.delete_flight.take().map(|(value, _)| value);
+            if let Reply::DeleteSessions {
+                outcome,
+                pre_send_aborted,
+            } = reply
+            {
                 match outcome {
-                    MissionPatchOutcome::Applied(snapshot) => {
+                    MissionPatchOutcome::Applied(_) => {
                         self.delete_failed = false;
-                        effects.record_applied(snapshot, guard);
+                        self.delete_confirming = pending_value;
+                        effects.invalidate = true;
                     }
                     MissionPatchOutcome::Conflict
                     | MissionPatchOutcome::Unsupported
                     | MissionPatchOutcome::Failed => {
                         self.delete_failed = true;
-                        effects.invalidate = true;
+                        if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                            self.delete_reconciling = pending_value;
+                            effects.invalidate = true;
+                        }
                     }
                 }
             }
@@ -362,86 +355,232 @@ impl State {
             .and_then(|inbox| inbox.try_recv().ok())
         {
             self.write_flight = None;
-            match reply {
-                Reply::Patch {
-                    outcome,
-                    expected_encoded,
-                    guard,
-                } => match outcome {
-                    MissionPatchOutcome::Applied(snapshot) => {
-                        self.in_flight_edit = None;
+            if let Reply::Patch {
+                outcome,
+                expected_encoded,
+                pre_send_aborted,
+            } = reply
+            {
+                match outcome {
+                    MissionPatchOutcome::Applied(_) => {
                         self.failed = false;
                         self.needs_reload = false;
-                        effects.record_applied(snapshot, guard);
+                        self.defaults_confirming = true;
+                        effects.invalidate = true;
                     }
                     MissionPatchOutcome::Conflict
                     | MissionPatchOutcome::Unsupported
                     | MissionPatchOutcome::Failed => {
                         self.failed = true;
-                        if let Some(backend) = ctx.backend.cloned() {
-                            self.spawn_failure_reload(
-                                backend,
-                                Some(expected_encoded),
-                                ctx.config_guard,
-                                wake,
-                            );
+                        if !pre_send_aborted && ctx.backend.is_some() && ctx.can_retry {
+                            self.reconciling = Some(Some(expected_encoded));
+                            effects.invalidate = true;
                         } else {
                             self.in_flight_edit = None;
                             self.needs_reload = true;
                             self.queued.clear();
                         }
                     }
-                },
-                Reply::ReloadAfterFailure {
-                    snapshot,
-                    expected_encoded,
-                    guard,
-                } => {
-                    self.in_flight_edit = None;
-                    if let Some(snapshot) = snapshot {
-                        let stored_matches = expected_encoded.as_ref().is_some_and(|expected| {
-                            let stored = raw_defaults(Some(&snapshot));
-                            valid_mission_defaults(stored)
-                                && stored.is_some_and(|value| value == expected)
-                        });
-                        self.failed = !stored_matches;
-                        self.needs_reload = false;
-                        effects.record_applied(snapshot, guard);
-                    } else {
-                        // Do not dequeue further edits against an unreloaded snapshot.
-                        self.failed = true;
-                        self.needs_reload = true;
-                        self.queued.clear();
-                    }
                 }
-                Reply::ManualReload { .. } | Reply::DeleteSessions { .. } => {}
             }
             effects.changed = true;
             effects.settled = true;
         }
-        // Wait for Preferences to publish any completed ACK/reload and confirm loaded config before popping.
-        if effects.applied.is_none()
-            && !effects.invalidate
-            && ctx.config_loaded
-            && !ctx.config_refreshing
-            && self.write_flight.is_none()
-            && self.in_flight_edit.is_none()
-            && !self.needs_reload
-            && !self.reattach_pending
-            && let Some(edit) = self.queued.pop_front()
-        {
+        effects
+    }
+
+    pub(super) fn settle_config(&mut self, ctx: &ConfigContext<'_>) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
+        if ctx.config_refreshing {
+            return effects;
+        }
+        if self.reloading {
+            self.reloading = false;
+            if ctx.config_loaded {
+                self.needs_reload = false;
+                self.failed = false;
+            } else {
+                self.failed = true;
+                self.needs_reload = true;
+            }
             effects.changed = true;
-            self.start_edit(ctx, edit, wake);
+            effects.settled = true;
+        }
+        if self.delete_confirming.is_some() {
+            self.delete_confirming = None;
+            if !ctx.config_loaded {
+                self.delete_failed = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if let Some(expected) = self.delete_reconciling.take() {
+            if ctx.config_loaded {
+                let actual = ctx
+                    .config_snapshot
+                    .is_some_and(|doc| doc["settings"]["missionDeleteSessions"] == true);
+                self.delete_failed = actual != expected;
+            } else {
+                self.delete_failed = true;
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if self.defaults_confirming {
+            self.defaults_confirming = false;
+            self.in_flight_edit = None;
+            if !ctx.config_loaded {
+                self.failed = true;
+                self.needs_reload = true;
+                self.queued.clear();
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if let Some(expected_encoded) = self.reconciling.take() {
+            self.in_flight_edit = None;
+            if ctx.config_loaded {
+                let stored_matches = expected_encoded.as_ref().is_some_and(|expected| {
+                    let stored = raw_defaults(ctx.config_snapshot);
+                    valid_mission_defaults(stored) && stored.is_some_and(|value| value == expected)
+                });
+                self.failed = !stored_matches;
+                self.needs_reload = false;
+            } else {
+                // Do not dequeue further edits against an unreloaded snapshot.
+                self.failed = true;
+                self.needs_reload = true;
+                self.queued.clear();
+            }
+            effects.changed = true;
+            effects.settled = true;
+        }
+        if !ctx.config_loaded && !self.write_in_flight() {
+            if self.pending_delete.take().is_some() {
+                self.delete_failed = true;
+                effects.changed = true;
+                effects.settled = true;
+            }
+            if !self.queued.is_empty() && self.in_flight_edit.is_none() {
+                self.queued.clear();
+                self.failed = true;
+                self.needs_reload = true;
+                effects.changed = true;
+                effects.settled = true;
+            }
         }
         effects
     }
 
-    fn start_edit(&mut self, ctx: &ConfigContext<'_>, edit: DefaultsEdit, wake: &rune::Waker) {
+    pub(super) fn launch_next(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        #[cfg(test)] pre_patch_gate: &mut Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) -> ConfigEffects {
+        let mut effects = ConfigEffects::default();
+        if self.write_in_flight()
+            || self.reloading
+            || self.defaults_confirming
+            || self.delete_confirming.is_some()
+            || self.delete_reconciling.is_some()
+            || self.reconciling.is_some()
+            || self.reattach_pending
+        {
+            return effects;
+        }
+        if let Some(next) = self.pending_delete.take() {
+            self.start_delete_sessions(
+                ctx,
+                next,
+                #[cfg(test)]
+                pre_patch_gate.take(),
+                wake,
+            );
+            effects.changed = true;
+            return effects;
+        }
+        if self.in_flight_edit.is_none()
+            && !self.needs_reload
+            && let Some(edit) = self.queued.pop_front()
+        {
+            effects.changed = true;
+            effects.invalidate |= self.start_edit(
+                ctx,
+                edit,
+                #[cfg(test)]
+                pre_patch_gate.take(),
+                wake,
+            );
+        }
+        effects
+    }
+
+    fn start_delete_sessions(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        next: bool,
+        #[cfg(test)] pre_patch_gate: Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) {
+        let Some(backend) = ctx.backend.cloned() else {
+            self.delete_failed = true;
+            return;
+        };
+        let expected = MissionPreferenceExpectation::from_ui_config(
+            ctx.config_snapshot,
+            "missionDeleteSessions",
+        );
+        let send_authority = ctx.send_authority(
+            &backend,
+            #[cfg(test)]
+            pre_patch_gate,
+        );
+        self.delete_failed = false;
+        let (out, inbox) = bounded(1);
+        let wake = wake.clone();
+        self.delete_flight = Some((next, inbox));
+        platform::spawn(async move {
+            let (outcome, pre_send_aborted) = if !send_authority.authorize_send(&backend).await {
+                (MissionPatchOutcome::Failed, true)
+            } else {
+                match patch_mission_preferences_checked(
+                    &backend,
+                    json!({ "missionDeleteSessions": next }),
+                    &[expected],
+                    || send_authority.still_ok(&backend),
+                )
+                .await
+                {
+                    Some(outcome) => (outcome, false),
+                    None => (MissionPatchOutcome::Failed, true),
+                }
+            };
+            if out
+                .send(Reply::DeleteSessions {
+                    outcome,
+                    pre_send_aborted,
+                })
+                .await
+                .is_ok()
+            {
+                wake();
+            }
+        });
+    }
+
+    fn start_edit(
+        &mut self,
+        ctx: &ConfigContext<'_>,
+        edit: DefaultsEdit,
+        #[cfg(test)] pre_patch_gate: Option<Receiver<()>>,
+        wake: &rune::Waker,
+    ) -> bool {
         let Some(backend) = ctx.backend.cloned() else {
             self.failed = true;
             self.needs_reload = true;
             self.queued.clear();
-            return;
+            return false;
         };
         let saved = ctx.config_snapshot;
         let current_expected =
@@ -455,7 +594,7 @@ impl State {
                     self.failed = true;
                     self.needs_reload = true;
                     self.queued.clear();
-                    return;
+                    return false;
                 }
             }
             DefaultsEdit::TaskMode { .. } | DefaultsEdit::Role { .. } => {}
@@ -464,45 +603,53 @@ impl State {
         if !ctx.config_loaded || (!repair && !valid_mission_defaults(raw_defaults(saved))) {
             self.failed = true;
             self.in_flight_edit = Some(edit);
-            self.spawn_failure_reload(backend, None, ctx.config_guard, wake);
-            return;
+            self.reconciling = Some(None);
+            return true;
         }
         let current = normalize_mission_defaults(raw_defaults(saved));
         let Some(next) = apply_edit(&current, &edit) else {
             self.failed = true;
             self.in_flight_edit = Some(edit);
-            self.spawn_failure_reload(backend, None, ctx.config_guard, wake);
-            return;
+            self.reconciling = Some(None);
+            return true;
         };
         let encoded = encode_mission_defaults(&next);
         if !valid_mission_defaults(Some(&encoded)) {
             self.failed = true;
             self.needs_reload = true;
             self.queued.clear();
-            return;
+            return false;
         }
-        let guard = ctx.config_guard;
-        let (epoch_guard, expected_epoch) = ctx.write_authority.clone();
+        let send_authority = ctx.send_authority(
+            &backend,
+            #[cfg(test)]
+            pre_patch_gate,
+        );
         let (out, inbox) = bounded(1);
         let wake = wake.clone();
         self.in_flight_edit = Some(edit);
         self.write_flight = Some(inbox);
         platform::spawn(async move {
-            let outcome = if epoch_guard.load(Ordering::Acquire) != expected_epoch {
-                MissionPatchOutcome::Failed
+            let (outcome, pre_send_aborted) = if !send_authority.authorize_send(&backend).await {
+                (MissionPatchOutcome::Failed, true)
             } else {
-                patch_mission_preferences(
+                match patch_mission_preferences_checked(
                     &backend,
                     json!({ "missionProfileDefaults": encoded }),
                     &[current_expected],
+                    || send_authority.still_ok(&backend),
                 )
                 .await
+                {
+                    Some(outcome) => (outcome, false),
+                    None => (MissionPatchOutcome::Failed, true),
+                }
             };
             if out
                 .send(Reply::Patch {
                     outcome,
                     expected_encoded: encoded,
-                    guard,
+                    pre_send_aborted,
                 })
                 .await
                 .is_ok()
@@ -510,31 +657,6 @@ impl State {
                 wake();
             }
         });
-    }
-
-    fn spawn_failure_reload(
-        &mut self,
-        backend: Backend,
-        expected_encoded: Option<Value>,
-        guard: Option<(u64, u64)>,
-        wake: &rune::Waker,
-    ) {
-        let (out, inbox) = bounded(1);
-        let wake = wake.clone();
-        self.write_flight = Some(inbox);
-        platform::spawn(async move {
-            let snapshot = Owner::Config.read(&backend).await.ok();
-            if out
-                .send(Reply::ReloadAfterFailure {
-                    snapshot,
-                    expected_encoded,
-                    guard,
-                })
-                .await
-                .is_ok()
-            {
-                wake();
-            }
-        });
+        false
     }
 }

@@ -61,6 +61,9 @@ pub enum WorkspaceEvent {
     ProvidersChanged {
         workspace_id: String,
     },
+    MissionCatalogChanged {
+        workspace_id: String,
+    },
     ProviderUsageRefresh(Option<String>),
     UiPreferencesChanged,
     MissionChanged {

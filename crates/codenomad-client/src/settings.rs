@@ -24,8 +24,8 @@ pub use opencode_actions::{
     local_opencode_offer, opencode_local, opencode_login_start, opencode_logs,
     set_opencode_login_start, validate_opencode_binary,
 };
-pub(crate) use providers::provider_change;
 pub use providers::{Provider, providers};
+pub(crate) use providers::{mission_catalog_change, provider_change};
 use serde_json::Value;
 use std::{
     sync::{

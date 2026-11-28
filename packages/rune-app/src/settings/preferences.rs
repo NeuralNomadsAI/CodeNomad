@@ -402,6 +402,7 @@ impl Preferences {
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
+        self.missions.on_transport_lost();
         if !self.transport_lost {
             self.transport_lost = true;
             self.revision += 1;
@@ -475,6 +476,7 @@ impl Preferences {
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
+        self.missions.on_transport_lost();
         if !self.transport_lost {
             self.transport_lost = true;
             self.revision += 1;
@@ -615,9 +617,16 @@ impl Preferences {
         let server_rev =
             check_revisions.then(|| backend.client.preferences_revision(Owner::Server));
         let atomic = backend.client.supports_atomic_settings_patches();
-        self.config.prepare_drain(config_rev, retry_failed, atomic);
-        self.state.prepare_drain(state_rev, retry_failed, atomic);
-        self.server.prepare_drain(server_rev, retry_failed, atomic);
+        self.config.prepare_drain(
+            config_rev,
+            retry_failed,
+            atomic,
+            self.missions.needs_config_revalidation(),
+        );
+        self.state
+            .prepare_drain(state_rev, retry_failed, atomic, false);
+        self.server
+            .prepare_drain(server_rev, retry_failed, atomic, false);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -647,13 +656,14 @@ impl Preferences {
                     codenomad_client::http::REQUEST_TIMEOUT * 3 + Duration::from_millis(100);
                 let total_budget =
                     codenomad_client::http::REQUEST_TIMEOUT * 6 + Duration::from_millis(100);
+                let max_ops = 16u32.saturating_add(self.missions.pending_ops().saturating_mul(4));
                 platform::block_on(async {
                     let mut last_progress = Instant::now();
                     let mut settled_ops = 0u32;
                     while self.documents_draining()
                         && started.elapsed() < total_budget
                         && last_progress.elapsed() < stall_budget
-                        && settled_ops < 16
+                        && settled_ops < max_ops
                     {
                         let transport_or_watch =
                             self.observe_transport_drops() | self.take_invalidations();
@@ -689,10 +699,21 @@ impl Preferences {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn documents_draining(&self) -> bool {
+        let config_refreshing = self.can_retry() && self.config.read_refreshing();
+        let can_start_missions_write = self.can_retry()
+            && (config_refreshing
+                || (self.config_loaded()
+                    && !self.config.busy_for_external_write()
+                    && self
+                        .backend
+                        .as_ref()
+                        .is_some_and(super::ServerOwner::backend_verified)));
         self.config.draining()
             || self.state.draining()
             || self.server.draining()
-            || self.missions.draining(self.config.read_failed())
+            || self
+                .missions
+                .draining(can_start_missions_write, config_refreshing)
             || self.speech.draining()
             || (self.speech.needs_reconciliation()
                 && !self.server.read_failed()
@@ -913,6 +934,7 @@ impl Preferences {
         self.authentication_required = true;
         self.revoke_send_authority();
         self.memory.on_authentication_required();
+        self.missions.on_transport_lost();
         self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
@@ -1012,56 +1034,33 @@ impl Preferences {
         self.config.read_failed() || self.transport_lost || self.authentication_required
     }
 
-    pub(super) fn config_guard(&self) -> Option<(u64, u64)> {
-        let backend = self.backend.as_ref()?;
-        Some((
-            self.config.invalidation_seq(),
-            backend.client.preferences_revision(Owner::Config),
-        ))
-    }
-
     #[cfg(test)]
     pub(super) fn apply_mission_config(&mut self, snapshot: Value) {
-        self.apply_mission_config_checked(snapshot, None);
-    }
-
-    pub(super) fn apply_mission_config_checked(
-        &mut self,
-        snapshot: Value,
-        guard: Option<(u64, u64)>,
-    ) {
-        if let Some((seq, rev)) = guard
-            && self.config_guard() != Some((seq, rev))
-        {
-            self.config.invalidate();
-            return;
-        }
-        if self
-            .config
-            .apply_external_snapshot(snapshot, guard.map(|(seq, _)| seq), None)
-        {
-            self.revision += 1;
-            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
-                wake();
-            }
+        self.config.seed_external_snapshot(snapshot);
+        self.revision += 1;
+        for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+            wake();
         }
     }
 
     pub(super) fn invalidate_config_for_missions(&mut self) {
-        self.config.invalidate();
+        self.config.invalidate_authoritative();
     }
 
-    fn apply_mission_effects(&mut self, effects: super::missions::ConfigEffects) -> (bool, bool) {
+    fn apply_mission_effects(
+        &mut self,
+        effects: super::missions::ConfigEffects,
+    ) -> (bool, bool, bool) {
         if effects.revalidate_transport {
             self.revalidate_transport();
         }
-        if let Some((snapshot, guard)) = effects.applied {
-            self.apply_mission_config_checked(snapshot, guard);
-        }
         if effects.invalidate {
             self.invalidate_config_for_missions();
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
         }
-        (effects.changed, effects.settled)
+        (effects.changed, effects.settled, effects.invalidate)
     }
 
     fn run_mission_op<R>(
@@ -1073,19 +1072,14 @@ impl Preferences {
             && !self.config.read_failed()
             && !self.transport_lost
             && can_retry;
-        let config_guard = self.backend.as_ref().map(|b| {
-            (
-                self.config.invalidation_seq(),
-                b.client.preferences_revision(Owner::Config),
-            )
-        });
         let ctx = super::missions::ConfigContext {
             backend: self.backend.as_ref(),
             config_loaded,
-            config_refreshing: self.config.refreshing(),
+            config_refreshing: self.config.read_refreshing(),
+            config_busy: self.config.busy_for_external_write(),
             config_snapshot: self.config.snapshot.as_ref(),
-            config_guard,
-            write_authority: self.config.write_authority(),
+            prefs_authority: self.authority.clone(),
+            doc_epoch: self.config.write_authority(),
             transport_lost: self.transport_lost,
             can_retry,
         };
@@ -1093,13 +1087,12 @@ impl Preferences {
     }
 
     pub(super) fn poll_missions_writes(&mut self, wake: &rune::Waker) -> bool {
-        let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
+        let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, false, wake));
         self.apply_mission_effects(effects).0
     }
 
-    pub(super) fn start_mission_defaults_reload(&mut self, wake: &rune::Waker) {
-        let effects =
-            self.run_mission_op(|missions, ctx| missions.start_defaults_reload(ctx, wake));
+    pub(super) fn start_mission_defaults_reload(&mut self, _wake: &rune::Waker) {
+        let effects = self.run_mission_op(|missions, ctx| missions.start_defaults_reload(ctx));
         self.apply_mission_effects(effects);
     }
 
@@ -1108,8 +1101,8 @@ impl Preferences {
             self.run_mission_op(|missions, ctx| missions.toggle_delete_sessions(ctx, next, wake));
     }
 
-    pub(super) fn start_mission_library_reload(&mut self, wake: &rune::Waker) {
-        let effects = self.run_mission_op(|missions, ctx| missions.start_library_reload(ctx, wake));
+    pub(super) fn start_mission_library_reload(&mut self, _wake: &rune::Waker) {
+        let effects = self.run_mission_op(|missions, ctx| missions.start_library_reload(ctx));
         self.apply_mission_effects(effects);
     }
 
@@ -1237,6 +1230,7 @@ impl Preferences {
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
+                self.missions.on_transport_lost();
                 disconnected = true;
                 if !self.transport_lost {
                     self.transport_lost = true;
@@ -1312,13 +1306,14 @@ impl Preferences {
             true,
             self.server_active() || self.speech.needs_reconciliation(),
         );
-        let (config_changed, config_settled) = if poll_config {
+        let (mut config_changed, mut config_settled) = if poll_config {
             self.config.poll(
                 &backend,
                 Owner::Config,
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                self.missions.config_write_in_flight(),
                 &main,
                 &window,
             )
@@ -1341,6 +1336,7 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                false,
                 &main,
                 &window,
             )
@@ -1354,19 +1350,42 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                false,
                 &main,
                 &window,
             )
         } else {
             (false, false)
         };
-        let (missions_changed, missions_settled) =
-            if let Some(wake) = window.as_ref().or(main.as_ref()) {
-                let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, wake));
-                self.apply_mission_effects(effects)
-            } else {
-                (false, false)
+        let (missions_changed, missions_settled, missions_invalidated) = {
+            let fallback_wake: rune::Waker;
+            let wake = match window.as_ref().or(main.as_ref()) {
+                Some(wake) => wake,
+                None => {
+                    fallback_wake = Arc::new(|| {});
+                    &fallback_wake
+                }
             };
+            let launch_pending_depth = !revalidate_idle || self.provider_target.is_none();
+            let effects = self.run_mission_op(|missions, ctx| {
+                missions.poll_writes(ctx, launch_pending_depth, wake)
+            });
+            self.apply_mission_effects(effects)
+        };
+        if missions_invalidated && poll_config && !self.missions.config_write_in_flight() {
+            let (followup_changed, followup_settled) = self.config.poll(
+                &backend,
+                Owner::Config,
+                &active_client_ids,
+                seen_drops,
+                self.transport_lost,
+                false,
+                &main,
+                &window,
+            );
+            config_changed |= followup_changed;
+            config_settled |= followup_settled;
+        }
         let (mut speech_changed, mut speech_settled) = {
             let effects = self.run_speech_op(|speech, ctx| speech.poll(ctx));
             self.apply_speech_effects(effects)

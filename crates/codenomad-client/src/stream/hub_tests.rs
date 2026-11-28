@@ -912,6 +912,62 @@ fn begin_close_revokes_guards_and_blocks_new_subscribers_before_finish() {
 }
 
 #[test]
+fn hub_upstream_health_evicts_stopped_workspaces_and_recovers_after_overflow() {
+    let hub = Arc::new(Hub::default());
+    // Creating and stopping more than MAX_TRACKED_LOCATIONS workspaces must never
+    // leak upstream_unhealthy or trigger a permanent global lockout.
+    for i in 0..(MAX_TRACKED_LOCATIONS + 25) {
+        let id = format!("stopped-{i}");
+        assert!(matches!(
+            classify_frame(
+                "message",
+                &json!({
+                    "type": "workspace.stopped",
+                    "workspaceId": id,
+                })
+                .to_string(),
+            ),
+            FrameClass::ReplayStopped { error: false, .. }
+        ));
+        assert!(matches!(
+            classify_frame(
+                "message",
+                &json!({
+                    "type": "instance.eventStatus",
+                    "instanceId": id,
+                    "status": "disconnected",
+                    "reason": "workspace stopped",
+                })
+                .to_string(),
+            ),
+            FrameClass::ReplayStopped { error: false, .. }
+        ));
+        hub.note_workspace_upstream_status(&id, false);
+        assert!(!hub.workspace_upstream_healthy(&id));
+        hub.note_workspace_stopped(&id);
+    }
+    assert!(
+        hub.workspace_upstream_healthy("healthy-ws"),
+        "stopped workspaces must be evicted from upstream_unhealthy instead of tripping overflow"
+    );
+
+    // Even if more than MAX_TRACKED_LOCATIONS live workspaces simultaneously error and trip
+    // overflow_unhealthy, a workspace that receives `connected` must recover immediately while
+    // unknown workspaces remain fail-closed.
+    for i in 0..(MAX_TRACKED_LOCATIONS + 10) {
+        hub.note_workspace_upstream_status(&format!("errored-{i}"), false);
+    }
+    assert!(!hub.workspace_upstream_healthy("unverified-ws"));
+    hub.note_workspace_upstream_status("recovered-ws", true);
+    assert!(
+        hub.workspace_upstream_healthy("recovered-ws"),
+        "connected workspace must remain usable even after upstream_unhealthy overflow"
+    );
+    hub.note_workspace_upstream_status("recovered-ws", false);
+    assert!(!hub.workspace_upstream_healthy("recovered-ws"));
+}
+
+#[test]
 fn voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits() {
     block_bounded(
         "voluntary_detach_revokes_guard_immediately_without_outage_before_pump_exits",
@@ -1478,6 +1534,31 @@ fn read_shared_delivers_session_moved_before_closed_after_overflow() {
             shared.finish(hub, false);
         },
     );
+}
+
+#[test]
+fn hub_location_state_reads_revision_and_health_atomically() {
+    let hub = Hub::default();
+    let (rev0, healthy0) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev0, 0);
+    assert!(healthy0);
+
+    hub.note_session_location_change("ws-a", "ses-1");
+    let (rev1, healthy1) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev1, 1);
+    assert!(healthy1);
+    assert_eq!(hub.location_revision("ws-a", Some("ses-1")), rev1);
+    assert_eq!(hub.workspace_upstream_healthy("ws-a"), healthy1);
+
+    hub.note_workspace_upstream_status("ws-a", false);
+    let (rev2, healthy2) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev2, 2);
+    assert!(!healthy2);
+
+    hub.note_workspace_upstream_status("ws-a", true);
+    let (rev3, healthy3) = hub.location_state("ws-a", Some("ses-1"));
+    assert_eq!(rev3, 3);
+    assert!(healthy3);
 }
 
 #[test]

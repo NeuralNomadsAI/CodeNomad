@@ -1,10 +1,7 @@
 //! Defaults card view for Preferences → Missions (scope, task mode, folded profiles, deleteSessions).
 use super::{Confirm, InfoTip, Missions, Picker, defaults};
 use crate::{
-    settings::{
-        preferences::{Owner, Preferences},
-        providers::Target,
-    },
+    settings::preferences::{Owner, Preferences},
     strings::{locale, t},
 };
 use codenomad_client::settings::missions::{
@@ -40,13 +37,18 @@ impl Missions {
         let needs_reload = prefs.missions.defaults.needs_reload;
         let disabled = !active || reloading || needs_reload || (!writing && (!loaded || !valid));
         let shown = prefs.missions.defaults.shown(snapshot);
-        let scope = self.scope;
+        let scope = prefs.missions.scope();
         let exception = scope.exception();
         let entry = shown.iter().find(|item| item.template == scope);
         let global_mode = global_task_mode(&shown);
         let has_target = prefs.can_retry()
             && !prefs.is_transport_lost()
-            && prefs.provider_target.as_ref().is_some_and(Target::online);
+            && prefs.provider_target.as_ref().is_some_and(|t| {
+                t.online()
+                    && t.backend()
+                        .client
+                        .workspace_upstream_healthy(t.location().0)
+            });
 
         let header = layout::action_row()
             .child(
@@ -151,6 +153,7 @@ impl Missions {
             .position(|item| *item == scope)
             .unwrap_or(0);
         let scope_open = self.open_picker == Some(Picker::Scope) && !disabled;
+        let shared_scope = shared.clone();
         let scope_picker =
             chrome::picker("mission-scope", t("missions.defaults.scope"), &scope_labels)
                 .current(Some(scope_labels[scope_index]))
@@ -160,11 +163,14 @@ impl Missions {
                 .on_close(move |s: &mut S| set_picker(s, None))
                 .on_choose(move |s: &mut S, value, _| {
                     set_picker(s, None);
-                    if let Some(m) = access(s)
+                    if access(s).is_some()
                         && let Some(pos) =
                             scope_labels_choose.iter().position(|label| label == value)
                     {
-                        m.scope = MissionDefaultScope::ALL[pos];
+                        shared_scope
+                            .borrow_mut()
+                            .missions
+                            .set_scope(MissionDefaultScope::ALL[pos]);
                     }
                 });
         defaults_card = defaults_card.child(chrome::setting_row(
@@ -266,6 +272,7 @@ impl Missions {
             inherited_profiles.as_ref(),
             effective_mode,
             disabled || !has_target,
+            disabled,
             self.open_picker,
             layers,
             set_picker,
@@ -289,10 +296,10 @@ impl Missions {
                     m.confirm = Some(Confirm::ResetProfiles {
                         scope,
                         owner: backend.client_id.clone(),
-                        expected: MissionPreferenceExpectation::from_ui_config(
-                            prefs.saved(Owner::Config),
-                            "missionProfileDefaults",
-                        ),
+                        expected: prefs
+                            .missions
+                            .defaults
+                            .expected_after_pending(prefs.saved(Owner::Config)),
                     });
                 }
             },
@@ -306,13 +313,17 @@ impl Missions {
                 }
             },
         );
+        let shared_profiles_toggle = shared.clone();
         defaults_card = defaults_card.child(chrome::disclosure(
             &disclosure_label,
-            self.profiles_open,
+            prefs.missions.profiles_open(),
             profiles_body,
             move |s: &mut S| {
-                if let Some(m) = access(s) {
-                    m.profiles_open = !m.profiles_open;
+                if access(s).is_some() {
+                    shared_profiles_toggle
+                        .borrow_mut()
+                        .missions
+                        .toggle_profiles_open();
                 }
             },
         ));
