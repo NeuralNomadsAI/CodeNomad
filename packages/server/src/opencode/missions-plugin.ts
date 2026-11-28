@@ -53,6 +53,7 @@ import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 import type { MissionBusinessControl } from "../missions/business-control"
 import { scheduleToolInput, scheduleToolWire } from "../missions/schedule-tool"
 import { missionProgramInput, missionProgramWire } from "../missions/program-tool"
+import { legacySchedule, legacyScheduleKey, legacyTombstone, type LegacySchedule } from "../missions/legacy-schedules"
 import { missionLaunchPolicySchema, requiresMissionCalendar } from "../missions/launch-policy"
 import { parseProjectRead, projectReadWire } from "../missions/project-read-tool"
 import { projectMissionController, projectControlResult } from "../missions/project-control"
@@ -149,6 +150,8 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         lifecycle(input: unknown, context: MutationContext): Promise<unknown>
         recover(input: unknown, context: MutationContext): Promise<unknown>
         cleanupTarget(input: unknown): Promise<unknown>
+        legacySchedules(input: unknown): Promise<unknown>
+        retireLegacySchedule(input: unknown): Promise<unknown>
         create(input: unknown, context: MutationContext): Promise<unknown>
         creationReceipt(input: unknown): Promise<unknown>
         update(input: unknown, context: MutationContext): Promise<unknown>
@@ -320,6 +323,24 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
           sessionID: requiredText(value.sessionID, "sessionID", 240),
         })))
       },
+      legacySchedules: async () => {
+        assertActive()
+        const prefix = legacyScheduleKey(context.location.project), schedules: LegacySchedule[] = []
+        for (let after: string | undefined; schedules.length < 64;) {
+          const page = await context.storage.scan({ prefix, after, limit: 64 })
+          for (const entry of page.entries) { const found = legacySchedule(entry.value); if (found && schedules.length < 64) schedules.push(found) }
+          if (page.entries.length < 64) break
+          after = page.entries.at(-1)!.key
+        }
+        return { schedules: JSON.parse(JSON.stringify(schedules)) }
+      },
+      retireLegacySchedule: async input => {
+        assertActive()
+        const key = legacyScheduleKey(context.location.project, requiredText(object(input).id, "id", 100))
+        const tombstone = legacyTombstone(await context.storage.get(key), Date.now())
+        if (tombstone) await context.storage.set(key, tombstone as MissionJsonValue)
+        return { retired: true as const }
+      },
       create: async (input, context) => { assertActive(); return mutationResult(context, () => control.create(parseCreateMissionInput(input))) },
       creationReceipt: async input => { assertActive(); return control.creationReceipt(parseCreateMissionInput(input)) },
       update: async (input, context) => { assertActive(); return mutationResult(context, () => control.update(parseUpdateMissionInput(input))) },
@@ -345,6 +366,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       recurrenceCurrent: tracked(handlers.recurrenceCurrent), recurrenceCurrentContent: tracked(handlers.recurrenceCurrentContent),
       recurrenceCurrentPage: tracked(handlers.recurrenceCurrentPage),
       recover: tracked(handlers.recover), lifecycle: tracked(handlers.lifecycle),
+      legacySchedules: tracked(handlers.legacySchedules), retireLegacySchedule: tracked(handlers.retireLegacySchedule),
       cleanupTarget: tracked(handlers.cleanupTarget), create: tracked(handlers.create),
       update: tracked(handlers.update), delete: tracked(handlers.delete),
     })

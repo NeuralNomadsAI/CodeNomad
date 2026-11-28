@@ -9,7 +9,6 @@ import type {} from "./fixtures/mission-navigation"
 import { clickMissionAction, missionDetail, missionEntryStatus, missionRefresh, selectMission, selectedMissionTitle } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
 import { missionContentFixture, panelMissions } from "./mission-content-fixture"
-import { pausedMissionScheduleReceipt } from "./mission-scheduled-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -37,8 +36,8 @@ const programming = (missionID: string, extra: Partial<MissionCalendarView> = {}
 async function setup() {
   const page = await browser.newPage({ locale: "en-GB", viewport: { width: 1280, height: 900 } })
   page.setDefaultTimeout(15000)
-  const state = { missions: [mission("A", "Daily review"), mission("B", "Other work")], calendars: [programming("A")], schedules: [] as any[], refuse: false }
-  const writes: string[] = [], saved: any[] = [], deleted: any[] = []
+  const state = { missions: [mission("A", "Daily review"), mission("B", "Other work")], calendars: [programming("A")] }
+  const writes: string[] = [], saved: any[] = []
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
@@ -47,11 +46,10 @@ async function setup() {
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     const calendar = /\/missions\/calendars(?:\/([^/]+)(?:\/(pause|resume))?)?$/.exec(pathname)
     if (pathname.endsWith("/missions/scheduled/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: state.schedules } })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (calendar) {
       if (method === "PUT") {
         const body = request.postDataJSON(); saved.push(body)
-        if (state.refuse) return route.fulfill({ status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" } })
         // A programming saved for the first time comes with the Mission prepared for its first launch.
         if (!state.calendars.some(item => item.id === calendar[1])) {
           state.missions = [...state.missions, mission("P", body.configuration.title, "prepared")]
@@ -62,7 +60,6 @@ async function setup() {
       else if (calendar[2]) state.calendars = state.calendars.map(item => ({ ...item, paused: calendar[2] === "pause" }))
       return route.fulfill({ json: { calendars: state.calendars } })
     }
-    if (method === "POST" && pathname.endsWith("/schedule")) { deleted.push(request.postDataJSON()); state.schedules = []; return route.fulfill({ json: { document: null, pending: false, deleted: true } }) }
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(state.missions),
       generatedAt: NOW, discardedEvents: 0, activity: { generatedAt: NOW, missions: [] } } })
     const read = missionReadFixture(pathname, method, state.missions) ?? missionContentFixture(request.url(), method, state.missions)
@@ -71,7 +68,7 @@ async function setup() {
     if (pathname.endsWith("/provider")) return route.fulfill({ json: { all: [], connected: [], default: {} } })
     return route.fulfill({ json: pathname.includes("/instance/") ? [] : {} })
   })
-  return { page, state, writes, saved, deleted, open: () => page.goto(url, { timeout: 60000 }) }
+  return { page, state, writes, saved, open: () => page.goto(url, { timeout: 60000 }) }
 }
 const facts = async (page: Page) => (await missionDetail(page).locator(".mission-schedule-facts").innerText()).replace(/\s+/g, " ")
 
@@ -129,48 +126,5 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     await clickMissionAction(page, "Delete selected mission…")
     await removed
     assert.deepEqual(writes.slice(0, 2), ["DELETE /missions/calendars/cal_review", "DELETE /missions/C"])
-  } finally { await page.close() }
-})
-
-test("a schedule the panel finds becomes a programmed Mission: saved paused under its identity, then deleted", async () => {
-  const { page, state, writes, saved, deleted, open } = await setup()
-  try {
-    const launch = { when: [{ kind: "cron", expression: "0 7 * * *", zone: "UTC" }] }
-    const schedule = (await pausedMissionScheduleReceipt({ requestID: "req_old", expectedRevision: 0, action: "create",
-      configuration: { title: "Old schedule", objective: "Review overnight changes", template: "custom", taskMode: "native",
-        profiles: { coordinator: profile, roles: { specialist: profile } }, watchedConversationIDs: [], launch } })).document!
-    state.missions = [mission("B", "Other work")]; state.calendars = []; state.schedules = [{ ...schedule, control: null }]
-    await open()
-    await page.locator('.mission-row[data-mission-key="mission:P"]').waitFor()
-    await page.locator('.mission-row[data-mission-key^="scheduled:"]').waitFor({ state: "detached" })
-    assert.deepEqual(writes, ["PUT /missions/calendars/msn_created", "POST /missions/msn_created/schedule"])
-    assert.deepEqual([saved[0].paused, saved[0].configuration.title, saved[0].configuration.launch, "roots" in saved[0].configuration], [true, "Old schedule", launch, false])
-    assert.deepEqual([deleted[0].action, deleted[0].expectedRevision, deleted[0].deleteManagedSessions], ["delete", schedule.revision, false])
-    assert.match(await missionEntryStatus(page, "Old schedule"), /Every day · 07:00 · UTC · Paused/)
-  } finally { await page.close() }
-})
-
-test("a schedule whose save is refused is kept, and tried again once it is edited", async () => {
-  const { page, state, writes, saved, open } = await setup()
-  try {
-    const schedule = (await pausedMissionScheduleReceipt({ requestID: "req_old", expectedRevision: 0, action: "create",
-      configuration: { title: "Old schedule", objective: "Review overnight changes", template: "custom", taskMode: "native",
-        profiles: { coordinator: profile, roles: { specialist: profile } }, watchedConversationIDs: [], launch: { when: [{ kind: "cron", expression: "0 7 * * *", zone: "UTC" }] } } })).document!
-    state.missions = [mission("B", "Other work")]; state.calendars = []; state.schedules = [{ ...schedule, control: null }]; state.refuse = true
-    const refused = page.waitForResponse(response => response.request().method() === "PUT")
-    await open()
-    await refused
-    await page.locator('.mission-row[data-mission-key^="scheduled:"]').waitFor()
-    assert.deepEqual(writes, ["PUT /missions/calendars/msn_created"], "refused: the schedule is not deleted")
-    await missionRefresh(page).click()
-    await page.waitForTimeout(500)
-    assert.equal(saved.length, 1, "an unchanged schedule is not tried again")
-    // The person edits the schedule: its new configuration is tried.
-    state.refuse = false
-    state.schedules = [{ ...state.schedules[0], revision: state.schedules[0].revision + 1, configuration: { ...state.schedules[0].configuration, objective: "Review overnight changes, briefly" } }]
-    await missionRefresh(page).click()
-    await page.locator('.mission-row[data-mission-key="mission:P"]').waitFor()
-    assert.deepEqual([saved.length, saved[1].configuration.objective], [2, "Review overnight changes, briefly"])
-    assert.equal(writes.at(-1), "POST /missions/msn_created/schedule")
   } finally { await page.close() }
 })
