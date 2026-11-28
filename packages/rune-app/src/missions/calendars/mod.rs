@@ -269,7 +269,7 @@ impl Calendars {
                 self.unavailable = true;
                 self.failed = false;
                 if kind == OpKind::Mutate {
-                    self.feedback = Some("missions.scheduling.capability.missing");
+                    self.feedback = Some("missions.control.unavailable.title");
                 }
             }
             Ok(CalendarOutcome::Unsupported(reason)) => {

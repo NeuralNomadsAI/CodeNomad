@@ -168,7 +168,7 @@ fn describe_criteria_covers_all_post_1791_variants_and_connectors() {
     assert!(lines[0].contains("0 9 * * *") && lines[0].contains("UTC"));
     assert!(lines[1].starts_with("if · ") && lines[1].contains("Cargo.toml, src/lib.rs"));
     assert!(lines[2].starts_with("or · ") && lines[2].contains("main"));
-    assert!(lines[3].starts_with("else · ") && lines[3].contains("Once, now"));
+    assert!(lines[3].starts_with("or · ") && lines[3].contains("Once, now"));
     assert!(lines[4].starts_with("if · ") && lines[4].contains("msn_prev"));
     assert!(lines[11].contains("New merge request") && lines[11].contains("@carol"));
     assert!(lines[12].contains("git.example.com/org/app") && lines[12].contains("release"));
@@ -252,7 +252,7 @@ fn editor_validates_launch_when_opaque_replacement_and_coordinator_goal() {
     ed.move_criterion(1, -1);
     assert_eq!(
         ed.build_request().unwrap_err(),
-        "missions.scheduling.error.capability"
+        "missions.scheduling.error.unsupported"
     );
 
     // Opaque stored launch stays read-only until explicitly replaced.

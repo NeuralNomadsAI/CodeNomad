@@ -1486,7 +1486,7 @@
     {
       "specifier": "solid-js",
       "file": "packages/ui/src/components/mission-backend-consumers.test.ts",
-      "line": 12,
+      "line": 11,
       "resolution": "external-dependency-requires-installed-contract"
     },
     {
@@ -16929,24 +16929,6 @@
     },
     {
       "specifier": "node:assert/strict",
-      "file": "packages/ui/tests/browser/mission-scheduling-stability.test.ts",
-      "line": 1,
-      "resolution": "external-dependency-requires-installed-contract"
-    },
-    {
-      "specifier": "node:test",
-      "file": "packages/ui/tests/browser/mission-scheduling-stability.test.ts",
-      "line": 2,
-      "resolution": "external-dependency-requires-installed-contract"
-    },
-    {
-      "specifier": "playwright",
-      "file": "packages/ui/tests/browser/mission-scheduling-stability.test.ts",
-      "line": 3,
-      "resolution": "external-dependency-requires-installed-contract"
-    },
-    {
-      "specifier": "node:assert/strict",
       "file": "packages/ui/tests/browser/mission-scheduling.test.ts",
       "line": 1,
       "resolution": "external-dependency-requires-installed-contract"
@@ -20699,7 +20681,7 @@
     "packages/ui/src/components/mission-action-bar.tsx": "0bc7ec07ee52032ec14377b56fab47a4838bcdf425f6a8d2503354cd2af606e6",
     "packages/ui/src/components/mission-attention-model.ts": "f84da1b89dfbccff25cfc5f43b0590e8b07365d672c642360b7de239603b54ea",
     "packages/ui/src/components/mission-attention.test.ts": "dacf062a7a850c60b143517cded20ab31b42735ca507e819d2351173edb5d03b",
-    "packages/ui/src/components/mission-backend-consumers.test.ts": "f766f172288391dfaff050590b32fd2fb9373e90568a10e4c1223cbfdb868533",
+    "packages/ui/src/components/mission-backend-consumers.test.ts": "7fb3da37f944926b7040738af053b492ed13c0e0e61a13bb655b4980a16737fd",
     "packages/ui/src/components/mission-briefing-locales.test.ts": "9bc511d92d81cd4943323b6cba6a0b611dc07870b989305dd81b6b75d5280f15",
     "packages/ui/src/components/mission-briefing-model.test.ts": "73845be33c139d992d67553941f8475cfc507dfc9af277fca8e131126d7cc3c9",
     "packages/ui/src/components/mission-briefing-model.ts": "564055feb1d9f003930fbc6126ae983256dec3ff8581af4332ba77cd3af979cd",
@@ -20713,9 +20695,9 @@
     "packages/ui/src/components/mission-editor-body.test.ts": "1780cb7df5876ad30b392cb1e8d6890f4e0a603c9d1b906fb445745fc33a661e",
     "packages/ui/src/components/mission-editor-body.ts": "687a47201bc58a656df60fd88f09d8374f3b59dbcd4fe7edeb5a7d56997d3e18",
     "packages/ui/src/components/mission-editor-repository.ts": "6038d2cb07d13af9e796ec3de1733df30be56ec77a8f4ada9b98b29b709f9938",
-    "packages/ui/src/components/mission-editor-schedule.ts": "560f25877b80b64fa98470387ec4c11aaff1d85a8710fc46a5b67a76486c59a8",
-    "packages/ui/src/components/mission-editor-sources.ts": "b7c5e4fb2b4e2372cfad6a0be22ce8b57b0b0dfef353896a605317a4c498dfd2",
-    "packages/ui/src/components/mission-editor.tsx": "35ad6f2b08cb0874f50dc224fd24b074ff612b81cee3758ff744444ca61db994",
+    "packages/ui/src/components/mission-editor-schedule.ts": "9f721fd7400ad28ba7b1de303ef9145ba0139e1e6da2ae6cb296b2f89fb3d164",
+    "packages/ui/src/components/mission-editor-sources.ts": "f232f35979b3aa4a9e62d50fb6362064524c7732e3774b52c3c52b532ab01a8f",
+    "packages/ui/src/components/mission-editor.tsx": "067de18918c6b654891c7c51577cbe4d3ce84f87b7659987e3f22aa916fb1f6e",
     "packages/ui/src/components/mission-execution-model.ts": "26e033bb23cae669e09d905da42abef5372c54a3fba2af1c4d12d341101905bc",
     "packages/ui/src/components/mission-execution.test.ts": "60f4fed38cc17b789dbb1963d7fd8508ffa5a3327b7be94a120d87f058d1da55",
     "packages/ui/src/components/mission-execution.tsx": "f3503266750eb404366bde87c779c57811f8fb25ddfc7a880d511c5ba14e77b1",
@@ -20761,15 +20743,15 @@
     "packages/ui/src/components/mission-recovery-button.tsx": "91f6642b8318d5244283039bcc4db55cd9bd1c01829fb220be6d29019229c351",
     "packages/ui/src/components/mission-report-prose.tsx": "fda058a7d274e217bd806ccbad1544a8b24260b51c70c9d4e986ae7d0be4e1a1",
     "packages/ui/src/components/mission-repository-fields.tsx": "210c70d58b5ed09ef69399d2d1ae29c2eb28fc30f04af4d7b0141315941d86e6",
-    "packages/ui/src/components/mission-scheduling-data.test.ts": "c23f2c93fcf2c424e9054e61ee4afb845f3d640ac29d621f6d5607a14c166324",
-    "packages/ui/src/components/mission-scheduling-data.ts": "1400228020d11a336d611f1e6793aa9fb60b7d2a611c65e7145fd79421b7cd17",
-    "packages/ui/src/components/mission-scheduling-decode.test.ts": "54132eb4b2b45d1b2821afcee6f8780c6e9429d6c2dbb059264b654d7f2f577a",
-    "packages/ui/src/components/mission-scheduling-decode.ts": "03008f108881fdf6a7e4ac4fa65cf2c21e2b00dd9aeeda905db4c71b3b07d308",
+    "packages/ui/src/components/mission-scheduling-data.test.ts": "ca8d26a1a308edef59e604d846e8b4bbb67aac8d01444cf75f21dcfe509d0a60",
+    "packages/ui/src/components/mission-scheduling-data.ts": "243f5756c83946f988a8a26516f0c3e36e2a7b59d41c6aa75a550d154239320d",
+    "packages/ui/src/components/mission-scheduling-decode.test.ts": "3cf4662f95afd33b9deb17e8e84ab9be241b89855fef61cdf6eb6f4808281610",
+    "packages/ui/src/components/mission-scheduling-decode.ts": "f99d89f782a9dc4b65ba56bcd42931111e0449ef6efbe48339cec12c63a29281",
     "packages/ui/src/components/mission-scheduling-locales.test.ts": "9b17deffc2ed042e46bb8b35051001865700759120ac7b958b95d50f4cbd89f5",
-    "packages/ui/src/components/mission-scheduling-sources.tsx": "8e224b90cfc304b7fc44b4c60e7acb8c8fbfb11c5d6197c0930d57c0b6c20c3f",
-    "packages/ui/src/components/mission-scheduling-summary.test.ts": "80df2d8585e461164ecf716361ea40f097510b33b768a38c299b3c2ec5159f62",
-    "packages/ui/src/components/mission-scheduling-summary.ts": "6805c52e0dbb317a21dced55de8a50c21fd2a14f5e5a96d96588cd5023a093b9",
-    "packages/ui/src/components/mission-scheduling.tsx": "298ed01e20c9dab91e0fc18651ccf5ef3d1e21b89d7d3558e29eb844cee46719",
+    "packages/ui/src/components/mission-scheduling-sources.tsx": "2a12e15ed59b26b917a3cdb87c2e1e44c17dae67a51d00182fa7e3663bee9b20",
+    "packages/ui/src/components/mission-scheduling-summary.test.ts": "0e3df08f214b09845d7f3893e0fa4dfb50b604f42c1b6c56bc9fe5c5ff5ffb90",
+    "packages/ui/src/components/mission-scheduling-summary.ts": "cd744137532deeb4708f8865cdf7ceff53796218315e01b2cea5d7577e5bc429",
+    "packages/ui/src/components/mission-scheduling.tsx": "d68665ffb80e1280150089ff1a163b1ea25eb9956dc5792f0db1db9b04c9447c",
     "packages/ui/src/components/mission-selected-actions.tsx": "786ed71fd9f1ad0c732e70bbe544e6699089aeddaa3f8c96ef6ea1b97deccdad",
     "packages/ui/src/components/mission-source-select.tsx": "d6ea17b75f35ebecb6ed10760d16c446654ac72ef36f3c4057312b986b18df74",
     "packages/ui/src/components/mission-subagent-depth.tsx": "0f2e2d6e01679fa9db87206f4230539245f5db16018a9b725e19dc56b579a517",
@@ -21205,10 +21187,10 @@
     "packages/ui/src/lib/i18n/messages/de/markdown.ts": "f92a40150d783d56daaa8fa2c2fd95fd240188129b6a8ea54b8927a04f958e14",
     "packages/ui/src/lib/i18n/messages/de/messaging.ts": "cd33629a8dbe094d7882c54bf00873ccb6b815e5464a019b89322fd474b14783",
     "packages/ui/src/lib/i18n/messages/de/mission-recovery.ts": "0cf317433a248ed28c744737c00d37f5cc6a1e6a0930d860c38dc0b5cd30bfcb",
-    "packages/ui/src/lib/i18n/messages/de/mission-scheduling.ts": "9fd1bc02c000224930b0ecdd6b9012e148d626d29ca9049060ebc497d5ced779",
+    "packages/ui/src/lib/i18n/messages/de/mission-scheduling.ts": "0a58136688af5e7326faa748ec5b70e46455879fa235855ed5fedbf506cb194d",
     "packages/ui/src/lib/i18n/messages/de/missions-create.ts": "98a446c4a98c84793db97c1e83d3863442104a2e7ea459039810d011dd5c595e",
     "packages/ui/src/lib/i18n/messages/de/missions-panel.ts": "53affe9ad695cb73010f74f79fcec733e4387d64576a45f3a8829f50c3a0ac45",
-    "packages/ui/src/lib/i18n/messages/de/missions.ts": "3d916c685fcd472a327a7dd7635e9af29abbb107085a8d91bb86df77f1cf3053",
+    "packages/ui/src/lib/i18n/messages/de/missions.ts": "2ce4121fa0f9b962f9816e491c18cf0e8e25c03dfe37df83078e772e5e991b7a",
     "packages/ui/src/lib/i18n/messages/de/opencode-login-start.ts": "0a7be640aad0426db7bbaaa1369fb1cfa030f19bb2304caa5cd146917ab15c8b",
     "packages/ui/src/lib/i18n/messages/de/permission-receipts.ts": "f58594f85d821bb9aa533d53470a5641744df74c197057c95c968090127e7aac",
     "packages/ui/src/lib/i18n/messages/de/plugin-sources.ts": "00e3b988321d8b4bed236071fbe7023a4c797ed033e56bb93e4cb8af38a71c45",
@@ -21235,10 +21217,10 @@
     "packages/ui/src/lib/i18n/messages/en/markdown.ts": "c5abe695cb4b8945c582b71ae98f67f5b9ba2b5df0acede0ce34f2f539d90e64",
     "packages/ui/src/lib/i18n/messages/en/messaging.ts": "57b5d6ec11bd497a4d38fc21e104c6206e9ea5de1e45ad91de876c5cd482d1fb",
     "packages/ui/src/lib/i18n/messages/en/mission-recovery.ts": "209b7bf4307baf633a9e3bcb04a15abb4e754de89407964ce6d33101600997d9",
-    "packages/ui/src/lib/i18n/messages/en/mission-scheduling.ts": "f71b0389cbc0ace7e622d887394e1bfec61676f376b15179310aae16c721fae8",
+    "packages/ui/src/lib/i18n/messages/en/mission-scheduling.ts": "f7d4cd374340120c5cb69f6cc2fe2a62fb237e76d028db5f355623c307a85139",
     "packages/ui/src/lib/i18n/messages/en/missions-create.ts": "588683b25632d6f0af2cc68d1cb7f90f45a9f5c0bbda8bf8bdc447f4e8326235",
     "packages/ui/src/lib/i18n/messages/en/missions-panel.ts": "8de1dbb353e1ee36638311822ff9c8ce6dff977be8f8736e319e4989c8cf0e3a",
-    "packages/ui/src/lib/i18n/messages/en/missions.ts": "839abc273bc9f462fdfa9cb62f58e7f18dc1803454c57e7abf599dbdd32b7da1",
+    "packages/ui/src/lib/i18n/messages/en/missions.ts": "2b8eae1c471a97e11280696a5ada05ece90c49bb50eec07d0d2523e17750b456",
     "packages/ui/src/lib/i18n/messages/en/opencode-login-start.ts": "e64e5b0483fb5c42a0084dbfff895f430ad64a8ca3eb7724105cc85fa9defcac",
     "packages/ui/src/lib/i18n/messages/en/permission-receipts.ts": "364535d3391ab3ee0b08344a8b13087d742b808d98dcaba304dbc8bb3805a6e0",
     "packages/ui/src/lib/i18n/messages/en/plugin-sources.ts": "ee23b7b07463c5b7b04a4c5295e79ebbd04bc74737e4efb93a263b231c36ed65",
@@ -21265,10 +21247,10 @@
     "packages/ui/src/lib/i18n/messages/es/markdown.ts": "109331b4dbf7b69c0c3ac468793e4e9690d433f006c602cd5e4892254a3b621d",
     "packages/ui/src/lib/i18n/messages/es/messaging.ts": "d3c77a3d62198702a04536dc977f67fcaf1bd45ec740b8c864ef881c42f497dc",
     "packages/ui/src/lib/i18n/messages/es/mission-recovery.ts": "92ac11174bb220ec7128a2dfe290042a1f5df271be343e092bd6adefa689ef2a",
-    "packages/ui/src/lib/i18n/messages/es/mission-scheduling.ts": "dd3e017f9904c6088e7fd71836fd51d7a0fe61a5524df2aa1c8e2c6d66ede6aa",
+    "packages/ui/src/lib/i18n/messages/es/mission-scheduling.ts": "ad41662272bfde71d82ba59ee0aaf1965877190a0bc487effe7ec16aa3750f1c",
     "packages/ui/src/lib/i18n/messages/es/missions-create.ts": "45030f45da0a55e426c25ea6adc0ebfdd01c16051dbf3e15861712d11cd6355b",
     "packages/ui/src/lib/i18n/messages/es/missions-panel.ts": "2f7b08368ab39d9be65f76748e7035dd58acde5b5ed53439be9a06d3f5ee7441",
-    "packages/ui/src/lib/i18n/messages/es/missions.ts": "d42b93c657ca02cc2e06cae8929c5172170240c2497927b5901b03c5ecdc8786",
+    "packages/ui/src/lib/i18n/messages/es/missions.ts": "fc4ebb35c45b97f38cb384bc1c6552b377fff14fff6b33878d236d70902b9990",
     "packages/ui/src/lib/i18n/messages/es/opencode-login-start.ts": "9d237a44fa764893b88363390ac8294893c1f6cce8bc2ae51a56ea20bc60f75c",
     "packages/ui/src/lib/i18n/messages/es/permission-receipts.ts": "be59413d9dc7de3ed45de957fe88d75a2a02455393bc1f991a146afe7ea9f816",
     "packages/ui/src/lib/i18n/messages/es/plugin-sources.ts": "b5d5efd083989ba9419d7b631b7d7b1e1bdacb1cd8a6e4f5a2017c8cef0080aa",
@@ -21295,10 +21277,10 @@
     "packages/ui/src/lib/i18n/messages/fr/markdown.ts": "8087e86d789c5a5a0e1b84769dfea2befcdd80ffb5ee88c980de6d94e30ff74f",
     "packages/ui/src/lib/i18n/messages/fr/messaging.ts": "fbb4f1711bf8b593efb846186c3c528313eac057528a4ccc1fff63ca4ebb14bf",
     "packages/ui/src/lib/i18n/messages/fr/mission-recovery.ts": "a638c1fdbdf35aec3f8161eadd88eb501aad6f9f3584bac1575cbab69aa82833",
-    "packages/ui/src/lib/i18n/messages/fr/mission-scheduling.ts": "21333aa02e6c0f67407c2dc6c1eb452e615ff736725ec73bce512b7e3e06f015",
+    "packages/ui/src/lib/i18n/messages/fr/mission-scheduling.ts": "c149a3357ce16c1d442666dd430891890e6a8a6c7216ba6801b21be4c43bfcca",
     "packages/ui/src/lib/i18n/messages/fr/missions-create.ts": "be90402b8aae7eba8a464de35bd9d0994198041d978dc7a98a765488d53501df",
     "packages/ui/src/lib/i18n/messages/fr/missions-panel.ts": "1a03529d1596053ef29f5b050881de3d7597e8acf0e2645fc3e5643f8de2d668",
-    "packages/ui/src/lib/i18n/messages/fr/missions.ts": "c0b4ca175ff4a1ce0d72140846b5238c09077b56d7e732276bc02a9f9807f104",
+    "packages/ui/src/lib/i18n/messages/fr/missions.ts": "fc707a6c86c6b27953562d6c2db00ed1f5d4e3d127809724459569193699dc1c",
     "packages/ui/src/lib/i18n/messages/fr/opencode-login-start.ts": "b94608ae29ee94ea83509a26b45bcbcc7e421711ad7ee68b6bca2577e759e0b0",
     "packages/ui/src/lib/i18n/messages/fr/permission-receipts.ts": "d50164d4501303235dd31d3b01090afa70b7684c4a20a2120115be07d3b4ed69",
     "packages/ui/src/lib/i18n/messages/fr/plugin-sources.ts": "380a679c09ebcae02f28a43d89e5abfc08222a65820cbae23af764f93e5f14d1",
@@ -21325,10 +21307,10 @@
     "packages/ui/src/lib/i18n/messages/he/markdown.ts": "9f1800d7d588bb77bb00730b9266417184460f78704a98b9ef30ecfd8ad5104e",
     "packages/ui/src/lib/i18n/messages/he/messaging.ts": "b5b98eeea3db03057f976ae61e92f139a0d3eaa4775a1b69fad7c9fb3af011cd",
     "packages/ui/src/lib/i18n/messages/he/mission-recovery.ts": "fa7f8b0ea163a4078df44723986651119140671cce4f7948ae328932357afaf0",
-    "packages/ui/src/lib/i18n/messages/he/mission-scheduling.ts": "066fdba9062c2fc790b41a89eaa42be288c35cf195aec632ce072a035caafbb3",
+    "packages/ui/src/lib/i18n/messages/he/mission-scheduling.ts": "c79edbd5d0a8bd46fc396ddadf7ecee107db48b8a3681a5888d07218fd26a7dd",
     "packages/ui/src/lib/i18n/messages/he/missions-create.ts": "5b3a5a7fb627c5038d7c0c0519963bdb1b41e24c453f60448e9701e706dc3c67",
     "packages/ui/src/lib/i18n/messages/he/missions-panel.ts": "dfbc054e45aaf260c7db2ed7fe68ca986f282046bb2a0494f8681db01bf49b8f",
-    "packages/ui/src/lib/i18n/messages/he/missions.ts": "e696477fc8b7b523797ea101c528514d87e6d7993a697192f4248f7d8ddd2959",
+    "packages/ui/src/lib/i18n/messages/he/missions.ts": "54e210cfd421cee3168668b46a002c1ebd92386894d7d51cae94782e248db63b",
     "packages/ui/src/lib/i18n/messages/he/opencode-login-start.ts": "ff3ac841931bee62bb476257988da287363f2af699cfef21ac2efffa6dfd8969",
     "packages/ui/src/lib/i18n/messages/he/permission-receipts.ts": "825025340ee55ae696d25bea70a0f796fc659fdb0ffe7c7855a425cdf6d0aaf7",
     "packages/ui/src/lib/i18n/messages/he/plugin-sources.ts": "abb2b1402bd22bf4f92c0dcf0e0617e0364f8cf0b273da731852a0dac86200e0",
@@ -21356,10 +21338,10 @@
     "packages/ui/src/lib/i18n/messages/ja/markdown.ts": "a048a159bf42cc4c3e660791dd82934685f429c7b144f1242f8a749a515be7ec",
     "packages/ui/src/lib/i18n/messages/ja/messaging.ts": "875f98def4a0305b170c5bc88e8d337c6508820b700af2bece6b04f81d8a11ea",
     "packages/ui/src/lib/i18n/messages/ja/mission-recovery.ts": "c9efc37c5a9a05d1f338af18ef5b4503388a1f6edc2eae3db35310dbd835ed5c",
-    "packages/ui/src/lib/i18n/messages/ja/mission-scheduling.ts": "bc39c80888ebd5def45d6fd77ba7ea1396f1c73d894fb456dc5890d9dae15a87",
+    "packages/ui/src/lib/i18n/messages/ja/mission-scheduling.ts": "d6733dd3dd1162cbdf4bf8471497771280aabdbe4c2ba099b5d9ab7360391b20",
     "packages/ui/src/lib/i18n/messages/ja/missions-create.ts": "0af4ddc06793161fe98fa247658b331ebed16b4b660a7d092bb3138c2084f4b4",
     "packages/ui/src/lib/i18n/messages/ja/missions-panel.ts": "b95f292992ec78c40e6f56c1cb123149ec8898c55746756c6cab432482e73409",
-    "packages/ui/src/lib/i18n/messages/ja/missions.ts": "fd18cd9547dbe687b8a509dd6f03de34b893cb72a5f8ec7415de2c2b885d7fce",
+    "packages/ui/src/lib/i18n/messages/ja/missions.ts": "6b749f716976bdb239573ca72740878f2930e9d6de7253a523d693115436a53c",
     "packages/ui/src/lib/i18n/messages/ja/opencode-login-start.ts": "980100c2a904621fbeece8353320210b04fbb4f010ef507e261f55ce3ebe4fa9",
     "packages/ui/src/lib/i18n/messages/ja/permission-receipts.ts": "da302337b51ae689a775491c2a07cee2476cc9549a419169f7955b0bc4fb8824",
     "packages/ui/src/lib/i18n/messages/ja/plugin-sources.ts": "00481e8cc4947dda70d04939eb7ab0fbaf8a31c802361fc39311af091aef11f9",
@@ -21390,10 +21372,10 @@
     "packages/ui/src/lib/i18n/messages/ne/markdown.ts": "2ec8995ef71dfa4c0ff7b0ac8ec6a29e071c3133ec8117b81b25595141585649",
     "packages/ui/src/lib/i18n/messages/ne/messaging.ts": "adbd1ef9e8dec081bc81079cb96c981a0a24fcddc29287b9e6a7800e9cbe4e40",
     "packages/ui/src/lib/i18n/messages/ne/mission-recovery.ts": "d14216c1ac5160515bf0668ddc7360336fd6f07d41ef8190449c317965b88948",
-    "packages/ui/src/lib/i18n/messages/ne/mission-scheduling.ts": "a973c47c6cccc8794d3524acd83a2e20d7309b88a665c2860709e0d61211d035",
+    "packages/ui/src/lib/i18n/messages/ne/mission-scheduling.ts": "98e52dc1a0971be2277a616518f0967331a277fc68fd88220d2ef08c4478d47c",
     "packages/ui/src/lib/i18n/messages/ne/missions-create.ts": "fcc3000ee8f570df4b3d6b731a483e4a178c43f605c3fa556366e37affd5835c",
     "packages/ui/src/lib/i18n/messages/ne/missions-panel.ts": "bf773bab557027be117424d94d8ebae3241b8b58e2302d29cf4f3cb03775bd00",
-    "packages/ui/src/lib/i18n/messages/ne/missions.ts": "63102445c78f8f96b7255abe2943d619dbd0f50940ca67fdbb5743bd9e5e48ce",
+    "packages/ui/src/lib/i18n/messages/ne/missions.ts": "a5dc8fc8e7887045e03cb0a4f8fe285257141901f0c7aa08e6c1a44c446ea9f8",
     "packages/ui/src/lib/i18n/messages/ne/opencode-login-start.ts": "4843cf456dce13509a762d147fa514650997ba21773ba636ce91d7323438696b",
     "packages/ui/src/lib/i18n/messages/ne/permission-receipts.ts": "b286658ef4aea73b98742b5068b697ca7913b25ca78e23185d23b1f85d6f2cbf",
     "packages/ui/src/lib/i18n/messages/ne/plugin-sources.ts": "a28d5720b54f95d0dbf5d4955436fb15f26e9fe1c66850942d6478f93365f722",
@@ -21421,10 +21403,10 @@
     "packages/ui/src/lib/i18n/messages/ru/markdown.ts": "33717953fb05c991e2b00195bd61dcbcf772b83cb61d4b5a0df4880e0a480a21",
     "packages/ui/src/lib/i18n/messages/ru/messaging.ts": "27ef506b2b55582da4c17b5c392123519144d008000132ab6e8bf66ebb9fed06",
     "packages/ui/src/lib/i18n/messages/ru/mission-recovery.ts": "22352cda3009d00933355edf45e51b4f55f0fb0a63219ce25c23210c7a88fc28",
-    "packages/ui/src/lib/i18n/messages/ru/mission-scheduling.ts": "2fa0fdfcce85e65bfc11f752ce16522229ef95f4315b954cd60a762138fcc867",
+    "packages/ui/src/lib/i18n/messages/ru/mission-scheduling.ts": "e862c76a8dad8d80aaad56fbdf1697f37579511dfb180fd6951d8ab7f0655737",
     "packages/ui/src/lib/i18n/messages/ru/missions-create.ts": "801f4c12f70153da8cc935aef0b11d6a5b65f739132a19f0b3722cff6bb7f225",
     "packages/ui/src/lib/i18n/messages/ru/missions-panel.ts": "68ac2a78f02f61c13913f33f95f562d8b835a304f30a09e4d1bf6e2820471bf5",
-    "packages/ui/src/lib/i18n/messages/ru/missions.ts": "f508d03dd2bb3b934150e0348f74c6877678d104f89965b36c38269c0af80271",
+    "packages/ui/src/lib/i18n/messages/ru/missions.ts": "73d5aa793416ea28c72b3bc1af1466e77d8c8c0079e2846de3191395468a41f4",
     "packages/ui/src/lib/i18n/messages/ru/opencode-login-start.ts": "e94e75306489c180e8b1d88bd8b570ccb9432ba50bc07031fba24087e51060de",
     "packages/ui/src/lib/i18n/messages/ru/permission-receipts.ts": "010059edec1dd2ba459abb12f3b331062b68ede89383e5e98bafe332dd47921f",
     "packages/ui/src/lib/i18n/messages/ru/plugin-sources.ts": "70057c4c2d85fb7da16e668800ded6f7faf9a970c9dac65cb6eab75ee77caf1e",
@@ -21451,10 +21433,10 @@
     "packages/ui/src/lib/i18n/messages/tr/markdown.ts": "7299ac02cbb705741bba3d607c279b9b6ad79397d8e041faa69305a949fa645a",
     "packages/ui/src/lib/i18n/messages/tr/messaging.ts": "f62608063f045636c28fac0db753cd158c89c20d8059507f3e3c60a692d9ff72",
     "packages/ui/src/lib/i18n/messages/tr/mission-recovery.ts": "5fb19f3f5d661e2157205a62ed2c94dd681f85f92c4d1d7a1ad002d118d34903",
-    "packages/ui/src/lib/i18n/messages/tr/mission-scheduling.ts": "3bb2841ee610c77a829aa07fdd63e7cb3a2cbfc3bed7abc8364efaf544070dce",
+    "packages/ui/src/lib/i18n/messages/tr/mission-scheduling.ts": "b3ec4bfe4e2cd3669bb92121470289631bcd665e51d3b8fbf6f0dde9a9936420",
     "packages/ui/src/lib/i18n/messages/tr/missions-create.ts": "4d1be2b4ae8031fad69761f8cfc28bf76623a1e53a9bd20acc5f7baeac0d95e6",
     "packages/ui/src/lib/i18n/messages/tr/missions-panel.ts": "171c0f26aea1be37cf617aaa26bc532dcf77d9021986e8b6ea539ba5e25cd03b",
-    "packages/ui/src/lib/i18n/messages/tr/missions.ts": "250b6eb2b82f134bfa1fd44b6123f2134b30cfc481318991b5db3e39ffb7f1f2",
+    "packages/ui/src/lib/i18n/messages/tr/missions.ts": "309e93317916c309c1ff3c25e8ac4581b004078c2a7cfa7d39435bb55c9c601b",
     "packages/ui/src/lib/i18n/messages/tr/opencode-login-start.ts": "c3902fc97d1af9d2e8870d095d368a2028b29a9b2433da5b4c6300616b3fca45",
     "packages/ui/src/lib/i18n/messages/tr/permission-receipts.ts": "d1772b013956c059256cff9162ca9b80763379aed349269857c5b53856ded86d",
     "packages/ui/src/lib/i18n/messages/tr/plugin-sources.ts": "6b839291e0f1e59cdb4e80f1feb173211c4eb652686365879d90d5dc5d6aea22",
@@ -21482,10 +21464,10 @@
     "packages/ui/src/lib/i18n/messages/zh-Hans/markdown.ts": "68d99e0ce0165d9c5c1cc466ceb5f5f06c16203c3a1819dca74990bcaf55c113",
     "packages/ui/src/lib/i18n/messages/zh-Hans/messaging.ts": "ad0500ee51d4a4108b6108917367084d465372e62ebae9ab097ad24559c72532",
     "packages/ui/src/lib/i18n/messages/zh-Hans/mission-recovery.ts": "a4dcb1fec8a99c8513b737e04d566f391cb60a6504ae7071029664f397784542",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/mission-scheduling.ts": "8aa7bb6da5c61eb956d8270a3f32b6f9f1627c6d403700b633c8cb054bff8fa9",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/mission-scheduling.ts": "66fc4ce4690a178a581a79f7df13e4f1b08c509ae5075eed6cf9fba20ad3e4cc",
     "packages/ui/src/lib/i18n/messages/zh-Hans/missions-create.ts": "29c3eafa21604664c1f9451999986e7d4bd96f0347e57fa2589437d04c346cab",
     "packages/ui/src/lib/i18n/messages/zh-Hans/missions-panel.ts": "fcf2d1df9a2ff62647734ca00d05de6718c7e89f717bacee55bf82df8b07a4ab",
-    "packages/ui/src/lib/i18n/messages/zh-Hans/missions.ts": "eca46daf2ae82c58b898e1967058e104f70347152122b43a5c1bdb845f18495d",
+    "packages/ui/src/lib/i18n/messages/zh-Hans/missions.ts": "61f479ee4398a5426bfe9b1b3914c852487cb91e0c9f358aa30386ed1a4a48a1",
     "packages/ui/src/lib/i18n/messages/zh-Hans/opencode-login-start.ts": "cbfee47af4d3ba15303fa67c853105541c804af1cafc1803db5ec5d1adf1fec8",
     "packages/ui/src/lib/i18n/messages/zh-Hans/permission-receipts.ts": "59aa2454a2555fb857f54931a5e3d306e934591fe895d0ce62436aa2c0e87b8f",
     "packages/ui/src/lib/i18n/messages/zh-Hans/plugin-sources.ts": "dc047cc3d9bb30f9a983b9980bbdebc75ef883283a40dd1bacd18222009ce888",
@@ -22445,7 +22427,7 @@
     "packages/ui/tests/browser/fixtures/mission-report-delivery.tsx": "60984ffc983d8373ad7331e56244a07bedd1b5bba14adf0964c49bdc64724e89",
     "packages/ui/tests/browser/fixtures/mission-result-reader.tsx": "50dbc5bb462c1192447dfaa90e1fe2ceb7bd316874524f27162b0e87dc9e3d4d",
     "packages/ui/tests/browser/fixtures/mission-row-refetch.tsx": "b4c722dd6cbfc73243eed6de1f85ab44af561469baf6d7d9d22361011e5c5adf",
-    "packages/ui/tests/browser/fixtures/mission-scheduling.tsx": "be2e79e9fddd3d3d24e5aac3a374384f0a33671ced95bad6c3cd0dfcc74a2210",
+    "packages/ui/tests/browser/fixtures/mission-scheduling.tsx": "bf5146f45ed03567aeb63700074c4f5f383b5d66e6063d8e039074c20374768e",
     "packages/ui/tests/browser/fixtures/mission-session.tsx": "46956e4530e7fedfb6cfc38d362679035b5f1c216c8fe8c0b176e7470a8d79a4",
     "packages/ui/tests/browser/fixtures/mission-task-reader.tsx": "ef70e9a35a7f2856e8f230869b0296d84b7280128cf2f4c304f5905ca67eb01c",
     "packages/ui/tests/browser/fixtures/mission-visibility.tsx": "263ce07eae494945c8af7ccb2bd78a3e46e3364f617e3358fb87900fd99df7ae",
@@ -22606,7 +22588,7 @@
     "packages/ui/tests/browser/mission-defaults-models.test.ts": "81bc9844390f8accb341b0273c51bfc1cf5664b2a4aeb74fe7b70438588d7961",
     "packages/ui/tests/browser/mission-editor-lifetime.test.ts": "ef4a879ca2837989f123a97303f5f03780c53bc07ed0daf61f1cd17debf453b8",
     "packages/ui/tests/browser/mission-editor-profiles.test.ts": "6b1e6e2e04b7498d350fbf01bf543480cf144673078eabb29abe1084539f4030",
-    "packages/ui/tests/browser/mission-editor-scheduling.test.ts": "f360489310afc2d0dc5f6257ce2535c561465d609a80b6c75fcee00aa6c4b0f7",
+    "packages/ui/tests/browser/mission-editor-scheduling.test.ts": "554ed3bbe23fb5ceb72818dba0bf82958b29c8d33ecf81dc0b821ba348f3dc91",
     "packages/ui/tests/browser/mission-failure-diagnostics.ts": "90d1f4f28fe93ecc57e06ebbc2a5ecf699150088c9c04314543227d54fef7c3d",
     "packages/ui/tests/browser/mission-lifecycle-navigation.test.ts": "8edf78448a8b86c7c03ab1e084a6beae1df239d619271484b651fbb3f91799cd",
     "packages/ui/tests/browser/mission-lifecycle-revision.test.ts": "4b00964de5308f3b5129deb5e30c9b7e7870c6a199165f61d83eb7d689f6fb22",
@@ -22632,8 +22614,7 @@
     "packages/ui/tests/browser/mission-result-reader.test.ts": "992848f0da96f5ac4356f0e688e95354095eb3de60a5e812648f9f26475374cf",
     "packages/ui/tests/browser/mission-row-refetch.test.ts": "91081aba9f1602d82f221bc8f8651370e112c3946f7d9365e451515ebaac935a",
     "packages/ui/tests/browser/mission-scheduled-fixture.ts": "262a6fb9190f9c79e42dd9d19403d8d2e8035a60488590c52f392bdb43f96bfd",
-    "packages/ui/tests/browser/mission-scheduling-stability.test.ts": "1a52fe18329663c99a9bb8f28b88f0d1c2d39b7752a94487528a86d66dde4d4c",
-    "packages/ui/tests/browser/mission-scheduling.test.ts": "de032170fd2efecfee2cf679e7ae60b0f3b417afb391c7391e06a9246717a6e1",
+    "packages/ui/tests/browser/mission-scheduling.test.ts": "2976d36f300620da28ff61c4910fa3ee67dc02ae8d152c787653a4916c631244",
     "packages/ui/tests/browser/mission-settings-brief.test.ts": "9aa4faa05827772b74d33f16aed9c35c1911abd2c5c8aa8a83967c349592c084",
     "packages/ui/tests/browser/mission-status-marks.test.ts": "3615a1a225a14928f4c9391b922f449a77f871f4b379287053fa21ba7528d146",
     "packages/ui/tests/browser/mission-summaries.test.ts": "6e2202f249c596dcf28b248dfd4af8e2d778cb81d3c9b12f31b9a17d6d0410a9",
@@ -22787,7 +22768,7 @@
     {
       "source": "packages/ui/src/components/action-overflow-menu.tsx",
       "sheet": "target/rune-inventory/components__action-overflow-menu.json",
-      "sheetSha256": "5302fb09ba20a7c267f5bca73b056a3075205da24a526cced050cfccda9cc212",
+      "sheetSha256": "388501e0eb61c2bf574ea019e628c8d076518059afb6ffde9098ee8e3d296f24",
       "components": [
         {
           "id": "packages/ui/src/components/action-overflow-menu.tsx#ActionOverflowMenu",
@@ -22795,7 +22776,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 137
+      "testReferenceCount": 136
     },
     {
       "source": "packages/ui/src/components/agent-selector.tsx",
@@ -22813,7 +22794,7 @@
     {
       "source": "packages/ui/src/components/alert-dialog.tsx",
       "sheet": "target/rune-inventory/components__alert-dialog.json",
-      "sheetSha256": "be272b5bb16dabbc42c42e1a9e6ca3b86aaff3f59637c21f4f47284d7e6e0e6a",
+      "sheetSha256": "ac7fa1e7c4dd0a4863b321a3963a18019263f48b4e0e91bf7653cc6e9ba76ebd",
       "components": [
         {
           "id": "packages/ui/src/components/alert-dialog.tsx#AlertDialog",
@@ -22821,7 +22802,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 69
+      "testReferenceCount": 68
     },
     {
       "source": "packages/ui/src/components/app-actions.tsx",
@@ -22896,7 +22877,7 @@
     {
       "source": "packages/ui/src/components/brand-logo.tsx",
       "sheet": "target/rune-inventory/components__brand-logo.json",
-      "sheetSha256": "2d032ee72d26b171b0c06419f45c4f36ee522dd6e656cad17243794b97b67410",
+      "sheetSha256": "5bd05ed2146f27a245019c4e15dd6442cd854c6caaeb509acba8f767204638d3",
       "components": [
         {
           "id": "packages/ui/src/components/brand-logo.tsx#BrandLogo",
@@ -22904,7 +22885,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 86
+      "testReferenceCount": 85
     },
     {
       "source": "packages/ui/src/components/branded-empty-state.tsx",
@@ -22940,7 +22921,7 @@
     {
       "source": "packages/ui/src/components/browser-frame.tsx",
       "sheet": "target/rune-inventory/components__browser-frame.json",
-      "sheetSha256": "ef901573799b5b21c6ca3d2303aec11e79d91c5259b87092891db9d9235d6bcf",
+      "sheetSha256": "1695e8d80d8995e0480df11f95270442d8038a23d5bd5b2afa2586373ce06d70",
       "components": [
         {
           "id": "packages/ui/src/components/browser-frame.tsx#BrowserFrame",
@@ -22948,7 +22929,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 307
+      "testReferenceCount": 306
     },
     {
       "source": "packages/ui/src/components/command-palette.tsx",
@@ -22992,7 +22973,7 @@
     {
       "source": "packages/ui/src/components/directory-browser-address.tsx",
       "sheet": "target/rune-inventory/components__directory-browser-address.json",
-      "sheetSha256": "a920abb231124b08600278945d591fadc372b5b45eecb0cf536fd164e19646a2",
+      "sheetSha256": "42cf89ebce2593123c52c0a47c6287de6ef7fea3a72f1fde453740a9e40e9b99",
       "components": [
         {
           "id": "packages/ui/src/components/directory-browser-address.tsx#DirectoryBrowserAddress",
@@ -23000,12 +22981,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 33
+      "testReferenceCount": 32
     },
     {
       "source": "packages/ui/src/components/directory-browser-dialog.tsx",
       "sheet": "target/rune-inventory/components__directory-browser-dialog.json",
-      "sheetSha256": "c59464ed6e15a23f74ce7f9d59cec4440f526fe823f354227944b43533634a19",
+      "sheetSha256": "65bd3d57a6606f252dfe055d0f1e43cc1a931b01d77ad0ef2e49b0aa993f120f",
       "components": [
         {
           "id": "packages/ui/src/components/directory-browser-dialog.tsx#DirectoryBrowserDialog",
@@ -23013,12 +22994,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 33
+      "testReferenceCount": 32
     },
     {
       "source": "packages/ui/src/components/dismissible-window.tsx",
       "sheet": "target/rune-inventory/components__dismissible-window.json",
-      "sheetSha256": "78993e0452b8a31192ee3c3def17b9f4c873d311117fcdcffa69f493ac83bebf",
+      "sheetSha256": "81186620ee882377ac5e5017cdf2acf12eee591a6bd97c5531a44370f88fd521",
       "components": [
         {
           "id": "packages/ui/src/components/dismissible-window.tsx#DismissibleWindow",
@@ -23026,7 +23007,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 92
+      "testReferenceCount": 91
     },
     {
       "source": "packages/ui/src/components/entry-count.tsx",
@@ -23044,7 +23025,7 @@
     {
       "source": "packages/ui/src/components/environment-variables-editor.tsx",
       "sheet": "target/rune-inventory/components__environment-variables-editor.json",
-      "sheetSha256": "39ba85f20e99e5e1eeb44074b0ebcfd9e758775c3f8b3dce1b157110efbcd855",
+      "sheetSha256": "fb695d96df0ef22ff40416f9590bf6140e71bd20a914f0e56482b40515f4a31a",
       "components": [
         {
           "id": "packages/ui/src/components/environment-variables-editor.tsx#EnvironmentVariablesEditor",
@@ -23052,7 +23033,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/file-viewer/monaco-diff-viewer.tsx",
@@ -23153,7 +23134,7 @@
     {
       "source": "packages/ui/src/components/hidden-text.tsx",
       "sheet": "target/rune-inventory/components__hidden-text.json",
-      "sheetSha256": "58fc3fd671ceea0e8c5c8cde02923907defa2f52803d35bc4fbafef3d96bd040",
+      "sheetSha256": "c2e6584c2038c7a4cdafd613d1c2d5b39a2ff3408544d92f04c99e153afafba1",
       "components": [
         {
           "id": "packages/ui/src/components/hidden-text.tsx#HiddenTextNotice",
@@ -23166,7 +23147,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 129
+      "testReferenceCount": 128
     },
     {
       "source": "packages/ui/src/components/history-message-preview.tsx",
@@ -23460,7 +23441,7 @@
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/tabs/MissionControl.tsx",
       "sheet": "target/rune-inventory/components__instance__shell__right-panel__tabs__MissionControl.json",
-      "sheetSha256": "be96899d9f0414f332f6a93cb70e7f408a4255f727f5b03c6a5de0e2bdc7c402",
+      "sheetSha256": "926fa64d9a37c2ae21696240de8460dd6c2231997891b37d8e72e884b67561c4",
       "components": [
         {
           "id": "packages/ui/src/components/instance/shell/right-panel/tabs/MissionControl.tsx#MissionControl",
@@ -23473,7 +23454,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/instance/shell/right-panel/tabs/StatusTab.tsx",
@@ -23586,7 +23567,7 @@
     {
       "source": "packages/ui/src/components/load-error-state.tsx",
       "sheet": "target/rune-inventory/components__load-error-state.json",
-      "sheetSha256": "4baa5994788cd52c95ca90e0ccfb88a8dbec40a3187cb93554f83413611ce4cb",
+      "sheetSha256": "6bd550457aa0c08e1b3fc6ec31e90ef68ce686055cdfb7b81b3fecc4d4a0fc27",
       "components": [
         {
           "id": "packages/ui/src/components/load-error-state.tsx#LoadErrorState",
@@ -23594,12 +23575,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 138
+      "testReferenceCount": 137
     },
     {
       "source": "packages/ui/src/components/locale-selector.tsx",
       "sheet": "target/rune-inventory/components__locale-selector.json",
-      "sheetSha256": "46565c0b65880062ac4cbb026cacccd305e2c372e32257843d078767efc7ba1c",
+      "sheetSha256": "c6ffb55abbe46fc0d11fe02e848aa98191b4a8992f7f932f86d01b05b2ee8afe",
       "components": [
         {
           "id": "packages/ui/src/components/locale-selector.tsx#LocaleSelector",
@@ -23607,12 +23588,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/markdown.tsx",
       "sheet": "target/rune-inventory/components__markdown.json",
-      "sheetSha256": "61c0b33f5eea7e52174135de759bbc0210b3d646f4f0c2198f984f5e65e3744a",
+      "sheetSha256": "7f1de9c8f46219ea23dae2402612f04e6f24706b3ca866bee996a73c40e99550",
       "components": [
         {
           "id": "packages/ui/src/components/markdown.tsx#Markdown",
@@ -23620,12 +23601,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 97
+      "testReferenceCount": 96
     },
     {
       "source": "packages/ui/src/components/mermaid-diagram.tsx",
       "sheet": "target/rune-inventory/components__mermaid-diagram.json",
-      "sheetSha256": "887796caffebb03b612fe7ae7f9606e7cc6ac70ef95a5e2062bf6390c81d282d",
+      "sheetSha256": "966a5ad3872bedf73393529f023a898733134d9a4ad951572ac5e1b4c61cb653",
       "components": [
         {
           "id": "packages/ui/src/components/mermaid-diagram.tsx#MermaidDiagram",
@@ -23633,7 +23614,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 97
+      "testReferenceCount": 96
     },
     {
       "source": "packages/ui/src/components/message-block.tsx",
@@ -23766,7 +23747,7 @@
     {
       "source": "packages/ui/src/components/mission-action-bar.tsx",
       "sheet": "target/rune-inventory/components__mission-action-bar.json",
-      "sheetSha256": "97334188c64638fa5528738e300420cda30db16e238c33d2e146e979689193b6",
+      "sheetSha256": "ad372c46f82a204705e394a8affca9e70b57470acd694634bcf8f8b676ae55d1",
       "components": [
         {
           "id": "packages/ui/src/components/mission-action-bar.tsx#MissionActionBar",
@@ -23774,12 +23755,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-cleanup.tsx",
       "sheet": "target/rune-inventory/components__mission-cleanup.json",
-      "sheetSha256": "adbacc7572abf86b8d6d60a68317d25792f662a43cc88c44bfc8f77a21d9f71f",
+      "sheetSha256": "8261048e8c5b5458d833e1ff7537ae9c6b261fd79e1a488b7e0d3dda7366b358",
       "components": [
         {
           "id": "packages/ui/src/components/mission-cleanup.tsx#MissionCleanupPanel",
@@ -23787,12 +23768,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 81
+      "testReferenceCount": 80
     },
     {
       "source": "packages/ui/src/components/mission-comparison-report.tsx",
       "sheet": "target/rune-inventory/components__mission-comparison-report.json",
-      "sheetSha256": "0a6f9b1250e5bfe5aa6c5ba753d0b601f9e269f3ec003c3de649d91b952b0049",
+      "sheetSha256": "93b4ab5aa5cb95841cf6a0d0a481c3278a25357ac21b7df3a164525ae23029ca",
       "components": [
         {
           "id": "packages/ui/src/components/mission-comparison-report.tsx#MissionComparisonVerdict",
@@ -23805,12 +23786,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-decision-report.tsx",
       "sheet": "target/rune-inventory/components__mission-decision-report.json",
-      "sheetSha256": "26e112048ddd8a061459ed1cdf423e663330c3059c72311c1616e9f15eb08259",
+      "sheetSha256": "3ebe690ea86ef77895f3ce5b5f95e4e5aedfcc1a47c80c3f130d6a72ddfc646c",
       "components": [
         {
           "id": "packages/ui/src/components/mission-decision-report.tsx#MissionDecisionReport",
@@ -23818,12 +23799,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-disclosure.tsx",
       "sheet": "target/rune-inventory/components__mission-disclosure.json",
-      "sheetSha256": "2dfa59613331d48880acf3b105b091f68386f7728adac75bab9a7519870fbec8",
+      "sheetSha256": "42ca311066a12c5a782bdf42e57d81fa80e1c0a0f7d9fcf8b230391c7fd87fc4",
       "components": [
         {
           "id": "packages/ui/src/components/mission-disclosure.tsx#MissionDisclosure",
@@ -23831,12 +23812,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 81
+      "testReferenceCount": 80
     },
     {
       "source": "packages/ui/src/components/mission-editor.tsx",
       "sheet": "target/rune-inventory/components__mission-editor.json",
-      "sheetSha256": "63c5d56d9d268c712fd18fdadafa2ded83d3cde6dcd97ce3dee27d9c15bb4e13",
+      "sheetSha256": "bc2d051c5da062ae2f82fa4d10a40280f4fd74a2638033f7a9b0290709a0b558",
       "components": [
         {
           "id": "packages/ui/src/components/mission-editor.tsx#MissionEditor",
@@ -23844,12 +23825,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 55
+      "testReferenceCount": 54
     },
     {
       "source": "packages/ui/src/components/mission-execution.tsx",
       "sheet": "target/rune-inventory/components__mission-execution.json",
-      "sheetSha256": "1ad8fab9d7a8e43e650bd336aa4491c47de1e4a23810738309e7136f81a893c6",
+      "sheetSha256": "4ef57ddebaf5c6dd8fc5fbac8a8851dd0d86d571d5e139249569152b01538130",
       "components": [
         {
           "id": "packages/ui/src/components/mission-execution.tsx#MissionExecution",
@@ -23857,12 +23838,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-graph.tsx",
       "sheet": "target/rune-inventory/components__mission-graph.json",
-      "sheetSha256": "ee2328fdd135614b228b541267b0130ad74736a0112a6cbc9278c781aab956e2",
+      "sheetSha256": "a23d67a8180f5e4ab21488aacd35ba10ba99de3ff9cc62ed47fdfa62be32f19a",
       "components": [
         {
           "id": "packages/ui/src/components/mission-graph.tsx#MissionGraph",
@@ -23870,12 +23851,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 53
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/mission-list-item.tsx",
       "sheet": "target/rune-inventory/components__mission-list-item.json",
-      "sheetSha256": "cda8abcf3f8212abe7309645b3d5673dadb31aa116d96c3adfbffc6e528e7dbe",
+      "sheetSha256": "b1ce900d79c4bb33279f2370b868f8ab0fb5c2922507975bbed6af88e1aade63",
       "components": [
         {
           "id": "packages/ui/src/components/mission-list-item.tsx#MissionListItem",
@@ -23883,12 +23864,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 81
+      "testReferenceCount": 80
     },
     {
       "source": "packages/ui/src/components/mission-list-paging.tsx",
       "sheet": "target/rune-inventory/components__mission-list-paging.json",
-      "sheetSha256": "f7fea88492391b28b420104abdff3c8f638a868b98f9ed33e8a45d45e22e9207",
+      "sheetSha256": "99f875ecd6722aa41e9e53fd0defaa9bc0ade63e6329431db6a6a24bf031c181",
       "components": [
         {
           "id": "packages/ui/src/components/mission-list-paging.tsx#MissionListPaging",
@@ -23896,12 +23877,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-model-library.tsx",
       "sheet": "target/rune-inventory/components__mission-model-library.json",
-      "sheetSha256": "246c78e2a8c33dd9966bf817a555fbb8ed771ad9c8a3788a0ec52971c565c9f9",
+      "sheetSha256": "15d3bd27bbfd650997ddca9b952f59c3e2cb9eed8e164b79993015b0560fa407",
       "components": [
         {
           "id": "packages/ui/src/components/mission-model-library.tsx#MissionModelLibrary",
@@ -23919,12 +23900,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 68
+      "testReferenceCount": 67
     },
     {
       "source": "packages/ui/src/components/mission-native-execution.tsx",
       "sheet": "target/rune-inventory/components__mission-native-execution.json",
-      "sheetSha256": "39806921df41bbfce3acb0672ee9e92cd328743aa1713053ea52daa22a3ae48f",
+      "sheetSha256": "c8e711064b288a39fde501c714cb11364c75bcdec9d8394ac558e74faca29485",
       "components": [
         {
           "id": "packages/ui/src/components/mission-native-execution.tsx#MissionReportNotification",
@@ -23937,12 +23918,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 60
+      "testReferenceCount": 59
     },
     {
       "source": "packages/ui/src/components/mission-overview-details.tsx",
       "sheet": "target/rune-inventory/components__mission-overview-details.json",
-      "sheetSha256": "868da7f823483fabc4a8ae175c039aa414391db50a6ad881789d571a4dc9a3e7",
+      "sheetSha256": "ee4b9a42b798ab16b49c1586d67adbeb7c679919ba91c69dfdef3dc71250a512",
       "components": [
         {
           "id": "packages/ui/src/components/mission-overview-details.tsx#MissionOverviewDetails",
@@ -23950,12 +23931,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-panel-fields.tsx",
       "sheet": "target/rune-inventory/components__mission-panel-fields.json",
-      "sheetSha256": "ea6fa5250d11e317cc22d59e53bd28b6ede8dbc656dfaa7370921012f2c589e6",
+      "sheetSha256": "6ff0c3cbbb43607221112c02d6c205c76a82ef737b86ebece8c8a11301412eaa",
       "components": [
         {
           "id": "packages/ui/src/components/mission-panel-fields.tsx#Value",
@@ -23973,12 +23954,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-panel-paging.tsx",
       "sheet": "target/rune-inventory/components__mission-panel-paging.json",
-      "sheetSha256": "9638cb28e06bb377484646f1b72ad5967e74a6fa86f0d447e95ed02abbda1876",
+      "sheetSha256": "8241b516561ca6384cb5a966d5f62a53d35bca98297a0fa2fdf2f201163f883b",
       "components": [
         {
           "id": "packages/ui/src/components/mission-panel-paging.tsx#MissionPanelPaging",
@@ -23986,12 +23967,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 79
+      "testReferenceCount": 78
     },
     {
       "source": "packages/ui/src/components/mission-picker.tsx",
       "sheet": "target/rune-inventory/components__mission-picker.json",
-      "sheetSha256": "df023a4f9162441ad1180aab447077e8e989bad979ed12d318c09d43a9944efd",
+      "sheetSha256": "8257953b77706c58a2655471695c9764e98df2d8abc5ac4fb90dce05deb06ad4",
       "components": [
         {
           "id": "packages/ui/src/components/mission-picker.tsx#MissionPanelHeader",
@@ -24004,12 +23985,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-playbook-reader.tsx",
       "sheet": "target/rune-inventory/components__mission-playbook-reader.json",
-      "sheetSha256": "94f0b1cf20189c58317dfca19c7b885c6e37ec5cbd8626825e763e61c56165bd",
+      "sheetSha256": "501ace594bdcb4c9b443dea2e9ff2b4a930c04d23e5b6f65efccc0e543e0f336",
       "components": [
         {
           "id": "packages/ui/src/components/mission-playbook-reader.tsx#MissionPlaybookReader",
@@ -24017,12 +23998,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-preferences.tsx",
       "sheet": "target/rune-inventory/components__mission-preferences.json",
-      "sheetSha256": "9110263492ef43278db27bdd606175874570cad2004a6cc9bef44183abd3b70b",
+      "sheetSha256": "97da3bd3efb7ad4e4455c8a1b56ff3948e7ccda86f2a566b5dd7c1d89beb6f84",
       "components": [
         {
           "id": "packages/ui/src/components/mission-preferences.tsx#MissionPreferences",
@@ -24030,12 +24011,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/mission-profile-controls.tsx",
       "sheet": "target/rune-inventory/components__mission-profile-controls.json",
-      "sheetSha256": "453970b034eacae861a9f69299ad123c624a1bce6553dbf21bd46bbdda2394c3",
+      "sheetSha256": "a25032afd0caff606016c659770bb3f295de8fd230aafe2412138e27b350a378",
       "components": [
         {
           "id": "packages/ui/src/components/mission-profile-controls.tsx#MissionProfileControls",
@@ -24043,12 +24024,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 68
+      "testReferenceCount": 67
     },
     {
       "source": "packages/ui/src/components/mission-profile-summary.tsx",
       "sheet": "target/rune-inventory/components__mission-profile-summary.json",
-      "sheetSha256": "aac0a07b60202fcb537d47fab8229d6acd845ba55780c4b6ec3fa9efd28212cc",
+      "sheetSha256": "afc92370960fa8f29594a8c6728f640a974ea9491a793b002b3b26ef9fede9ad",
       "components": [
         {
           "id": "packages/ui/src/components/mission-profile-summary.tsx#MissionProfileSummary",
@@ -24056,12 +24037,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 95
+      "testReferenceCount": 94
     },
     {
       "source": "packages/ui/src/components/mission-programming.tsx",
       "sheet": "target/rune-inventory/components__mission-programming.json",
-      "sheetSha256": "99f827ef9ae20631747edc8eb6d85735da7d04cc41763ac42e7f1ec72a0ebe80",
+      "sheetSha256": "f91023f14a4e77da5fcee60cd1d6f7d218a5668a65124965d87bb59e63bc8ea9",
       "components": [
         {
           "id": "packages/ui/src/components/mission-programming.tsx#MissionProgramming",
@@ -24069,12 +24050,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-reader-body.tsx",
       "sheet": "target/rune-inventory/components__mission-reader-body.json",
-      "sheetSha256": "5d51318c1f918302916fe9af732ec82a802fdf063d4bc06c309596745c1455fc",
+      "sheetSha256": "e16cfd21f9bf199c81e47a0a133ae14d15997bb95b5a8107efa456c2255b7e7c",
       "components": [
         {
           "id": "packages/ui/src/components/mission-reader-body.tsx#MissionBodyPending",
@@ -24082,12 +24063,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 95
+      "testReferenceCount": 94
     },
     {
       "source": "packages/ui/src/components/mission-reader-number.tsx",
       "sheet": "target/rune-inventory/components__mission-reader-number.json",
-      "sheetSha256": "1b224a51e457c2489d7ecb6ef5c51e784b53ac535fc804d5489a87fc939b4489",
+      "sheetSha256": "8a603949c39fbb8b0d4dbd66b7901f5a372cb8850a1b172a1168cc5f865c74cf",
       "components": [
         {
           "id": "packages/ui/src/components/mission-reader-number.tsx#MissionReaderNumber",
@@ -24095,12 +24076,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-reader.tsx",
       "sheet": "target/rune-inventory/components__mission-reader.json",
-      "sheetSha256": "0b58c30fe8ed2050128c8138d09e8ca8dd027256c96a0ab440bca569b9fe078d",
+      "sheetSha256": "f66f5aeadda7095445af808a0dfc1c32095a4cb4a15e551a06ece27434850a5c",
       "components": [
         {
           "id": "packages/ui/src/components/mission-reader.tsx#MissionReaderSection",
@@ -24113,12 +24094,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-recovery-button.tsx",
       "sheet": "target/rune-inventory/components__mission-recovery-button.json",
-      "sheetSha256": "882f6ab0ff853c229b240a970aaa7771849cd421f3812e63f89f8da32af0b550",
+      "sheetSha256": "ad4b79e32c357c973521110d00707c2f92a56dc918bb6ce386e6c31e8f80e553",
       "components": [
         {
           "id": "packages/ui/src/components/mission-recovery-button.tsx#MissionRecoveryButton",
@@ -24126,12 +24107,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 54
+      "testReferenceCount": 53
     },
     {
       "source": "packages/ui/src/components/mission-report-prose.tsx",
       "sheet": "target/rune-inventory/components__mission-report-prose.json",
-      "sheetSha256": "d8ad93dc614d5205d41ec2dd967abaea2f57220bf5e47eea7d20db0c00cfbc24",
+      "sheetSha256": "01c747355693d34db2ac62ec4c38ad63b0f57f745a697817e6a7434db2385ded",
       "components": [
         {
           "id": "packages/ui/src/components/mission-report-prose.tsx#MissionReportProse",
@@ -24144,12 +24125,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-repository-fields.tsx",
       "sheet": "target/rune-inventory/components__mission-repository-fields.json",
-      "sheetSha256": "15fba36ec3d2c28b7ef1c8fb3b543867a3095237eccfe03cb6eb049abb5fe661",
+      "sheetSha256": "2c60b25f720e7dcc354db90b4cf372c39007aac86ad14ecef023f592252a65b1",
       "components": [
         {
           "id": "packages/ui/src/components/mission-repository-fields.tsx#MissionRepositoryFields",
@@ -24157,12 +24138,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 57
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/mission-scheduling-sources.tsx",
       "sheet": "target/rune-inventory/components__mission-scheduling-sources.json",
-      "sheetSha256": "6fb29d8a958831cac4f95fff5f608d976c81f05c888b933e962936fb406d8fe0",
+      "sheetSha256": "b7bcacf83da1821865776ed55ee1d0558a888bd2a47716f6e99e27882cc338a4",
       "components": [
         {
           "id": "packages/ui/src/components/mission-scheduling-sources.tsx#MissionSchedulingCriterion",
@@ -24170,12 +24151,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 57
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/mission-scheduling.tsx",
       "sheet": "target/rune-inventory/components__mission-scheduling.json",
-      "sheetSha256": "06e6d475cf6c8f95ad47dc996357d07d5dea0ccc424c138be3a4a36572a67cfa",
+      "sheetSha256": "a68269715dc7f543be7300ff1f7fc1e2d42afe5c369f0802c6257bde08008a90",
       "components": [
         {
           "id": "packages/ui/src/components/mission-scheduling.tsx#MissionScheduling",
@@ -24183,12 +24164,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 56
+      "testReferenceCount": 55
     },
     {
       "source": "packages/ui/src/components/mission-selected-actions.tsx",
       "sheet": "target/rune-inventory/components__mission-selected-actions.json",
-      "sheetSha256": "b9ae3af32d18735f8dd2f13e53f9378dc941038736b6ff806b894611b84a599e",
+      "sheetSha256": "33b78649965b131d5ab953fbe9a6539ed0e510281c53cbc386acb03bb597c44a",
       "components": [
         {
           "id": "packages/ui/src/components/mission-selected-actions.tsx#MissionSelectedActions",
@@ -24196,12 +24177,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-source-select.tsx",
       "sheet": "target/rune-inventory/components__mission-source-select.json",
-      "sheetSha256": "65994c925b6f69256f34d1f9bea863dc4a3b7f9144fc57aceaa64446488793c6",
+      "sheetSha256": "525f84141f1ca3d12dda3edcc85a583d6c12a74476a94d05f3eafef91bc20426",
       "components": [
         {
           "id": "packages/ui/src/components/mission-source-select.tsx#MissionSourceSelect",
@@ -24224,12 +24205,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 57
+      "testReferenceCount": 56
     },
     {
       "source": "packages/ui/src/components/mission-subagent-depth.tsx",
       "sheet": "target/rune-inventory/components__mission-subagent-depth.json",
-      "sheetSha256": "39a60d54dddd95fbb16d9b9dfe1ef6056158ae29cc6c9d5152ca4a19f5145430",
+      "sheetSha256": "384a052a3547fb86f2c36659e57159bc1c420739ecc1025f2a3238931162843a",
       "components": [
         {
           "id": "packages/ui/src/components/mission-subagent-depth.tsx#MissionSubagentDepth",
@@ -24237,12 +24218,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 68
+      "testReferenceCount": 67
     },
     {
       "source": "packages/ui/src/components/mission-task-actions.tsx",
       "sheet": "target/rune-inventory/components__mission-task-actions.json",
-      "sheetSha256": "c4485c4f4c8b97fe522f82f20099341ee69027d7ff99e849add8fb59459fe33a",
+      "sheetSha256": "8ee01ce296e866e9884b70532ef4da24a25c1a5f04c31fd5535f3ee922b255a1",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-actions.tsx#MissionTaskActions",
@@ -24250,12 +24231,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-task-mode-controls.tsx",
       "sheet": "target/rune-inventory/components__mission-task-mode-controls.json",
-      "sheetSha256": "2b19f19834b69316b55885a95d22c24bccecefdaffa23c14a1baf402f717d478",
+      "sheetSha256": "c7e67fe83ecfa04dfba91dc3ec7894e72aa5269ee8314e97f7625a1ad89ae69a",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-mode-controls.tsx#MissionTaskModeControls",
@@ -24263,12 +24244,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 68
+      "testReferenceCount": 67
     },
     {
       "source": "packages/ui/src/components/mission-task-preview.tsx",
       "sheet": "target/rune-inventory/components__mission-task-preview.json",
-      "sheetSha256": "3bf43ea385f7db14297aa8ab9441f0579970fbbccffe737419244114bc96173f",
+      "sheetSha256": "caa241d9ad09397fee075c7ec5a797b665f7a2d07da76bc50670a4aa8fdba773",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-preview.tsx#MissionTaskPreview",
@@ -24276,12 +24257,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/mission-task-reader.tsx",
       "sheet": "target/rune-inventory/components__mission-task-reader.json",
-      "sheetSha256": "818a487c5624ba8653b691b3781cd9c6b53b36aa1f7d2732580cf6ec8d069a6d",
+      "sheetSha256": "b651b654f6c5de899044cd75e5c285d44e0aef1e6bb4f181163f07e5aca1ac85",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-reader.tsx#MissionTaskReader",
@@ -24289,12 +24270,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 59
+      "testReferenceCount": 58
     },
     {
       "source": "packages/ui/src/components/mission-task-tree.tsx",
       "sheet": "target/rune-inventory/components__mission-task-tree.json",
-      "sheetSha256": "21b191f8e249a3741dbe82cddfa6273197a81dc911cc175e5198f40ed38be059",
+      "sheetSha256": "98f04ede8524f0974cc94a2745b7d592211c0bc5a4470095cb858822511f86f5",
       "components": [
         {
           "id": "packages/ui/src/components/mission-task-tree.tsx#MissionTaskTree",
@@ -24307,12 +24288,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 53
+      "testReferenceCount": 52
     },
     {
       "source": "packages/ui/src/components/mission-tracking.tsx",
       "sheet": "target/rune-inventory/components__mission-tracking.json",
-      "sheetSha256": "9d9f42a7513325c1d2c177300514096e618a6e587706c2b1835058e6b39d2c88",
+      "sheetSha256": "adabc3ea3a841afc9cd753ed2a95759a7e38efbbc21b1355cd0fffca30fa0578",
       "components": [
         {
           "id": "packages/ui/src/components/mission-tracking.tsx#MissionTracking",
@@ -24320,7 +24301,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 52
+      "testReferenceCount": 51
     },
     {
       "source": "packages/ui/src/components/model-selector.tsx",
@@ -24338,7 +24319,7 @@
     {
       "source": "packages/ui/src/components/native-titlebar.tsx",
       "sheet": "target/rune-inventory/components__native-titlebar.json",
-      "sheetSha256": "bf44024d1f24cc83824eca388987f9d5f126d76e13270f3647b1e31662101aec",
+      "sheetSha256": "fe426d4020a8d6c1d7afb38cf0374099eacab843b6b05fa2c7623d718c79060d",
       "components": [
         {
           "id": "packages/ui/src/components/native-titlebar.tsx#NativeTitlebar",
@@ -24346,7 +24327,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 35
+      "testReferenceCount": 34
     },
     {
       "source": "packages/ui/src/components/new-instance-dialogs.tsx",
@@ -24377,7 +24358,7 @@
     {
       "source": "packages/ui/src/components/opencode-binary-selector.tsx",
       "sheet": "target/rune-inventory/components__opencode-binary-selector.json",
-      "sheetSha256": "d576e308dc3bf66a84b273d893d6d9dbc2d3e8f65a4c9f56860f4b31e1e7307d",
+      "sheetSha256": "ff85ac40b53840736c1337170157a8c91918929b105db4705aea0ebfbf124ee8",
       "components": [
         {
           "id": "packages/ui/src/components/opencode-binary-selector.tsx#OpenCodeBinarySelector",
@@ -24385,7 +24366,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/opencode-setup.tsx",
@@ -24403,7 +24384,7 @@
     {
       "source": "packages/ui/src/components/output-window.tsx",
       "sheet": "target/rune-inventory/components__output-window.json",
-      "sheetSha256": "e6090218bbb7acdd2efaad0297f3b0e9b1e961bdccedc131708cce97039cc938",
+      "sheetSha256": "3337f62eaf295dc90d07b904f7aba9cb563fa7c1e98f59649dc4562e9aabe9d7",
       "components": [
         {
           "id": "packages/ui/src/components/output-window.tsx#OutputWindow",
@@ -24411,7 +24392,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 32
+      "testReferenceCount": 31
     },
     {
       "source": "packages/ui/src/components/panel-extensions/extension-manager.tsx",
@@ -24740,7 +24721,7 @@
     {
       "source": "packages/ui/src/components/provider-auth/provider-accounts.tsx",
       "sheet": "target/rune-inventory/components__provider-auth__provider-accounts.json",
-      "sheetSha256": "7a474e4f19c39c88bfb428168b1279b8f9c0e32942c571a373784ef07c4897b7",
+      "sheetSha256": "5c54433874fbbb93095eccdcf46e8b377ea15257b51ea1e984a21502b8be52b6",
       "components": [
         {
           "id": "packages/ui/src/components/provider-auth/provider-accounts.tsx#ProviderAccounts",
@@ -24748,12 +24729,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/provider-auth/provider-auth-form.tsx",
       "sheet": "target/rune-inventory/components__provider-auth__provider-auth-form.json",
-      "sheetSha256": "17798d712f0af0711c18caa0df71c1eea831a80a0ad8233810b64ae7423d478a",
+      "sheetSha256": "ef7e498304b5c04f9378631ec98190030b151f3cbace3f4ba5bc8789e5edec7c",
       "components": [
         {
           "id": "packages/ui/src/components/provider-auth/provider-auth-form.tsx#ProviderAuthForm",
@@ -24761,12 +24742,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/provider-auth/provider-manager-modal.tsx",
       "sheet": "target/rune-inventory/components__provider-auth__provider-manager-modal.json",
-      "sheetSha256": "e11f3890f440866560e903a44a0294d7518d5bf8d54a4364a2cba01cbae93d9d",
+      "sheetSha256": "a542507467b47651f82ea56aa458830a050608e03f062124d1cb8f55696c7268",
       "components": [
         {
           "id": "packages/ui/src/components/provider-auth/provider-manager-modal.tsx#ProviderManagerModal",
@@ -24774,12 +24755,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/provider-auth/provider-model-visibility-manager.tsx",
       "sheet": "target/rune-inventory/components__provider-auth__provider-model-visibility-manager.json",
-      "sheetSha256": "b617e579aad0b755f6a10fd291a47b329d197c059643ed404a3be6a77075c7d2",
+      "sheetSha256": "8ee4497be486a7bb205afb1b4f7372558194078df4c52763c740a080c38628f2",
       "components": [
         {
           "id": "packages/ui/src/components/provider-auth/provider-model-visibility-manager.tsx#ProviderModelVisibilityManager",
@@ -24787,7 +24768,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/recent-open-elsewhere.tsx",
@@ -24888,7 +24869,7 @@
     {
       "source": "packages/ui/src/components/remote-server-dialog.tsx",
       "sheet": "target/rune-inventory/components__remote-server-dialog.json",
-      "sheetSha256": "c015492c44bbad00e057f9d4a7933cd1917ce1a96cca2509b4d3d1298dc3cee8",
+      "sheetSha256": "97ad544b7d13fb9e0a8d0482b4bffccfeb0c1411cfbe9942367a233f5cde9fcc",
       "components": [
         {
           "id": "packages/ui/src/components/remote-server-dialog.tsx#ServerEditor",
@@ -24901,7 +24882,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/remote-server-signin.tsx",
@@ -24919,7 +24900,7 @@
     {
       "source": "packages/ui/src/components/server-add-field.tsx",
       "sheet": "target/rune-inventory/components__server-add-field.json",
-      "sheetSha256": "c09e0a630891418bad6b7507ff8a4890b2b129a2943e1d9680aa93313f4b4392",
+      "sheetSha256": "9a94f53f308158d9f0462484cffd94d0d48c633d61f310fba4017d33064298ed",
       "components": [
         {
           "id": "packages/ui/src/components/server-add-field.tsx#ServerAddField",
@@ -24927,7 +24908,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 34
+      "testReferenceCount": 33
     },
     {
       "source": "packages/ui/src/components/session-cleanup-progress.tsx",
@@ -24945,7 +24926,7 @@
     {
       "source": "packages/ui/src/components/session-expander.tsx",
       "sheet": "target/rune-inventory/components__session-expander.json",
-      "sheetSha256": "31a875b88af13aebcc7696710cab807debe236a47d1ee7fb672c0bdfdb0c758e",
+      "sheetSha256": "2b77151db4ae717d0906a75c9cdf0b08e6ed6b026b9f0fdd693ae5899ce92815",
       "components": [
         {
           "id": "packages/ui/src/components/session-expander.tsx#SessionExpander",
@@ -24953,7 +24934,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 64
+      "testReferenceCount": 63
     },
     {
       "source": "packages/ui/src/components/session-list.tsx",
@@ -25100,7 +25081,7 @@
     {
       "source": "packages/ui/src/components/session/session-goal-line.tsx",
       "sheet": "target/rune-inventory/components__session__session-goal-line.json",
-      "sheetSha256": "9ea3e9985f70bafd5b725dadd0b161c8106ce889cd915b96171aea46b762c697",
+      "sheetSha256": "ce82ff4c71841bf8fecf3bacc2496aeb1c71abad08e1d08dbb5058d25c1639cc",
       "components": [
         {
           "id": "packages/ui/src/components/session/session-goal-line.tsx#SessionGoalLine",
@@ -25108,7 +25089,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 63
+      "testReferenceCount": 62
     },
     {
       "source": "packages/ui/src/components/session/session-view.tsx",
@@ -25126,7 +25107,7 @@
     {
       "source": "packages/ui/src/components/settings-screen.tsx",
       "sheet": "target/rune-inventory/components__settings-screen.json",
-      "sheetSha256": "86c05e48053f6b6c856570d1b67f43a0e1c0308c2a0f7cf6e01d6a5b4858b9d6",
+      "sheetSha256": "498340181646e5235a0b014786ea94147110c60c974702b07695925b635aff49",
       "components": [
         {
           "id": "packages/ui/src/components/settings-screen.tsx#SettingsScreen",
@@ -25134,12 +25115,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/advanced-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__advanced-settings-section.json",
-      "sheetSha256": "0f3e581ecc87fe2b45593727e1e9c2bca90e5ca375c63995514d28bdbd465435",
+      "sheetSha256": "1384532be2ef7796365a65bd03575f03889cc038bb3833bd7551defe8975f086",
       "components": [
         {
           "id": "packages/ui/src/components/settings/advanced-settings-section.tsx#AdvancedSettingsSection",
@@ -25147,12 +25128,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/agent-memory-editor.tsx",
       "sheet": "target/rune-inventory/components__settings__agent-memory-editor.json",
-      "sheetSha256": "000b6a7029d49817dbd012146c39520f3e4bda1b5daf6d0ffc092057ce693391",
+      "sheetSha256": "3c8efc30a944e87d1c286f5a13f33ddf61dcda0fb389bd59d8965126bae266e5",
       "components": [
         {
           "id": "packages/ui/src/components/settings/agent-memory-editor.tsx#AgentMemoryEditor",
@@ -25160,12 +25141,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/agent-memory-settings-card.tsx",
       "sheet": "target/rune-inventory/components__settings__agent-memory-settings-card.json",
-      "sheetSha256": "3dbb85b253ac336cc86574201b5a015cf303dd79762924f11d52616a909e0ea1",
+      "sheetSha256": "83e77ab36a2e442474846d427300a699b0f6e93fb398af05e1765c29a8efdb0f",
       "components": [
         {
           "id": "packages/ui/src/components/settings/agent-memory-settings-card.tsx#AgentMemorySettingsCard",
@@ -25173,12 +25154,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/behavior-setting-rows.tsx",
       "sheet": "target/rune-inventory/components__settings__behavior-setting-rows.json",
-      "sheetSha256": "8c0942580690c7800e043eac83872cfe1f8eb3e5b18176053132cc18b246dff6",
+      "sheetSha256": "c45d14842ac597b0d33f6a26ab4c0eb76e38cf017555230e86a7c90c273c3395",
       "components": [
         {
           "id": "packages/ui/src/components/settings/behavior-setting-rows.tsx#BehaviorSettingRows",
@@ -25191,12 +25172,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/chat-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__chat-settings-section.json",
-      "sheetSha256": "f4c897f6ea237cd642bb6718789634456f216209a8818be7f5280b78eebc3d9c",
+      "sheetSha256": "4aa7a39657ab8c30ef40b060366092c49004975b39089cf40b4875732a583785",
       "components": [
         {
           "id": "packages/ui/src/components/settings/chat-settings-section.tsx#ChatSettingsSection",
@@ -25204,12 +25185,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/config-files-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__config-files-settings-section.json",
-      "sheetSha256": "d4bce6127d7342746f45a646647983450f250239b4489728b0cde141566af471",
+      "sheetSha256": "df05da6639e2a3a94361dad86e57c404cbe553aedfdf48b82f29497d04806c81",
       "components": [
         {
           "id": "packages/ui/src/components/settings/config-files-settings-section.tsx#ConfigFilesSettingsSection",
@@ -25217,7 +25198,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/data-profiles-settings.tsx",
@@ -25235,7 +25216,7 @@
     {
       "source": "packages/ui/src/components/settings/device-speech-settings.tsx",
       "sheet": "target/rune-inventory/components__settings__device-speech-settings.json",
-      "sheetSha256": "b8fa80f6a5c0b7b2562963f52ffbb2d466cb692dc2d8e0dcb8d8f894c0cd3506",
+      "sheetSha256": "9e97ce3553095cb2eae83720ad53f7ed5eed5d1166952ab7d6396938b73e5fac",
       "components": [
         {
           "id": "packages/ui/src/components/settings/device-speech-settings.tsx#DeviceSpeechSettings",
@@ -25243,12 +25224,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/general-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__general-settings-section.json",
-      "sheetSha256": "9a43e69bc82af62748d9f5f34abb7c9d27c2d096ecb7defa789824a5cba2ef30",
+      "sheetSha256": "eb3c3c33311eb77bc2fa98fa6b131cae1ce41c973715e0f61ef811673706c4c8",
       "components": [
         {
           "id": "packages/ui/src/components/settings/general-settings-section.tsx#GeneralSettingsSection",
@@ -25256,12 +25237,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/hotkeys-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__hotkeys-settings-section.json",
-      "sheetSha256": "35a90ef43eae3cf7a5693e3e93dff13e4ca64a1a3ea1281c2a3b6fcd942e2c7d",
+      "sheetSha256": "206bdc3adfecd9de2b2c322dc956c8f8d90adec0b75842ff57e1e6746cf9fe8f",
       "components": [
         {
           "id": "packages/ui/src/components/settings/hotkeys-settings-section.tsx#HotkeysSettingsSection",
@@ -25269,12 +25250,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/image-settings-card.tsx",
       "sheet": "target/rune-inventory/components__settings__image-settings-card.json",
-      "sheetSha256": "e84b06a94887479c876291c591637f7b7897e24fe951416cf9e3928ccebe4cbd",
+      "sheetSha256": "49bcd4e690e81eb8ea3ce54d87b5fb0d18f44bd3783ae0e69e4f57fdb5ddbabf",
       "components": [
         {
           "id": "packages/ui/src/components/settings/image-settings-card.tsx#ImageSettingsCard",
@@ -25282,12 +25263,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/info-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__info-settings-section.json",
-      "sheetSha256": "0c59059b975aa3222a68f81664108b9b38f35a2a476f7e7b9f93a04e8b1fa877",
+      "sheetSha256": "4a21dbdf8c0aef2e9bd6b9a4c3df3d49c16e60f6c75a3095e39629e66ccba09b",
       "components": [
         {
           "id": "packages/ui/src/components/settings/info-settings-section.tsx#InfoSettingsSection",
@@ -25295,12 +25276,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/missions-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__missions-settings-section.json",
-      "sheetSha256": "0512273ab49bd8c6ccf4fe7f80c0aea9d0a833104a9e8cfbd9faf86403646526",
+      "sheetSha256": "cd9ed5892190b711cf22ca117cee3c817367e27b3f2f19c6114ff6e1df55914b",
       "components": [
         {
           "id": "packages/ui/src/components/settings/missions-settings-section.tsx#MissionsSettingsSection",
@@ -25308,12 +25289,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/notification-routing-table.tsx",
       "sheet": "target/rune-inventory/components__settings__notification-routing-table.json",
-      "sheetSha256": "c633ad005eef7440d1e1d5db86c84baab6ce757b8b0d82f5d5b7c6bf6f11d6aa",
+      "sheetSha256": "6b5d52f06466494efde58c4667a5c036f6b8dc132fda10b468c3750e9b3fe237",
       "components": [
         {
           "id": "packages/ui/src/components/settings/notification-routing-table.tsx#NotificationRoutingTable",
@@ -25321,12 +25302,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/notifications-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__notifications-settings-section.json",
-      "sheetSha256": "51a16ffdc8d8992f0e59eed1b479d1c85d0535d3d31dc49139adc9ef94ca5811",
+      "sheetSha256": "f42b1e330560a5e62056f354380aae0500ac6d6fb3f9ba2845a958b4afef75e1",
       "components": [
         {
           "id": "packages/ui/src/components/settings/notifications-settings-section.tsx#NotificationsSettingsSection",
@@ -25334,12 +25315,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/opencode-executable-card.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-executable-card.json",
-      "sheetSha256": "3d69b450c9911979af0620a84d4621a19a0b1ac69bf53c241caaceec900ec72e",
+      "sheetSha256": "3d3c6c0e990f6e5b84e22eae933b1d5d15d9ff452c30cfcd35b279f76bc62462",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-executable-card.tsx#OpenCodeExecutableCard",
@@ -25347,12 +25328,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-installation-notice.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-installation-notice.json",
-      "sheetSha256": "5b1bdccfd334d6d5df945e697c8b703de1f0a58daf24b4e69fda577c1ff68ac1",
+      "sheetSha256": "ca5859a6dcfee3468e1142f147bf4de16a39f436052c668a838d614ef5f5fc1d",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-installation-notice.tsx#OpenCodeInstallationNotice",
@@ -25360,12 +25341,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-login-start-card.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-login-start-card.json",
-      "sheetSha256": "960adcf15fe0f325f9fd2ab1a26b66bd507caf8a413bcd0576abb121906ca06d",
+      "sheetSha256": "86bf4447c1d2b2e626ba1efeb7619f4acdddbf774eee431b8723d1f410236e75",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-login-start-card.tsx#OpenCodeLoginStartCard",
@@ -25373,12 +25354,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 31
+      "testReferenceCount": 30
     },
     {
       "source": "packages/ui/src/components/settings/opencode-logs-action.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-logs-action.json",
-      "sheetSha256": "63361460a0617be3c985121edc668fb7342382a6d457d550ed5e09225b029e3c",
+      "sheetSha256": "8a6bb4fd1d596e2e8b619dbeb2c50e35a88eef94189a7edb82d034d7fadcf283",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-logs-action.tsx#OpenCodeLogsAction",
@@ -25386,12 +25367,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-settings-section.json",
-      "sheetSha256": "e5a3e104f19bfba4d3fa39f709e58de1230d8f266103e7c3e956af3d24a9f0a1",
+      "sheetSha256": "4fa798b670286d95d30d8ff1ed8eeb37d360e05fd7b73a43402f24bbd26da66e",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-settings-section.tsx#OpenCodeSettingsSection",
@@ -25399,12 +25380,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-setup-panel.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-setup-panel.json",
-      "sheetSha256": "eccc4d146d46b704699de35141b421228048b572ba82a5f9b98163dea60cae0b",
+      "sheetSha256": "a90dcbfb846d2abae5a9809580129fb643cb9ab91bc28fdfc142e5369d71d327",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-setup-panel.tsx#OpenCodeSetupPanel",
@@ -25412,12 +25393,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-setup-progress.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-setup-progress.json",
-      "sheetSha256": "59bc819b150c8c27170dddc68efe8316bb84e4952a05c380549d77766a9af540",
+      "sheetSha256": "bec2d05f5874b1c8a79549cf28bcf153e3dec9af4e9f0ac8a4907b3e3ed33579",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-setup-progress.tsx#OpenCodeSetupProgress",
@@ -25425,12 +25406,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opencode-update-card.tsx",
       "sheet": "target/rune-inventory/components__settings__opencode-update-card.json",
-      "sheetSha256": "511879cb365fe003869431cec54151b790447467e4e553147a97ab9071b061bc",
+      "sheetSha256": "213009cb1867ae18a734d7df5d3dd9913ee2e08bbfc3f91c218ae34063903dba",
       "components": [
         {
           "id": "packages/ui/src/components/settings/opencode-update-card.tsx#OpenCodeUpdateCard",
@@ -25438,7 +25419,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 29
+      "testReferenceCount": 28
     },
     {
       "source": "packages/ui/src/components/settings/opener-startup-state-settings-card.tsx",
@@ -25456,7 +25437,7 @@
     {
       "source": "packages/ui/src/components/settings/providers-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__providers-settings-section.json",
-      "sheetSha256": "572f1080037c2c79cc6fe2ddce07db342a1d94c871848912ca03048dd9940c09",
+      "sheetSha256": "0309e4cbe895b79e53406ddf2aa79b0c1c537e1f627213ae5065ccc7436b4e80",
       "components": [
         {
           "id": "packages/ui/src/components/settings/providers-settings-section.tsx#ProvidersSettingsSection",
@@ -25464,12 +25445,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/remote-access-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__remote-access-settings-section.json",
-      "sheetSha256": "1fb44bd93b57b640b4429242433c56f624d4b4d8d0d268d509075ad45262e10c",
+      "sheetSha256": "540312abece7a3576e0684a45e3bfc6ce81a75d2db3b973fbc6e035a5808fa70",
       "components": [
         {
           "id": "packages/ui/src/components/settings/remote-access-settings-section.tsx#RemoteAccessSettingsSection",
@@ -25477,12 +25458,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/remote-control-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__remote-control-settings-section.json",
-      "sheetSha256": "2148761b16b49624e9e99955ca56029be48fde9f83af685543d481ae57f1cc70",
+      "sheetSha256": "0290658525728d26fbf2c2850670042fa31d8073d3d785c53f640396d2f4f889",
       "components": [
         {
           "id": "packages/ui/src/components/settings/remote-control-settings-section.tsx#RemoteControlSettingsSection",
@@ -25490,12 +25471,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/saved-remote-servers-card.tsx",
       "sheet": "target/rune-inventory/components__settings__saved-remote-servers-card.json",
-      "sheetSha256": "5cf3bb21fa1f96568c46a0ea90bc4f57c25d6973f702f3207c44c944efa60d7e",
+      "sheetSha256": "6ec755135c16af230d7726a3d7862ec2311a191488d9b7d6de7ec2de28a6ff83",
       "components": [
         {
           "id": "packages/ui/src/components/settings/saved-remote-servers-card.tsx#SavedRemoteServersCard",
@@ -25503,12 +25484,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/servers-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__servers-settings-section.json",
-      "sheetSha256": "82fc457998e08d0ab404e63774c095d647d2f82089a134bd67e9b80010fb691e",
+      "sheetSha256": "70f9c3d5f9c5031f3ec6fcc34bc188a4bfab80c28ace436c23c41cf1f6f87068",
       "components": [
         {
           "id": "packages/ui/src/components/settings/servers-settings-section.tsx#ServersSettingsSection",
@@ -25516,7 +25497,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/settings-info-link.tsx",
@@ -25534,7 +25515,7 @@
     {
       "source": "packages/ui/src/components/settings/settings-info-tip.tsx",
       "sheet": "target/rune-inventory/components__settings__settings-info-tip.json",
-      "sheetSha256": "b5a4e34cd64513dd2b71b7389064f58ecd59f86f3ddeeab13e1799dc993f2292",
+      "sheetSha256": "0e66bfaac38ed8d3fbc388b7e4100bca35c70d613fe5673ec129fbefa0e2260e",
       "components": [
         {
           "id": "packages/ui/src/components/settings/settings-info-tip.tsx#SettingsInfoTip",
@@ -25542,12 +25523,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 124
+      "testReferenceCount": 123
     },
     {
       "source": "packages/ui/src/components/settings/settings-switch.tsx",
       "sheet": "target/rune-inventory/components__settings__settings-switch.json",
-      "sheetSha256": "7479c389f553d7bd7270f611ad4a077ea7abc4ae62efd66b0d3c18e3af620cae",
+      "sheetSha256": "c60196fbf6769a9ca00f389423129b24dc46c9a85c00fa911a38e5e15cfe2375",
       "components": [
         {
           "id": "packages/ui/src/components/settings/settings-switch.tsx#SettingsSwitch",
@@ -25560,12 +25541,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 42
+      "testReferenceCount": 41
     },
     {
       "source": "packages/ui/src/components/settings/sidecars-direct-https-card.tsx",
       "sheet": "target/rune-inventory/components__settings__sidecars-direct-https-card.json",
-      "sheetSha256": "1cb67badf5ceccb6a1acc06a6d8fa4d765c9b23f597d735b43006fe5c050be9c",
+      "sheetSha256": "162d808268b4330cf06d1956b0615c5b2e0505aec1e8de031aec1ce542a16762",
       "components": [
         {
           "id": "packages/ui/src/components/settings/sidecars-direct-https-card.tsx#SideCarsDirectHttpsCard",
@@ -25573,12 +25554,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/sidecars-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__sidecars-settings-section.json",
-      "sheetSha256": "a3fa9ef84f84680249efc63ca6a2c2fd7a1cf5e3ae5d6d7c858c5b85d32b05a6",
+      "sheetSha256": "e288293a0a0fbca2725423c663388139c7f948ec05ab4a96ea6963b0d47017e1",
       "components": [
         {
           "id": "packages/ui/src/components/settings/sidecars-settings-section.tsx#SideCarsSettingsSection",
@@ -25586,12 +25567,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/speech-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__speech-settings-section.json",
-      "sheetSha256": "dbd5d5bba0a905424dc361c853053dcc0a6bcd02a8160e7872aed90486299437",
+      "sheetSha256": "d0af42bafdf150ddb14d01bfd7e9dcd4fae73779d0163a96768faacbf43a9842",
       "components": [
         {
           "id": "packages/ui/src/components/settings/speech-settings-section.tsx#SpeechSettingsSection",
@@ -25599,7 +25580,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/startup-state-settings-card.tsx",
@@ -25630,7 +25611,7 @@
     {
       "source": "packages/ui/src/components/settings/theme-scheme-settings.tsx",
       "sheet": "target/rune-inventory/components__settings__theme-scheme-settings.json",
-      "sheetSha256": "ff0367259ef351d8c81c2f54d44867f2501f5a605452d3bde49bd83c17e62b3e",
+      "sheetSha256": "72888274064ba3d5abc91eff330b9001bfd873c0bc6aaf210729682d522d50c2",
       "components": [
         {
           "id": "packages/ui/src/components/settings/theme-scheme-settings.tsx#ThemeSchemeSettings",
@@ -25638,12 +25619,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 28
+      "testReferenceCount": 27
     },
     {
       "source": "packages/ui/src/components/settings/usage-settings-section.tsx",
       "sheet": "target/rune-inventory/components__settings__usage-settings-section.json",
-      "sheetSha256": "b3f184ea17c49fbdcc3ea8e08e2f0d54d9f26b6bc5f898b3842d0556e5165073",
+      "sheetSha256": "e4791750d8002f2de2219f8b72ec8cd4ef8978648c7bf0c60a3e105c8a9fb19e",
       "components": [
         {
           "id": "packages/ui/src/components/settings/usage-settings-section.tsx#UsageSettingsSection",
@@ -25651,12 +25632,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/voice-conversation-card.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-conversation-card.json",
-      "sheetSha256": "f9e26b7a0bfce92c2f4fd9fd5a9d68540d25fcd5003766dce21bd2647678e456",
+      "sheetSha256": "6b78077680a280cd548b385eedee3ba39628191475a8489ca00698c42e09aa1b",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-conversation-card.tsx#VoiceConversationCard",
@@ -25664,12 +25645,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/voice-dictation-card.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-dictation-card.json",
-      "sheetSha256": "9aeecf2f0b4280f0b27cf874a23340dd04e7bfbd65ee9fdbbf2217d03d602992",
+      "sheetSha256": "cf3c6d9521057fde047a2e517890c0e1488941f1f73eb7580fa3bbfca608d131",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-dictation-card.tsx#VoiceDictationCard",
@@ -25677,12 +25658,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/voice-manual-credentials.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-manual-credentials.json",
-      "sheetSha256": "226dd398f69ad01a2b91e953328577ff73cddbbceb0f78d38cf6958bc7f0a131",
+      "sheetSha256": "2c3ac72510e42f6e78404c1aa93d0c21aa66fbc1b5330c74a78abf508d29598c",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-manual-credentials.tsx#VoiceManualCredentials",
@@ -25690,12 +25671,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/voice-playback-card.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-playback-card.json",
-      "sheetSha256": "c965aa231018f07d517a5790de63db466d8dd6a312379773a37b4b5a03784ac2",
+      "sheetSha256": "8cf2ec4542470b5c8594f21c58473712d23f1d6a09a9361936ff3db909ed5c0d",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-playback-card.tsx#VoicePlaybackCard",
@@ -25703,12 +25684,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/voice-settings-fields.tsx",
       "sheet": "target/rune-inventory/components__settings__voice-settings-fields.json",
-      "sheetSha256": "3a27cd917da77d912e5215dbc284dc3a347b0915236040e8bb1f19fe1a1c1d9f",
+      "sheetSha256": "0b778b30e3f466c221a266e5fc8e1c9d86e7b499acfeec9c6743805abdb7520e",
       "components": [
         {
           "id": "packages/ui/src/components/settings/voice-settings-fields.tsx#VoiceSettingsCard",
@@ -25731,12 +25712,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 27
+      "testReferenceCount": 26
     },
     {
       "source": "packages/ui/src/components/settings/websearch-provider-connections.tsx",
       "sheet": "target/rune-inventory/components__settings__websearch-provider-connections.json",
-      "sheetSha256": "fd7889782808a8100b0ce393514443d586334c7fcbb05c5b00e743181f4a065d",
+      "sheetSha256": "8228a1acab6a33bd5b973f52d14d20b17327b634b0679e8d6947e338a38179ff",
       "components": [
         {
           "id": "packages/ui/src/components/settings/websearch-provider-connections.tsx#WebSearchProviderConnections",
@@ -25744,12 +25725,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/settings/websearch-settings-card.tsx",
       "sheet": "target/rune-inventory/components__settings__websearch-settings-card.json",
-      "sheetSha256": "129ab7a997f4f16d023ae64f5dc3595712cbe595403bb2005b0a20974539d304",
+      "sheetSha256": "2e7eed6d3aa6aefb0f8ad5bb49827543d9705a24da3f8d203d6c912e78cab83c",
       "components": [
         {
           "id": "packages/ui/src/components/settings/websearch-settings-card.tsx#WebSearchSettingsCard",
@@ -25757,7 +25738,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 26
+      "testReferenceCount": 25
     },
     {
       "source": "packages/ui/src/components/shell-output-dialog.tsx",
@@ -25889,7 +25870,7 @@
     {
       "source": "packages/ui/src/components/tool-call/diagnostics-section.tsx",
       "sheet": "target/rune-inventory/components__tool-call__diagnostics-section.json",
-      "sheetSha256": "f3ce9f28988c4bdd0fc22458cafff4aea0671e49efb9a1bc1fa77f578ee90569",
+      "sheetSha256": "c5536b4f075010a9799419eadc8d5ee219bde43fe59388811adece1d625de1bb",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/diagnostics-section.tsx#DiagnosticsPayloadAccess",
@@ -25897,7 +25878,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 130
+      "testReferenceCount": 129
     },
     {
       "source": "packages/ui/src/components/tool-call/diff-render.tsx",
@@ -25946,7 +25927,7 @@
     {
       "source": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__apply-patch.json",
-      "sheetSha256": "5a6b687a5afb024c78c32256ed0215874c0a185109948201a1939b19e147ac17",
+      "sheetSha256": "6a3cb91f2b9436ae9581e891949be5ccfdc2d4e52d456c36e8f1f907bba3de5a",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/apply-patch.tsx#DiagnosticsInline",
@@ -25954,12 +25935,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 130
+      "testReferenceCount": 129
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/bash.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__bash.json",
-      "sheetSha256": "74a5107cfadbcbd131a82d0667989d6cede5ae156d893a136a2a5eda82b609ff",
+      "sheetSha256": "509bd6aee2d24906df3a33dffc41b298a2ddaa882bffdbc8c03faaa1a37a4c70",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/bash.tsx#OutputReveal",
@@ -25982,12 +25963,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 129
+      "testReferenceCount": 128
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/task.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__task.json",
-      "sheetSha256": "0f32ba1cb14dad78c27d4b9de44392aae758d807fd7668fd7c23409035f72306",
+      "sheetSha256": "8ffa5556e1f1a4f9f9b0ae965265622da0a4671cac8f3e73bad1b1cec106a483",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/task.tsx#TaskToolCallRow",
@@ -26000,12 +25981,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 130
+      "testReferenceCount": 129
     },
     {
       "source": "packages/ui/src/components/tool-call/renderers/todo.tsx",
       "sheet": "target/rune-inventory/components__tool-call__renderers__todo.json",
-      "sheetSha256": "20cb50afdae74bcf41864c67602dc797b4e6c73f72f837df91391be7b2549eb8",
+      "sheetSha256": "5f863d2e1d51e5fa46ff17edcdfa53ab5cb964c6c1a84dabef0631c3460376d5",
       "components": [
         {
           "id": "packages/ui/src/components/tool-call/renderers/todo.tsx#TodoStatusIcon",
@@ -26018,7 +25999,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 129
+      "testReferenceCount": 128
     },
     {
       "source": "packages/ui/src/components/transcript-filters.tsx",
@@ -26088,7 +26069,7 @@
     {
       "source": "packages/ui/src/components/window-close-button.tsx",
       "sheet": "target/rune-inventory/components__window-close-button.json",
-      "sheetSha256": "5021697fed369113d63b812a85f58c2f04cd1c1421e2f1f5dc3a250e48ad2cf5",
+      "sheetSha256": "3c912a1a8521baded66786f7be5cd4f28dbf217fe8015bc5c1c3a021c1e6a333",
       "components": [
         {
           "id": "packages/ui/src/components/window-close-button.tsx#WindowCloseButton",
@@ -26096,7 +26077,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 310
+      "testReferenceCount": 309
     },
     {
       "source": "packages/ui/src/components/workspace-file-view.tsx",
@@ -26140,7 +26121,7 @@
     {
       "source": "packages/ui/src/lib/i18n/index.tsx",
       "sheet": "target/rune-inventory/lib__i18n__index.json",
-      "sheetSha256": "48bdb8ca54de97bf814ddf559c381c1e106c2b52640a7a053f611f0ce561b207",
+      "sheetSha256": "931c8628e5fcc9ce6dab31c9506fc9c314b9b869cc532a5c3c091f4042954d6d",
       "components": [
         {
           "id": "packages/ui/src/lib/i18n/index.tsx#I18nProvider",
@@ -26148,12 +26129,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 355
+      "testReferenceCount": 354
     },
     {
       "source": "packages/ui/src/lib/theme.tsx",
       "sheet": "target/rune-inventory/lib__theme.json",
-      "sheetSha256": "2adb837d80023dd947a2f32b28653df9a195d6e47debe47f215b87137230160e",
+      "sheetSha256": "6a05bd5a841b03699edb26a3f0f9d27f63d2fe257cc3addf83e37798be1cc91f",
       "components": [
         {
           "id": "packages/ui/src/lib/theme.tsx#ThemeProvider",
@@ -26161,7 +26142,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 133
+      "testReferenceCount": 132
     },
     {
       "source": "packages/ui/src/renderer/loading/main.tsx",
@@ -26192,7 +26173,7 @@
     {
       "source": "packages/ui/src/stores/instance-config.tsx",
       "sheet": "target/rune-inventory/stores__instance-config.json",
-      "sheetSha256": "ce0b8ead3040fc65a0d6df3f3493c0c523e2e99d91aa414754792dd6ec048761",
+      "sheetSha256": "9d5ae9222f1736cd77c3d03a50763c58bbb307e9e85c9533c544531ba492b07b",
       "components": [
         {
           "id": "packages/ui/src/stores/instance-config.tsx#InstanceConfigProvider",
@@ -26200,12 +26181,12 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 355
+      "testReferenceCount": 354
     },
     {
       "source": "packages/ui/src/stores/preferences.tsx",
       "sheet": "target/rune-inventory/stores__preferences.json",
-      "sheetSha256": "bc70eaae3c7a4d49f76bd57e2fe8a371a06e25b66de05de513b601f6c383054f",
+      "sheetSha256": "17849e04cb7503607815b76faa6a31bfbbe024f13be23dfaf91c6519dece4d58",
       "components": [
         {
           "id": "packages/ui/src/stores/preferences.tsx#ConfigProvider",
@@ -26213,7 +26194,7 @@
           "status": "not-converted"
         }
       ],
-      "testReferenceCount": 355
+      "testReferenceCount": 354
     }
   ]
 }
