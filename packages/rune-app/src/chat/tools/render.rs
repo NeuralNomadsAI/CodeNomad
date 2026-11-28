@@ -851,9 +851,9 @@ fn render_body(
         has_body_content = true;
         block = block.child(notice);
     }
-    if let Some(pictures) = media::tool(s, key, &tool.pictures) {
+    for picture in media::tool(s, key, &tool.pictures) {
         has_body_content = true;
-        block = block.child(pictures);
+        block = block.child(picture);
     }
     let card = transcript::tool_card(header, has_body_content.then_some(block), diagnostics());
     if !probe && can_watch_child {

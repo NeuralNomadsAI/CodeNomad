@@ -623,9 +623,8 @@ pub fn message_card(key: String, is_user: bool, header: El) -> El {
         } else {
             "message-assistant-bg"
         }))
-        .px(t.space(Space::Md).px())
-        .py(t.space(Space::Sm).px())
-        .gap(t.space(Space::Xs).px())
+        .padding(t.space(Space::Md).px())
+        .gap(t.space(Space::Sm).px())
         .child(header)
 }
 

@@ -6,9 +6,9 @@ use crate::{
     screen,
     strings::{locale, t},
 };
-use rune::{El, Tx, col, text};
+use rune::{El, Tx, col};
 use rune_theme_codenomad::{
-    Space, catalogue,
+    catalogue,
     layout::{self, DrawnRect, Layout},
     markdown, transcript,
 };
