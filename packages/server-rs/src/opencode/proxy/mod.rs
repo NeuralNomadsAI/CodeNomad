@@ -9,6 +9,8 @@ mod dispatch;
 pub(crate) mod guards;
 #[cfg(test)]
 mod inbox_tests;
+#[cfg(test)]
+mod m7_shell_tests;
 mod mutation;
 #[cfg(test)]
 mod stack_tests;
@@ -31,7 +33,8 @@ use super::{SESSION_LOCATED_ELSEWHERE, SESSION_PLACEMENT_HEADER, controls, upstr
 use crate::{Error, Shared, error, not_found, unavailable};
 use guards::{
     ALLOWED, carrier_denied, foreign, guarded, is_account_no_store_route, is_hop_by_hop_connection_token,
-    parse_location_context, resolve_media_path_async, safe_route, schedule_input, valid_segment,
+    is_workspace_location_mutation, parse_location_context, resolve_media_path_async, safe_route, schedule_input,
+    valid_segment,
 };
 
 pub(in crate::opencode) fn before_dispatch_error((status, body): Error) -> Response {
@@ -104,7 +107,14 @@ fn is_send_input_request(method: &Method, path: &str) -> bool {
         return false;
     };
     let route = route.strip_suffix('/').unwrap_or(&route);
-    route.starts_with("/api/session/") && (route.ends_with("/prompt") || route.ends_with("/command"))
+    route
+        .strip_prefix("/api/session/")
+        .and_then(|rest| {
+            rest.strip_suffix("/prompt")
+                .or_else(|| rest.strip_suffix("/command"))
+                .or_else(|| rest.strip_suffix("/shell"))
+        })
+        .is_some_and(|sid| !sid.is_empty() && !sid.contains('/'))
 }
 
 enum PreparedRelay {
@@ -134,6 +144,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     let route = safe_route(suffix).ok_or_else(invalid)?;
     let route = route.strip_suffix('/').unwrap_or(&route);
     if (route.starts_with("/api/credential/")
+        || route.starts_with("/api/experimental/mcp/")
         || (route.starts_with("/api/integration/") && route.contains("/connect/")))
         && route.trim_start_matches('/').split('/').any(|seg| !valid_segment(seg))
     {
@@ -141,7 +152,8 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
     }
     let prompt = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/prompt");
     let command = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/command");
-    let send_input = prompt || command;
+    let shell = head.method == Method::POST && route.starts_with("/api/session/") && route.ends_with("/shell");
+    let send_input = prompt || command || shell;
     let body_limit = if prompt { super::prompt::BODY_LIMIT } else { 1024 * 1024 };
     let control = controls::classify(route, &head.method);
     if !ALLOWED.iter().any(|(m, pat)| *m == head.method.as_str() && pat.is_match(route)) {
@@ -183,7 +195,9 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             return Err(carrier_denied());
         }
         // The reference rejects inline-data budgets before Location/path ownership.
-        super::prompt::budget(&data)?;
+        if !shell {
+            super::prompt::budget(&data)?;
+        }
         prompt_directories =
             super::prompt::locations(&data, workspace.location["directory"].as_str().ok_or_else(upstream_error)?)?;
         Some(data)
@@ -198,6 +212,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             route.strip_prefix("/api/session/").and_then(|rest| rest.strip_suffix("/message")) == Some(s)
         });
     let account_route = is_account_no_store_route(route, &head.method);
+    let resolved_location_route = account_route || is_workspace_location_mutation(route, &head.method);
     let list_deadline = tokio::time::Instant::now() + super::PROXY_IDLE;
     let deadline = if message_list {
         list_deadline.min(tokio::time::Instant::now() + Duration::from_secs(30))
@@ -440,7 +455,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
                 } else if requested_checkout.is_none() {
                     requested_checkout = Some(proof);
                 }
-            } else if !account_route && !crate::worktrees::owns(&app, &workspace, req).await {
+            } else if !resolved_location_route && !crate::worktrees::owns(&app, &workspace, req).await {
                 return Err(foreign());
             }
         }
@@ -700,7 +715,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
             } else {
                 false
             };
-        if !account_route && !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
+        if !resolved_location_route && !reused_ok && !crate::worktrees::owns(&app, &workspace, directory).await {
             return Err(foreign());
         }
     }
@@ -771,7 +786,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
                 return Err(error(Status::BAD_REQUEST, "Conflicting location context"));
             }
             extra_mutation_dirs.push((ctx_dir.to_owned(), physical, dir_id, proof));
-        } else if !message_list && !account_route {
+        } else if !message_list && !resolved_location_route {
             // Match TS `http-server.ts:1224-1269` & `compatibility/location.ts:74-83`: an ambient
             // `x-codenomad-location` only needs to belong to this workspace and agree with any
             // explicit query selector, NOT with the target session's own linked worktree.
@@ -812,14 +827,14 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         match key.as_ref() {
             "directory" | "location[directory]" => {
                 if !message_list
-                    && !account_route
+                    && !resolved_location_route
                     && !inbox_or_background
                     && (seen_directory || (prompt_query.is_none() && value != directory))
                 {
                     return Err(foreign());
                 }
                 seen_directory = true;
-                explicit = account_route || (key == "directory") == session_list;
+                explicit = resolved_location_route || (key == "directory") == session_list;
             }
             "project" if session_list => {
                 if value.is_empty() || project.replace(value.into_owned()).is_some() {
@@ -953,6 +968,7 @@ async fn prepare_relay(app: Shared, request: Request, send_input_hint: bool) -> 
         control,
         send_input,
         command,
+        shell,
         body_limit,
         declared,
         pending_body: &mut pending_body,
@@ -1103,6 +1119,12 @@ mod tests {
         assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt;v=1"));
         assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/%70rompt"));
         assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/command/"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/shell"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/shell/"));
+        assert!(is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/shell;v=1"));
+        assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/shell//"));
+        assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/a/b/shell"));
+        assert!(!is_send_input_request(&Method::GET, "/workspaces/w/instance/api/session/ses_1/shell"));
         assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/prompt//"));
         assert!(!is_send_input_request(&Method::POST, "/workspaces/w/instance/api/session/ses_1/command//"));
         assert!(!is_send_input_request(&Method::GET, "/workspaces/w/instance/api/session/ses_1/prompt"));
