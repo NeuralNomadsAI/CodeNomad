@@ -9,18 +9,31 @@ use windows::Win32::System::Com::StructuredStorage::{
     PROPVARIANT, PROPVARIANT_0, PROPVARIANT_0_0, PROPVARIANT_0_0_0, PropVariantClear,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx, IPersistFile,
-    STGM_READ,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    CoUninitialize, IPersistFile, STGM_READ,
 };
 use windows::Win32::System::Variant::VT_LPWSTR;
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
 use windows::Win32::UI::Shell::{IShellLinkW, SHStrDupW, ShellLink};
 use windows::core::{HSTRING, Interface};
 
-fn com() {
-    // SAFETY: joins this thread to COM; a thread already in COM (in either model) keeps its mode,
-    // and shell links work in both.
-    _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+/// This thread's stay in COM, left when dropped. Declare it before any shell link, so the links
+/// are released first.
+struct Com(bool);
+
+fn com() -> Com {
+    // SAFETY: joins this thread to COM; a thread already in COM in the other model keeps its
+    // mode (the call fails and nothing is left later), and shell links work in both.
+    Com(unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok())
+}
+
+impl Drop for Com {
+    fn drop(&mut self) {
+        if self.0 {
+            // SAFETY: balances the successful `CoInitializeEx` of `com` on this thread.
+            unsafe { CoUninitialize() };
+        }
+    }
 }
 
 /// Writes a shortcut at `path` that starts `target` in `workdir`, with its icon, `app_id` as its
@@ -32,7 +45,7 @@ pub fn create(
     description: &str,
     workdir: &Path,
 ) -> Result<(), String> {
-    com();
+    let _com = com();
     let err = |what: &'static str| {
         move |e: windows::core::Error| format!("shortcut {}: {what}: {e}", path.display())
     };
@@ -78,6 +91,7 @@ pub fn create(
 
 /// The program the shortcut at `path` starts.
 pub fn target_of(path: &Path) -> Option<PathBuf> {
+    let _com = com();
     // SAFETY: the buffer outlives `GetPath`.
     unsafe {
         let mut buf = [0u16; 1024];
@@ -93,7 +107,6 @@ fn load(path: &Path) -> Option<IShellLinkW> {
     if !path.is_file() {
         return None;
     }
-    com();
     // SAFETY: COM calls on an object this function made.
     unsafe {
         let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
@@ -107,6 +120,7 @@ fn load(path: &Path) -> Option<IShellLinkW> {
 /// The AppUserModelID the shortcut at `path` carries.
 #[cfg(test)]
 pub fn app_id_of(path: &Path) -> Option<String> {
+    let _com = com();
     let store: IPropertyStore = load(path)?.cast().ok()?;
     // SAFETY: the store hands out a value this function owns and clears once.
     unsafe {

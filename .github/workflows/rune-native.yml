@@ -100,7 +100,7 @@ jobs:
         run: |
           cargo fmt -p codenomad-rune-app -p codenomad-client -p rune-theme-codenomad -p codenomad-host-process -p rune-style-policy -p codenomad-windows-notifications -p codenomad-windows-install -p codenomad-rune-setup -- --check
           cargo fmt --manifest-path packages/server-rs/Cargo.toml -- --check
-          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -- -D clippy::correctness -D clippy::suspicious
+          cargo clippy --locked -p codenomad-client -p codenomad-rune-app -p codenomad-windows-install -p codenomad-rune-setup -- -D clippy::correctness -D clippy::suspicious
           cargo clippy --locked --manifest-path packages/server-rs/Cargo.toml -- -D clippy::correctness -D clippy::suspicious
           cargo run --locked -p rune-style-policy -- packages/rune-app/src
       - name: Run Rust workspace tests

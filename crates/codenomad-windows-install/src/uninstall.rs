@@ -5,7 +5,7 @@
 //! shortcuts, the entry and the notification identities, then leaves the install folder to a
 //! command that deletes it once this process has exited: a running program cannot delete its own
 //! folder. Only the folder the entry names is ever deleted, and only when it can be an install
-//! folder ([`check_root`]).
+//! folder (`root::check_installed`).
 //!
 //! The settings and conversations stay: the Tauri application reads the same ones.
 
@@ -19,10 +19,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::HSTRING;
 
-use crate::{EXE, Product, folders, installed_root, same_path};
+use crate::{Product, installed_root, root, same_path};
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const DETACHED_PROCESS: u32 = 0x0000_0008;
 /// How long a running copy has to close on its own before it is ended.
 const CLOSE_GRACE: Duration = Duration::from_secs(10);
 
@@ -74,7 +73,7 @@ fn check(p: &Product, root: &Path) -> Result<(), String> {
         return Err("this copy was not installed by its setup".into());
     }
     // The entry is the user's to write: what it names must still be an install folder.
-    check_root(root)
+    root::check_installed(root).map_err(|why| format!("its folder cannot be removed ({why})"))
 }
 
 fn remove(p: &Product, root: &Path) -> Result<(), String> {
@@ -86,44 +85,6 @@ fn remove(p: &Product, root: &Path) -> Result<(), String> {
         crate::remove_dir(&left);
     }
     remove_after_exit(root).map_err(|e| format!("the files could not be removed ({e})"))
-}
-
-/// Refuses `root` unless it can be an install folder: absolute and below a drive's top, not one
-/// of the user's own folders (nor holding one), not a junction or link, and holding the
-/// application.
-pub(crate) fn check_root(root: &Path) -> Result<(), String> {
-    let below_top = root.parent().and_then(Path::parent).is_some();
-    if !root.is_absolute() || root.file_name().is_none() || !below_top {
-        return Err("its folder is a drive or sits at a drive's top".into());
-    }
-    if folders::protected().iter().any(|kept| inside(kept, root)) {
-        return Err("its folder is, or holds, one of your own folders".into());
-    }
-    if is_link(root) {
-        return Err("its folder is a junction or link".into());
-    }
-    if !root.join(EXE).is_file() {
-        return Err(format!("its folder has no {EXE}"));
-    }
-    Ok(())
-}
-
-/// Whether `path` is `base` or lies inside it, compared without regard to case.
-fn inside(path: &Path, base: &Path) -> bool {
-    let lower = |p: &Path| {
-        p.components()
-            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
-            .collect::<Vec<_>>()
-    };
-    lower(path).starts_with(&lower(base))
-}
-
-/// A junction, a symbolic link or another reparse point.
-fn is_link(path: &Path) -> bool {
-    use std::os::windows::fs::MetadataExt as _;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    std::fs::symlink_metadata(path)
-        .is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
 }
 
 /// The setup's folders beside the install (`.<name>.setup-*`, `.<name>.old-*`), which an
@@ -141,14 +102,18 @@ fn setup_folders(root: &Path) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| ours(&e.file_name().to_string_lossy()) && !is_link(&e.path()))
+        .filter(|e| ours(&e.file_name().to_string_lossy()) && !root::is_link(&e.path()))
         .map(|e| e.path())
         .collect()
 }
 
-/// Starts a command that deletes `root` once nothing holds it, trying for a minute. The path
-/// reaches `cmd.exe` through the environment, read with delayed expansion after the line is
-/// parsed, so no character in a folder's name can run a command.
+/// Starts a command that deletes `root` once nothing holds it, trying for a minute and stopping
+/// as soon as it is gone, so a folder installed there afterwards stays. The path reaches
+/// `cmd.exe` through the environment, read with delayed expansion after the line is parsed, so
+/// no character in a folder's name can run a command.
+///
+/// `CREATE_NO_WINDOW` alone: with `DETACHED_PROCESS` Windows ignores it, and each `ping` the
+/// command starts would open a console window of its own.
 pub(crate) fn remove_after_exit(root: &Path) -> std::io::Result<()> {
     let system = std::env::var_os("SystemRoot")
         .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from)
@@ -156,12 +121,15 @@ pub(crate) fn remove_after_exit(root: &Path) -> std::io::Result<()> {
     Command::new(system.join("cmd.exe"))
         .args(["/d", "/v:on", "/c"])
         .raw_arg(
-            "for /l %i in (1,1,30) do @if exist \"!CODENOMAD_UNINSTALL_ROOT!\" \
-             (rd /s /q \"!CODENOMAD_UNINSTALL_ROOT!\" 2>nul & ping -n 3 127.0.0.1 >nul)",
+            "for /l %i in (1,1,30) do @(rd /s /q \"!CODENOMAD_UNINSTALL_ROOT!\" 2>nul \
+             & if not exist \"!CODENOMAD_UNINSTALL_ROOT!\" (exit) else (ping -n 3 127.0.0.1 >nul))",
         )
         .env("CODENOMAD_UNINSTALL_ROOT", root)
         .current_dir(&system)
-        .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map(drop)
 }

@@ -60,12 +60,8 @@ impl Args {
 pub fn run() -> i32 {
     let args = Args::parse();
     let p = product();
-    let Some(root) = args
-        .dir
-        .clone()
-        .or_else(|| windows_install::default_root(&p))
-    else {
-        args.log("no folder to install in");
+    let Some(root) = folder(args.dir.as_deref(), &p) else {
+        args.log("no folder to install in: --dir takes an absolute path");
         return 1;
     };
     if !args.silent {
@@ -81,6 +77,21 @@ pub fn run() -> i32 {
     }
 }
 
+/// The folder to install in: `--dir` as Windows spells it (one kind of separator, no `.` or
+/// `..`), so the entry written for it compares equal to the folder the application later runs
+/// from; else the default. A relative `--dir` is refused: it would depend on where the setup was
+/// started.
+fn folder(dir: Option<&Path>, p: &Product) -> Option<PathBuf> {
+    match dir {
+        Some(dir) if dir.is_absolute() => {
+            let spelled = std::path::absolute(dir).ok()?;
+            Some(spelled.components().collect())
+        }
+        Some(_) => None,
+        None => windows_install::default_root(p),
+    }
+}
+
 /// Whether a copy of the application runs from `root`, which installing closes.
 pub fn running(root: &Path) -> bool {
     !windows_install::running_under(root).is_empty()
@@ -93,19 +104,39 @@ pub fn install(
     desktop_shortcut: bool,
     log: &dyn Fn(&str),
 ) -> Result<(), String> {
+    install_payload(PAYLOAD, p, root, desktop_shortcut, log)
+}
+
+fn install_payload(
+    payload: &[u8],
+    p: &Product,
+    root: &Path,
+    desktop_shortcut: bool,
+    log: &dyn Fn(&str),
+) -> Result<(), String> {
     log(&format!(
         "installing {} {} into {}",
         p.name,
         p.version,
         root.display()
     ));
+    // Before anything is closed or replaced: the folder is replaced whole, so it must be nothing
+    // but this install, and the shortcuts must be free to write.
+    windows_install::check_install_target(p, root).map_err(|why| {
+        format!(
+            "{} can't be installed in {}: {why}.",
+            p.name,
+            root.display()
+        )
+    })?;
+    windows_install::check_shortcuts(p, root, desktop_shortcut)?;
     if !windows_install::close_running(root, CLOSE_GRACE) {
         return Err(format!(
             "{} is still running. Close it and try again.",
             p.name
         ));
     }
-    place(PAYLOAD, root, log)?;
+    place(payload, root, log)?;
     windows_install::register(p, root, desktop_shortcut)?;
     log(&format!(
         "registered {} (Start menu{}, Apps & features)",
@@ -182,9 +213,12 @@ fn swap(root: &Path, app: &Path, log: &dyn Fn(&str)) -> Result<(), String> {
     let old = beside(root, &format!("old-{}", std::process::id()));
     rename(root, &old).map_err(|e| format!("couldn't move the installed version aside: {e}"))?;
     if let Err(e) = rename(app, root) {
-        rename(&old, root).ok();
+        let kept = match rename(&old, root) {
+            Ok(()) => "the installed version is as it was".to_owned(),
+            Err(back) => format!("the installed version is now in {} ({back})", old.display()),
+        };
         return Err(format!(
-            "couldn't put the application in {}: {e}",
+            "couldn't put the application in {}: {e}; {kept}",
             root.display()
         ));
     }
@@ -290,6 +324,44 @@ mod tests {
         assert_eq!(left_beside(&root), Vec::<String>::new());
         windows_install::remove_dir(&dir);
         windows_install::remove_dir(&other);
+    }
+
+    #[test]
+    fn install_never_replaces_a_folder_that_is_not_its_install() {
+        let (dir, payload) = scratch("foreign", &[(EXE, "one")]);
+        let documents = dir.join("documents");
+        std::fs::create_dir_all(&documents).unwrap();
+        std::fs::write(documents.join("thesis.txt"), "years of work").unwrap();
+        let p = Product {
+            name: format!("CodeNomad setup test {}", std::process::id()),
+            id: format!(
+                "{}.setup-test-{}",
+                windows_install::APP_ID,
+                std::process::id()
+            ),
+            version: "1.2.3".into(),
+        };
+
+        let refused = install_payload(&payload, &p, &documents, false, &|_| {});
+
+        assert!(refused.is_err());
+        assert_eq!(
+            std::fs::read_to_string(documents.join("thesis.txt")).unwrap(),
+            "years of work"
+        );
+        assert_eq!(left_beside(&documents), Vec::<String>::new());
+        assert_eq!(windows_install::installed_root(&p), None);
+        windows_install::remove_dir(&dir);
+    }
+
+    #[test]
+    fn dir_is_absolute_and_spelled_as_windows_spells_it() {
+        let p = Product::release("1.2.3");
+        assert_eq!(folder(Some(Path::new(r"relative\app")), &p), None);
+        assert_eq!(
+            folder(Some(Path::new(r"C:/Apps\.\CodeNomad\..\Rune\")), &p),
+            Some(PathBuf::from(r"C:\Apps\Rune"))
+        );
     }
 
     #[test]

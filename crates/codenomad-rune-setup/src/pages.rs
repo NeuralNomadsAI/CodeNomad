@@ -121,24 +121,55 @@ struct Wizard<'a> {
     pages: Vec<(Stage, Page)>,
 }
 
+/// What a notification asks of the dialog once the wizard's state is updated.
+enum Next {
+    /// Nothing more; the value answers the notification (`S_FALSE` keeps the dialog open).
+    Answer(HRESULT),
+    Go(Stage, HRESULT),
+    /// The Installing page is up: start its marquee and grey out Cancel.
+    Marquee,
+}
+
 impl Wizard<'_> {
-    fn go(&mut self, hwnd: HWND, stage: Stage) {
-        self.stage = stage;
-        let me = self as *mut Wizard as isize;
-        let Some((_, page)) = self.pages.iter_mut().find(|(s, _)| *s == stage) else {
-            return;
-        };
-        page.config.lpCallbackData = me;
-        // SAFETY: the page's config, and everything it points at, lives in `self.pages` for the
-        // rest of the dialog.
-        unsafe {
-            SendMessageW(
-                hwnd,
-                TDM_NAVIGATE_PAGE as u32,
-                0,
-                &page.config as *const TASKDIALOGCONFIG as LPARAM,
-            )
-        };
+    fn on(&mut self, msg: i32, wparam: WPARAM) -> Next {
+        match msg {
+            TDN_VERIFICATION_CLICKED => match self.stage {
+                Stage::Welcome => self.desktop = wparam != 0,
+                Stage::Done => self.launch = wparam != 0,
+                _ => {}
+            },
+            TDN_BUTTON_CLICKED => match (self.stage, wparam as i32) {
+                (Stage::Welcome, INSTALL) if install::running(self.root) => {
+                    return Next::Go(Stage::Running, S_FALSE);
+                }
+                (Stage::Welcome, INSTALL) | (Stage::Running, CLOSE_AND_INSTALL) => {
+                    return Next::Go(Stage::Installing, S_FALSE);
+                }
+                // Nothing stops an install halfway.
+                (Stage::Installing, _) => return Next::Answer(S_FALSE),
+                _ => {}
+            },
+            TDN_NAVIGATED if self.stage == Stage::Installing => {
+                self.start();
+                return Next::Marquee;
+            }
+            TDN_TIMER if self.stage == Stage::Installing => {
+                let done = self.result.lock().unwrap_or_else(|e| e.into_inner()).take();
+                match done {
+                    Some(Ok(())) => {
+                        self.launch = true;
+                        return Next::Go(Stage::Done, S_OK);
+                    }
+                    Some(Err(e)) => {
+                        self.failed(&e);
+                        return Next::Go(Stage::Failed, S_OK);
+                    }
+                    None => {}
+                }
+            }
+            _ => {}
+        }
+        Next::Answer(S_OK)
     }
 
     /// Installs on a thread of its own; the page's timer picks up the result.
@@ -181,6 +212,27 @@ impl Wizard<'_> {
     }
 }
 
+/// Shows `stage`'s page. The dialog calls back into [`callback`] before `SendMessageW` returns,
+/// so no reference to the wizard is alive across it: the page's config is taken as a pointer.
+///
+/// # Safety
+/// `wizard` is the live `Wizard` of the dialog `hwnd`, and no reference to it exists.
+unsafe fn navigate(wizard: *mut Wizard, hwnd: HWND, stage: Stage) {
+    // SAFETY: the caller's contract; the reference ends with this block.
+    let config = unsafe {
+        let w = &mut *wizard;
+        w.stage = stage;
+        let Some((_, page)) = w.pages.iter_mut().find(|(s, _)| *s == stage) else {
+            return;
+        };
+        page.config.lpCallbackData = wizard as isize;
+        &raw const page.config
+    };
+    // SAFETY: the page's config, and everything it points at, lives in the wizard's pages for
+    // the rest of the dialog.
+    unsafe { SendMessageW(hwnd, TDM_NAVIGATE_PAGE as u32, 0, config as LPARAM) };
+}
+
 unsafe extern "system" fn callback(
     hwnd: HWND,
     msg: u32,
@@ -188,62 +240,30 @@ unsafe extern "system" fn callback(
     _: LPARAM,
     data: isize,
 ) -> HRESULT {
-    if data == 0 {
+    let wizard = data as *mut Wizard;
+    if wizard.is_null() {
         return S_OK;
     }
-    // SAFETY: `data` is the `Wizard` `run` passed, alive while its modal dialog runs.
-    let w = unsafe { &mut *(data as *mut Wizard) };
-    match msg as i32 {
-        TDN_VERIFICATION_CLICKED => match w.stage {
-            Stage::Welcome => w.desktop = wparam != 0,
-            Stage::Done => w.launch = wparam != 0,
-            _ => {}
-        },
-        TDN_BUTTON_CLICKED => match (w.stage, wparam as i32) {
-            (Stage::Welcome, INSTALL) => {
-                let next = if install::running(w.root) {
-                    Stage::Running
-                } else {
-                    Stage::Installing
-                };
-                w.go(hwnd, next);
-                return S_FALSE;
-            }
-            (Stage::Running, CLOSE_AND_INSTALL) => {
-                w.go(hwnd, Stage::Installing);
-                return S_FALSE;
-            }
-            // Nothing stops an install halfway.
-            (Stage::Installing, _) => return S_FALSE,
-            _ => {}
-        },
-        TDN_NAVIGATED if w.stage == Stage::Installing => {
+    // SAFETY: `data` is the `Wizard` `run` passed, alive while its modal dialog runs; this
+    // reference ends before any message is sent to the dialog.
+    let next = unsafe { (*wizard).on(msg as i32, wparam) };
+    match next {
+        Next::Answer(answer) => answer,
+        Next::Go(stage, answer) => {
+            // SAFETY: the wizard of this dialog, with no reference to it alive.
+            unsafe { navigate(wizard, hwnd, stage) };
+            answer
+        }
+        Next::Marquee => {
             // SAFETY: messages to the dialog that sent this notification.
             unsafe {
                 SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_MARQUEE as u32, 1, 0);
                 SendMessageW(hwnd, TDM_ENABLE_BUTTON as u32, IDCANCEL as WPARAM, 0);
             }
-            w.start();
+            S_OK
         }
-        TDN_TIMER if w.stage == Stage::Installing => {
-            let done = w.result.lock().unwrap_or_else(|e| e.into_inner()).take();
-            match done {
-                Some(Ok(())) => {
-                    w.launch = true;
-                    w.go(hwnd, Stage::Done);
-                }
-                Some(Err(e)) => {
-                    w.failed(&e);
-                    w.go(hwnd, Stage::Failed);
-                }
-                None => {}
-            }
-        }
-        _ => {}
     }
-    S_OK
 }
-
 /// Runs the pages; the exit code is 0 once installed, 1 when it failed, 2 when cancelled.
 pub fn run(p: &Product, root: &Path, args: &Args) -> i32 {
     let name = &p.name;

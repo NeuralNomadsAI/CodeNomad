@@ -24,12 +24,14 @@ use std::time::Duration;
 mod folders;
 mod process;
 mod registry;
+mod root;
 mod shortcut;
 #[cfg(test)]
 mod tests;
 mod uninstall;
 
 pub use process::{close_running, running_under};
+pub use root::check_install_target;
 pub use uninstall::run_if_asked as run_uninstall_if_asked;
 
 /// The application's executable in the install root.
@@ -75,21 +77,31 @@ pub fn installed_root(p: &Product) -> Option<PathBuf> {
 
 /// Registers the install at `root`: the Start menu shortcut (and the desktop one when asked) and
 /// the Apps & features entry. A shortcut of the same name that starts another program is never
-/// replaced: nothing is written and the error names it.
+/// replaced: nothing is written and the error names it ([`check_shortcuts`] says so beforehand).
 pub fn register(p: &Product, root: &Path, desktop_shortcut: bool) -> Result<(), String> {
+    register_in(p, root, &link_dirs(desktop_shortcut)?)
+}
+
+/// Refuses when a shortcut `register` would write already starts another program, so the setup
+/// can say so before it replaces any file.
+pub fn check_shortcuts(p: &Product, root: &Path, desktop_shortcut: bool) -> Result<(), String> {
+    check_links(p, root, &links(p, &link_dirs(desktop_shortcut)?))
+}
+
+fn link_dirs(desktop_shortcut: bool) -> Result<Vec<PathBuf>, String> {
     let mut dirs = vec![folders::programs().ok_or("no Start menu folder")?];
     if desktop_shortcut {
         dirs.push(folders::desktop().ok_or("no Desktop folder")?);
     }
-    register_in(p, root, &dirs)
+    Ok(dirs)
 }
 
-fn register_in(p: &Product, root: &Path, link_dirs: &[PathBuf]) -> Result<(), String> {
+fn links(p: &Product, link_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    link_dirs.iter().map(|d| d.join(link_name(p))).collect()
+}
+
+fn check_links(p: &Product, root: &Path, links: &[PathBuf]) -> Result<(), String> {
     let exe = root.join(EXE);
-    if !exe.is_file() {
-        return Err(format!("{} has no {EXE}", root.display()));
-    }
-    let links: Vec<PathBuf> = link_dirs.iter().map(|d| d.join(link_name(p))).collect();
     let installed = installed_root(p).map(|r| r.join(EXE));
     for link in links.iter().filter(|link| link.exists()) {
         let target = shortcut::target_of(link);
@@ -100,13 +112,22 @@ fn register_in(p: &Product, root: &Path, link_dirs: &[PathBuf]) -> Result<(), St
             return Err(format!("{} already starts another program", link.display()));
         }
     }
+    Ok(())
+}
+
+fn register_in(p: &Product, root: &Path, link_dirs: &[PathBuf]) -> Result<(), String> {
+    let exe = root.join(EXE);
+    if !exe.is_file() {
+        return Err(format!("{} has no {EXE}", root.display()));
+    }
+    let links = links(p, link_dirs);
+    check_links(p, root, &links)?;
     let workdir = folders::profile().unwrap_or_else(|| root.to_path_buf());
     for link in &links {
         shortcut::create(link, &exe, &p.id, &p.name, &workdir)?;
     }
     registry::write_entry(p, root, size_kb(root))
 }
-
 /// After an update put a new version in `root`: its version and size in Apps & features. Does
 /// nothing when `root` is not `p`'s registered install.
 pub fn refresh(p: &Product, root: &Path) -> Result<(), String> {

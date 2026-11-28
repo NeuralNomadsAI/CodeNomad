@@ -221,9 +221,9 @@ fn close_running_ends_a_copy_started_from_the_install_and_nothing_else() {
 #[test]
 fn only_an_install_folder_can_be_removed() {
     let s = Scratch::new();
-    assert_eq!(uninstall::check_root(&s.root()), Ok(()));
+    assert_eq!(root::check_installed(&s.root()), Ok(()));
 
-    let refused = |path: &Path| uninstall::check_root(path).is_err();
+    let refused = |path: &Path| root::check_installed(path).is_err();
     let profile = folders::profile().unwrap();
     std::fs::create_dir_all(s.dir.join("empty")).unwrap();
     assert!(refused(&s.dir.join("empty")), "no application in it");
@@ -270,4 +270,46 @@ fn the_install_folder_goes_once_nothing_holds_it_and_its_siblings_stay() {
     });
     assert!(gone);
     assert!(s.root().join(EXE).is_file() && s.dir.join("links").is_dir());
+
+    // A folder installed there afterwards is not the command's to delete.
+    std::fs::create_dir_all(&root).unwrap();
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(root.is_dir());
+}
+
+#[test]
+fn the_setup_only_takes_a_folder_that_is_absent_empty_or_its_own_install() {
+    let s = Scratch::new();
+    let target = |path: &Path| check_install_target(&s.product, path);
+
+    assert_eq!(target(&s.dir.join("absent")), Ok(()));
+    std::fs::create_dir_all(s.dir.join("empty")).unwrap();
+    assert_eq!(target(&s.dir.join("empty")), Ok(()));
+
+    // The scratch root holds a program of the right name, but no entry names it.
+    assert!(
+        target(&s.root()).is_err(),
+        "a folder that is not the install"
+    );
+    let documents = s.dir.join("documents");
+    std::fs::create_dir_all(&documents).unwrap();
+    std::fs::write(documents.join("thesis.txt"), b"years of work").unwrap();
+    assert!(target(&documents).is_err(), "a folder holding other files");
+    std::fs::write(s.dir.join("file"), b"").unwrap();
+    assert!(target(&s.dir.join("file")).is_err(), "a file");
+
+    let profile = folders::profile().unwrap();
+    assert!(target(&profile).is_err(), "the user's profile");
+    assert!(
+        target(profile.parent().unwrap()).is_err(),
+        "holds the profile"
+    );
+    assert!(
+        target(Path::new(r"D:\CodeNomad Rune")).is_err(),
+        "at a drive's top"
+    );
+    assert!(target(Path::new(r"relative\root")).is_err(), "not absolute");
+
+    register_in(&s.product, &s.root(), &s.links()).unwrap();
+    assert_eq!(target(&s.root()), Ok(()), "the registered install");
 }
