@@ -55,7 +55,7 @@ export function registerSessionPruningRoutes(app: FastifyInstance, deps: History
         }
         const latest = await revalidate()
         if (method === "prune") {
-          await assertOrdinaryMissionScheduleSession(client, latest, { signal, current })
+          assertOrdinaryMissionScheduleSession(latest)
           await revalidate()
         }
         // Narrow broker only: callers cannot choose RPC ID, method, location,

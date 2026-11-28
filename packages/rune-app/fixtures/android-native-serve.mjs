@@ -2,8 +2,10 @@
 // through `adb reverse`. Its OpenCode is a synthetic endpoint (`synthetic-opencode.mjs`): no
 // installed daemon is used.
 //
-//   node packages/rune-app/fixtures/android-native-serve.mjs [--port 3000] [--minutes 60] [--password <to type by hand>]
+//   node packages/rune-app/fixtures/android-native-serve.mjs [--port 3000] [--minutes 60] [--password <to type by hand>] [--ui <built UI directory>]
 //
+// With --ui the server also serves that built web interface (the original CodeNomad's, for one), so
+// a browser reads the same data as the Rune application.
 // RUNE_SERVER_EXE names the built `codenomad-rs`. Prints one JSON line {origin, port, password, profile, stop} once the server answers, then
 // serves until the `stop` file appears or the minutes run out. The server admits only its own
 // loopback origin, so the device must reach it on the same port: `adb reverse tcp:3000 tcp:3000`.
@@ -138,7 +140,7 @@ export async function runAndroidNativeServe({
 }={}){
   const {values}=parseArgs({
     args:argv,
-    options:{minutes:{type:'string',default:'60'},port:{type:'string',default:'3000'},password:{type:'string'}},
+    options:{minutes:{type:'string',default:'60'},port:{type:'string',default:'3000'},password:{type:'string'},ui:{type:'string'}},
   })
   const minutes=Number(values.minutes),serverBinary=sourceEnv.RUNE_SERVER_EXE
   assert(serverBinary&&path.isAbsolute(serverBinary)&&(await stat(serverBinary)).isFile(),'Set RUNE_SERVER_EXE to the built codenomad-rs')
@@ -153,7 +155,7 @@ export async function runAndroidNativeServe({
   const password=values.password??randomUUID(),nativePassword=randomUUID(),requests=path.join(profile,'native-requests.log')
   const upstream=await syntheticOpenCode({project,password:nativePassword,requests})
   const env={...await privateEnvironment(profile),CNRS_SERVER_PASSWORD:password,CNRS_FIXTURE_URL:upstream.origin,
-    CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1'}
+    CNRS_FIXTURE_PASSWORD:nativePassword,CNRS_FIXTURE_STDIN_STOP:'1',...(values.ui?{CNRS_FIXTURE_UI_DIR:path.resolve(values.ui)}:{})}
   // The fourth argument names no executable: with the synthetic endpoint set, none is started.
   const server=spawnChild(serverBinary,[path.dirname(project),path.join(profile,'identity.json'),values.port,'synthetic-only'],
     {cwd:profile,env,windowsHide:true,stdio:['pipe','pipe','pipe']})

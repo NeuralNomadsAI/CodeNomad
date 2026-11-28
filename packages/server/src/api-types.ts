@@ -13,20 +13,6 @@ export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionConte
 export type { OpenCodeLogsResponse } from "./opencode/logs"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
-export type { MissionScheduleList } from "./missions/mission-schedule-list"
-export type { MissionScheduleRead } from "./missions/mission-schedule-view"
-export interface MissionScheduleCapability {
-  location: PluginControlLocation
-  api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
-  enabled: boolean
-  origin: string | null
-  provenance?: "environment" | "experimental-block" | "channel-default" | "automations-setting"
-  /** `targets` is always empty: activation reads the effective setting and writes no configuration. */
-  activation: { available: true; targets: [] }
-    | { available: false; reason: string; targets: []; code?: "schedule-activation-refused";
-      refusal?: { reason: "explicit-off"; provenance: "environment" | "experimental-block" | "channel-default" | "automations-setting";
-        layer: "environment" | "global" | "project" | "inherited" | "imposed"; path?: string; openable: boolean; configFileID?: string } }
-}
 
 export type {
   MissionActor,
@@ -54,18 +40,6 @@ export type {
   MissionTaskStatus,
   MissionTemplateId,
 } from "./missions/model"
-
-export interface MissionRecurrenceCurrent {
-  version: 1
-  ownerRevision?: number
-  projectID: string
-  scheduleID: string
-  passageID: string | null
-  source?: import("./missions/mission-current-source").MissionCurrentSource
-  mission?: import("./missions/mission-panel-map").MissionPanelMap
-  activity?: import("./missions/model").MissionActivityProjection
-}
-export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.

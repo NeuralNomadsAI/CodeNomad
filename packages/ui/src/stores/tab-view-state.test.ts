@@ -26,9 +26,7 @@ it("restores occurrence views on recreated UUIDs; repeated hydration and sibling
   const a = "new-backend-a", b = "new-backend-b"
   assert.equal(captureTabViewState(a), undefined)
   seedTabViewState(a, view("a"))
-  seedTabViewState(b, { ...view("b"), missions: { reader: { missionId: "mission", kind: "recurrence",
-    instanceId: "old-backend", projectID: "project", scheduleOwner: "scheduled" } } })
-  assert.equal(getTabViewState(b).missions?.reader?.instanceId, b)
+  seedTabViewState(b, view("b"))
   updateTabViewState(a, { previews: { session: { ...preview("a"), mode: "chat" } } })
   seedTabViewState(a, view("stale"))
   assert.equal(getTabViewState(a).previews?.session.mode, "chat")

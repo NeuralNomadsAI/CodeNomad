@@ -704,7 +704,7 @@ pub(crate) async fn run_with_reading(
                     continue;
                 }
                 if kind == "session.moved" {
-                    if native["data"]["sessionID"] != backend.session {
+                    if !crate::stream::session_moved_away(&backend, &native) {
                         continue;
                     }
                     wire.cancel();

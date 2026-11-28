@@ -1,5 +1,5 @@
 use super::{
-    detail::{Detail, read_window},
+    detail::{CancelToken, Detail, read_window},
     observation::Observation,
     reader::Reader,
 };
@@ -28,7 +28,7 @@ enum Read {
 
 #[derive(Default)]
 struct Lane {
-    active: Option<(u64, Sender<()>)>,
+    active: Option<(u64, CancelToken)>,
     window: Option<Window>,
     failed: Option<Read>,
     owed: bool,
@@ -56,7 +56,7 @@ pub(crate) struct Panel {
     now: f64,
     pub(super) scope: std::rc::Rc<()>,
     supported: Option<bool>,
-    capability: Option<Receiver<Option<bool>>>,
+    capability: Option<(CancelToken, Receiver<Option<bool>>)>,
     probe_attempted: bool,
     lanes: [Lane; 2],
     pub(super) summaries: Vec<Summary>,
@@ -118,14 +118,34 @@ impl Panel {
         self.backend.base == backend.base && self.backend.workspace == backend.workspace
     }
 
+    fn mark_panel_flights(&self, include_detail: bool, include_control: bool, include_probe: bool) {
+        if include_detail {
+            self.detail.mark_cancel();
+        }
+        if include_control {
+            self.control_fields.mark_cancel();
+        }
+        self.observation.mark_cancel();
+        self.calendars.mark_cancel_reads();
+        for lane in &self.lanes {
+            if let Some((_, cancel)) = &lane.active {
+                cancel.mark_aborted();
+            }
+        }
+        if include_probe && let Some((cancel, _)) = &self.capability {
+            cancel.mark_aborted();
+        }
+    }
+
     /// Rebinds the authenticated HTTP client after sign-in while preserving the selected Mission
     /// and any open Mission reader so the user returns to their reading state and revalidates it.
     pub(crate) fn rebind(&mut self, backend: Backend) {
         self.backend = backend;
+        self.mark_panel_flights(true, true, true);
         self.cancel_probe();
         for lane in &mut self.lanes {
             if let Some((_, cancel)) = lane.active.take() {
-                cancel.close();
+                cancel.cancel();
             }
             lane.owed = false;
         }
@@ -210,6 +230,7 @@ impl Panel {
 
     pub(crate) fn suspend(&mut self) {
         self.reader_suspended = self.reader.is_open();
+        self.mark_panel_flights(true, true, true);
         self.show(false);
         self.refresh_due = None;
         self.detail.cancel();
@@ -291,6 +312,7 @@ impl Panel {
         if show {
             self.refresh();
         } else {
+            self.mark_panel_flights(!self.reader.is_open(), true, false);
             if !self.reader.is_open() {
                 self.refresh_due = None;
                 self.detail.cancel();
@@ -300,7 +322,7 @@ impl Panel {
             self.calendars.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
-                    cancel.close();
+                    cancel.cancel();
                 }
                 lane.owed = false;
             }
@@ -355,13 +377,14 @@ impl Panel {
             }
         } else {
             // A reconnect retires publication authority while keeping the display.
+            self.mark_panel_flights(true, false, false);
             self.detail.cancel();
             self.observation.cancel();
             self.calendars.on_reconnect();
             self.reader.invalidate();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
-                    cancel.close();
+                    cancel.cancel();
                 }
             }
         }
@@ -422,37 +445,42 @@ impl Panel {
         self.probe_attempted = true;
         let backend = self.backend.clone();
         let (out, incoming) = bounded(1);
-        self.capability = Some(incoming);
+        let (cancel, signal) = CancelToken::new();
+        self.capability = Some((cancel, incoming));
         let wake = self.wake.clone();
         let reads = self.reads.clone();
         platform::spawn(async move {
             let query = async || {
-                let (_cancel, cancelled) = bounded(1);
-                let _permit = reads.background(&cancelled).await?;
-                let response = backend
-                    .client
-                    .get(format!("{}api/meta", backend.base))
-                    .send()
+                signal
+                    .with_background(&reads, async {
+                        let response = backend
+                            .client
+                            .get(format!("{}api/meta", backend.base))
+                            .send()
+                            .await
+                            .ok()?
+                            .error_for_status()
+                            .ok()?;
+                        let value = codenomad_client::backend::read_json(response).await.ok()?;
+                        Some(
+                            value["capabilities"]
+                                .as_array()?
+                                .iter()
+                                .any(|value| value == "missions"),
+                        )
+                    })
                     .await
-                    .ok()?
-                    .error_for_status()
-                    .ok()?;
-                let value = codenomad_client::backend::read_json(response).await.ok()?;
-                Some(
-                    value["capabilities"]
-                        .as_array()?
-                        .iter()
-                        .any(|value| value == "missions"),
-                )
+                    .flatten()
             };
             let check = async {
                 // Like Solid, give the failed initial metadata flight one recovery read.
                 match query().await {
-                    None => query().await,
+                    None if !signal.is_cancelled() => query().await,
                     result => result,
                 }
             };
-            if let Some(supported) = codenomad_client::runtime::until_closed(&out, check).await
+            if let Some(supported) = signal.run(check).await
+                && !signal.is_cancelled()
                 && out.send(supported).await.is_ok()
             {
                 wake();
@@ -510,13 +538,14 @@ impl Panel {
         };
         self.serial = self.serial.wrapping_add(1);
         let serial = self.serial;
-        let (cancel, cancelled) = bounded(1);
+        let (cancel, signal) = CancelToken::new();
         lane.active = Some((serial, cancel));
         let reads = self.reads.clone();
         let out = self.out.clone();
         let wake = self.wake.clone();
         platform::spawn(async move {
-            if let Some(page) = read_window(opened, &reads, &cancelled).await
+            if let Some(page) = read_window(opened, &reads, &signal).await
+                && !signal.is_cancelled()
                 && out
                     .send(Completion {
                         kind,
@@ -534,7 +563,11 @@ impl Panel {
 
     pub(crate) fn poll(&mut self) -> bool {
         let mut changed = false;
-        if let Some(supported) = self.capability.as_ref().and_then(|r| r.try_recv().ok()) {
+        if let Some(supported) = self
+            .capability
+            .as_ref()
+            .and_then(|(_, r)| r.try_recv().ok())
+        {
             self.capability = None;
             self.supported = supported;
             changed = self.supported();

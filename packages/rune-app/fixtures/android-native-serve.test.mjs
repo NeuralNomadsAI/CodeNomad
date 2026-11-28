@@ -91,7 +91,7 @@ test('syntheticOpenCode logs 413, handles invalid JSON and 500 without crashing,
   // Server remains healthy and serves normal requests afterward.
   const ok=await fetch(`${endpoint.origin}api/location`,{headers:{authorization:auth}})
   assert.equal(ok.status,200)
-  assert.deepEqual(await ok.json(),{data:{directory:dir}})
+  assert.deepEqual(await ok.json(),{data:{directory:dir},directory:dir,project:{id:'synthetic_project',canonical:dir,directory:dir}})
 
   const log=await waitForLog(requests,'200 GET /api/location')
   assert.match(log,/401 GET \/api\/location/)

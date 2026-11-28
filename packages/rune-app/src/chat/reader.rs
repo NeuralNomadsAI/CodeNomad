@@ -6091,7 +6091,7 @@ mod resume_tests {
                         id: format!("rclamp-{i:02}"),
                         role: "assistant".into(),
                         completed: true,
-                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(4)),
+                        body: format!("{prefix} {i:02} {}", long_sentence.repeat(5)),
                         parts: vec![],
                     }
                     .into()

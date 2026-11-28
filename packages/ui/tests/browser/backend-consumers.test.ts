@@ -5,12 +5,12 @@ import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 // The Mission surface changes its own requests, not either composer's history delivery.
-for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) test(`real composers retain exact local history and isolate backends; Missions ${mode} uses physical directories; history ${delivery}`, { timeout: 60000 }, async () => {
+for (const delivery of ["held", "immediate"]) test(`real composers retain exact local history and isolate backends; Missions use physical directories; history ${delivery}`, { timeout: 60000 }, async () => {
   const fixture = await borrowFixture({ name: "backend-consumers", routes: [{ path: "/fixture", html:
     '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/backend-consumers.tsx"></script></body></html>' }] })
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
-  const page = await browser.newPage(), errors: string[] = [], schedules: string[] = [], remoteHistory: string[] = []
+  const page = await browser.newPage(), errors: string[] = [], programmed: string[] = [], remoteHistory: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript({ content: 'window.EventSource = class extends EventTarget { close() {} }' })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
@@ -27,15 +27,15 @@ for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) t
       await remoteGate
       return route.fulfill({ json: { messageHistory: ["remote history"], agentModelSelections: {} } })
     }
-    if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled") {
-      schedules.push(request.searchParams.get("directory")!)
-      return route.fulfill({ json: { version: 1, projectID: "p", schedules: [] } })
+    if (request.pathname === "/api/backends/lab/api/workspaces/mission/missions/calendars") {
+      programmed.push(request.searchParams.get("directory")!)
+      return route.fulfill({ json: { calendars: [] } })
     }
     return route.fulfill({ status: 503, json: { error: "Inventory unavailable in this fixture" } })
   })
   try {
-    const schedule = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/scheduled")
-    await page.goto(`${fixture.url}?mode=${mode}`)
+    const read = page.waitForResponse(response => new URL(response.url()).pathname === "/api/backends/lab/api/workspaces/mission/missions/calendars")
+    await page.goto(fixture.url)
     const local = page.locator('[data-composer="local"] textarea'), remote = page.locator('[data-composer="remote"] textarea')
     await Promise.all([
       (async () => {
@@ -61,12 +61,12 @@ for (const [mode, delivery] of [["control", "held"], ["reader", "immediate"]]) t
         releaseRemote()
       })(),
     ])
-    await schedule
+    await read
     const result = await page.evaluate(() => (window as any).backendConsumers)
     assert.deepEqual(result.reads, [result.folder], "local storage receives the physical folder key")
     assert.deepEqual(remoteHistory, [result.folder], "remote storage HTTP receives the physical folder key")
-    assert.ok(schedules.length)
-    assert.ok(schedules.every(directory => directory === "/repo"), JSON.stringify(schedules))
+    assert.ok(programmed.length)
+    assert.ok(programmed.every(directory => directory === "/repo"), JSON.stringify(programmed))
     assert.deepEqual(errors, [])
   } finally { releaseRemote(); await browser.close() }
 })

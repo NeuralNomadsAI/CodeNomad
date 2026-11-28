@@ -1,7 +1,5 @@
 use super::{document::Format, presentation::Kind};
-use crate::{
-    State, components::button_tx, screen, strings::t, window_control::scoped_close_button,
-};
+use crate::{State, components::button_tx, screen, strings::t};
 use rune::El;
 use rune_theme_codenomad::{
     Space, document_reader as theme, git_panel,
@@ -315,27 +313,26 @@ fn reader_content(s: &State) -> El {
             }
         };
     }
-    let input_scope = s.input_scope.clone();
-    actions.push(scoped_close_button(
-        &ui.reader_close,
-        "file-close",
-        dark,
-        Some(t("gitPanel.backChat")),
-        move |s: &mut State| {
-            s.files
-                .as_mut()
-                .filter(|ui| ui.document.scope() == scope)
-                .map(|ui| &mut ui.reader_close)
-        },
-        screen::action_tx(&input_scope, move |s, tx| {
-            if let Some(ui) = &mut s.files {
-                if scope == ui.document.scope() {
-                    ui.close_reader();
-                    crate::chat::reading::restore_position(s, tx);
-                }
-            }
-        }),
-    ));
+    let close = std::rc::Rc::new(document_state_action_tx(s, |s, tx| {
+        if let Some(ui) = &mut s.files {
+            ui.close_reader();
+            crate::chat::reading::restore_position(s, tx);
+        }
+    }));
+    let close_press = close.clone();
+    actions.push(
+        activate_enter(
+            git_panel::toolbar_icon_button(
+                &git_panel::CLOSE,
+                t("gitPanel.backChat"),
+                false,
+                None,
+                move |s, tx| close_press(s, tx),
+            ),
+            move |s, tx| close(s, tx),
+        )
+        .key("file-close"),
+    );
     let read_only = !matches!(kind, Some(Kind::Text(_))) || !ui.document.editable();
     let status = match (ui.document.dirty(), read_only) {
         (true, true) => Some(format!(

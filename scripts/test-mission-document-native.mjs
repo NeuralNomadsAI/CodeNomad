@@ -70,10 +70,6 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
     assert.equal(created.document.launchedCount, 0)
     assert.deepEqual(created.document.launch.timing, { kind: "immediate" })
     assert.equal(created.document.scheduleActivation, null)
-    const activationIdentity = { missionID: created.id, requestID: "activation-is-not-immediate", expectedRevision: created.document.revision }
-    const activationRead = await rpc.documentActivation({ ...activationIdentity, action: "read" }, { location })
-    assert.equal(activationRead.document.scheduleActivation, null)
-    await assert.rejects(rpc.documentActivation({ ...activationIdentity, action: "prepare", authority: "a".repeat(64), targets: [] }, { location }))
     await delay(250)
     assert.equal(requests.length, 0, "Creation causes zero provider requests")
     const db = new DatabaseSync(path.join(root, "fixture.db"), { readOnly: true })

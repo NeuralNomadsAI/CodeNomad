@@ -7,8 +7,9 @@ use crate::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue,
+    catalogue,
     layout::{self, Layout},
+    transcript,
 };
 
 pub(super) const PART_LIMIT: usize = 1000;
@@ -124,21 +125,18 @@ fn message_with_groups(s: &State, i: usize, groups: &Groups) -> El {
             .next_if(|block| block.part == index)
             .map(|block| block.marker)
     };
-    let header = layout::action_row().child(
-        text(t(if m.role == "user" {
+    let is_user = m.role == "user";
+    let header = transcript::message_header(
+        is_user,
+        t(if is_user {
             "messageItem.speaker.you"
         } else {
             "messageItem.speaker.assistant"
-        }))
-        .text_role(TextRole::Label),
+        }),
+        None,
+        super::message_actions::actions(s, m),
     );
-    let header = super::message_actions::header(s, m, header);
-    let mut view = col()
-        .key(m.id.clone())
-        .full_width()
-        .pad(Space::Lg)
-        .separate(Space::Sm)
-        .child(header);
+    let mut view = transcript::message_card(m.id.clone(), is_user, header);
     let mut ordinal = 0;
     let text_claimed = std::cell::Cell::new(false);
     if (m.role == "user" || m.parts.is_empty()) && !m.body.is_empty() {

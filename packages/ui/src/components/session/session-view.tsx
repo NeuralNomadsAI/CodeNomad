@@ -120,7 +120,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // contains has nothing to show: release the central surface to the transcript.
   createEffect(() => {
     const target = missionReader()
-    if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
+    if (!target || target.kind === "playbook") return
     if (missionStore.mapMissing(props.instanceId, target.missionId))
       updateMissionProjectView(props.instanceId, { reader: undefined })
   })

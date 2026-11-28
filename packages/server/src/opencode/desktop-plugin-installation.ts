@@ -13,10 +13,7 @@ import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
-import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
 import { ownReadiness } from "./desktop-plugin-readiness"
-
-export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "runtime">>
 
 export interface DesktopPluginPaths {
   config: string
@@ -90,11 +87,7 @@ export async function installDesktopPluginPresence(
     ? pathToFileURL(`${nativeDirectory}/${hash}.mjs`, { windows: false }).href
     : pathToFileURL(plugin).href
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
-  const nativePlugin = paths.nativeData ? path.posix.join(nativeDirectory, `${hash}.mjs`) : plugin
-  const artifacts: DesktopMissionArtifacts | undefined = feature === "missions" ? Object.freeze({
-    runtime: Object.freeze({ file: nativePlugin, sha256: hash }),
-  }) : undefined
-  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)}${artifacts ? `, ${JSON.stringify(artifacts)}` : ""})\n`
+  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)})\n`
   await mkdir(leases, { recursive: true })
   assertCurrent()
   await mkdir(path.dirname(entry), { recursive: true })

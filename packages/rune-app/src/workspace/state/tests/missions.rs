@@ -253,6 +253,7 @@ fn mounted_missions_reads_the_active_occurrence_only_while_visible() {
             activity.body,
             json!({"source":"activity","missionID":"alpha","actorOffset":0})
         );
+        while signal.try_recv().is_ok() {}
         activity
             .reply(
                 503,

@@ -144,7 +144,7 @@ fn receipt_pagination_navigates_and_clears_on_page_part_and_revision_changes() {
     send.try_send(Ok(receipts_page("r2", "{}".into(), 2)))
         .ok()
         .unwrap();
-    fields.flight = Some(inbox);
+    fields.flight = Some((CancelToken::new().0, inbox));
     assert!(fields.poll(Some(8)));
     assert!(fields.receipt.is_none());
 

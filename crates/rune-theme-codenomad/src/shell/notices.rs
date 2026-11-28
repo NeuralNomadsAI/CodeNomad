@@ -1,10 +1,9 @@
 use crate::{
-    Space, TextRole, kit,
+    Space, TextRole,
     layout::{self, Layout},
     tokens,
 };
 use rune::{Align, El, ScrollSpec, Side, Tx, col, row, text};
-use std::rc::Rc;
 
 pub const ANCHOR: &str = "notification-history-toggle";
 
@@ -16,23 +15,45 @@ pub fn bell<S: 'static>(
     skip_tab: bool,
     invoke: impl Fn(&mut S, &mut Tx) + 'static,
 ) -> El {
-    let invoke = Rc::new(invoke);
-    let press = invoke.clone();
+    bell_button(label, unread, open, touch, skip_tab, false, invoke)
+}
+
+pub fn compact_bell<S: 'static>(
+    label: &'static str,
+    unread: Option<(String, String)>,
+    open: bool,
+    touch: bool,
+    skip_tab: bool,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
+    bell_button(label, unread, open, touch, skip_tab, true, invoke)
+}
+
+fn bell_button<S: 'static>(
+    label: &'static str,
+    unread: Option<(String, String)>,
+    open: bool,
+    touch: bool,
+    skip_tab: bool,
+    compact: bool,
+    invoke: impl Fn(&mut S, &mut Tx) + 'static,
+) -> El {
     let name = unread
         .as_ref()
         .map_or_else(|| label.into(), |(_, count)| format!("{label} · {count}"));
-    let button = if touch {
-        crate::tabs::touch_bar_button(&super::icons::BELL, &name, label, move |s, tx| press(s, tx))
-            .expanded(open)
+    let button = if compact {
+        crate::tabs::bar_action_button_compact(
+            &super::icons::BELL,
+            &name,
+            label,
+            touch,
+            open,
+            invoke,
+        )
     } else {
-        super::control(&super::icons::BELL, label, false)
-            .label(name)
-            .help(label)
-            .expanded(open)
-            .on_press_tx(move |s, tx| press(s, tx))
-            .build(&kit(layout::dark()))
+        crate::tabs::bar_action_button(&super::icons::BELL, &name, label, touch, open, invoke)
     }
-    .on_key(layout::enter_action(invoke))
+    .expanded(open)
     .tab_index(if skip_tab { -1 } else { 0 })
     .key(ANCHOR);
     row()

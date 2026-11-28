@@ -9,10 +9,7 @@ use crate::{
 };
 use codenomad_client::search::Kind as SearchKind;
 use rune::{El, col};
-use rune_theme_codenomad::{
-    Space, catalogue,
-    layout::{self, Layout},
-};
+use rune_theme_codenomad::{Space, catalogue, layout::Layout, transcript};
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
@@ -398,8 +395,12 @@ impl Chunk {
         }
         let header = self.first.then(|| {
             let toggle = summary.keys.clone();
-            layout::button(
+            transcript::group_header(
+                format!("toggle-{key}"),
                 &summary.label(),
+                None,
+                Vec::new(),
+                expanded,
                 false,
                 screen::action(&s.input_scope, move |s| {
                     if let Some(id) = search_id {
@@ -409,8 +410,6 @@ impl Chunk {
                     }
                 }),
             )
-            .key(format!("toggle-{key}"))
-            .expanded(expanded)
         });
         let mut body = col().full_width().separate(Space::Sm).children(header);
         if expanded {

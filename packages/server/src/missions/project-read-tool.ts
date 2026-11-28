@@ -1,19 +1,12 @@
 import { z } from "zod"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { missionPanelPageRequestSchema } from "./mission-panel-page"
-import { recurrenceCurrentInput, recurrenceCurrentPageInput, recurrenceCurrentContentInput } from "./recurrence-current"
 
-const schemas = {
-  panel: missionPanelPageRequestSchema,
-  current: recurrenceCurrentInput,
-  "current-page": recurrenceCurrentPageInput,
-  "current-content": recurrenceCurrentContentInput,
-}
+const schemas = { panel: missionPanelPageRequestSchema }
 const sourceRead = z.object({ kind: z.literal("sources"), source: z.enum(["branches", "conversations", "coordinators", "repository"]),
     cursor: z.string().min(1).max(4096).optional(), search: z.string().max(200).optional() }).strict()
     .refine(value => ["conversations", "coordinators"].includes(value.source) || value.cursor === undefined && value.search === undefined)
-const methods = { panel: "panelPage", current: "recurrenceCurrent", "current-page": "recurrenceCurrentPage",
-  "current-content": "recurrenceCurrentContent" } as const
+const methods = { panel: "panelPage" } as const
 const playbookRead = z.object({ kind: z.literal("playbook"),
   template: z.enum(["custom", "debug", "wayfinder", "delivery", "compare"]),
   taskMode: z.enum(["native", "independent"]).optional() }).strict()

@@ -64,7 +64,8 @@ pub fn strip(s: &State, touch: bool, skip_tab: bool) -> El {
         .into_iter()
         .chain(std::iter::once(crate::shell::notifications::history_entry(
             s, touch, skip_tab,
-        )));
+        )))
+        .chain(crate::shell::remote_control_entry(s, touch, skip_tab));
     let search_visible = crate::timeline::search::available(s);
     let (new_shadowed, close_shadowed): (&[&str], &[&str]) =
         if !crate::shell::launcher_replaces_project(s)

@@ -358,7 +358,6 @@ impl Manager {
         self.connect.is_some()
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn dismiss_modal(&mut self, tx: &mut Tx) -> bool {
         if self.connect.is_some() {
             self.close_connect_modal(tx);

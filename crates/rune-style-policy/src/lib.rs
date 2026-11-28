@@ -109,6 +109,7 @@ impl Policy {
                 "edit",
                 "file_dialog",
                 "clipboard",
+                "set_app_icon_resource",
             ];
             if names.len() < 2 || !allowed.contains(&names[1].as_str()) {
                 self.reject(span, "unreviewed Rune API or module alias");

@@ -1,6 +1,6 @@
 use super::*;
 use rune::{TextEdit, Tx};
-use rune_kit::{ButtonVariant, IconButton, IconButtonVariant, TextArea};
+use rune_kit::{ButtonVariant, ControlSize, IconButton, IconButtonVariant, TextArea};
 use std::sync::OnceLock;
 
 mod anchor;
@@ -129,6 +129,7 @@ pub fn save<S: 'static>(
 ) -> El {
     let button = IconButton::new(&SAVE)
         .variant(IconButtonVariant::Neutral)
+        .control_size(ControlSize::Small)
         .label(label)
         .help(label)
         .disabled(disabled)

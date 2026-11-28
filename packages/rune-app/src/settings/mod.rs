@@ -17,6 +17,7 @@ mod palettes;
 mod preferences;
 mod providers;
 mod remote;
+mod responsive;
 mod speech;
 pub(crate) mod startup_state;
 mod stats;
@@ -37,6 +38,33 @@ pub(crate) fn keep_unseen_subagent_idle_status(s: &crate::State) -> bool {
         .shared
         .borrow()
         .keep_unseen_subagent_idle_status()
+}
+
+pub(crate) fn recent_folders(s: &crate::State) -> Vec<(String, Option<u64>, Option<String>)> {
+    s.settings.shared.borrow().recent_folders()
+}
+
+pub(crate) fn recent_folders_raw(s: &crate::State) -> Option<Vec<serde_json::Value>> {
+    s.settings.shared.borrow().recent_folders_raw()
+}
+
+pub(crate) fn apply_recent_folders_snapshot(s: &mut crate::State, value: &serde_json::Value) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .apply_recent_folders_snapshot(value);
+}
+
+pub(crate) fn invalidate_state_snapshot(s: &mut crate::State) {
+    s.settings
+        .shared
+        .borrow_mut()
+        .invalidate_from_sse(codenomad_client::settings::Owner::State);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_state(s: &mut crate::State, value: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_state(value);
 }
 #[cfg(not(target_arch = "wasm32"))]
 mod view;
@@ -73,6 +101,9 @@ pub(crate) use shortcuts::{
 };
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
+#[allow(unused_imports)]
+// Consumed by shell/workspace status strip in the companion shell branch.
+pub(crate) use window::open_remote;
 pub(crate) use window::{
     close, close_request, direct_entry, entries, open_preferences, open_providers,
 };

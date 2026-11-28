@@ -32,14 +32,12 @@ function clientHarness(initial: SessionInfo[], options: {
   failMove?: (sessionId: string, call: number) => boolean
   visibilityDelayGets?: number
   workspaceID?: string
-  carrier?: string
 } = {}) {
   const sessions = new Map(initial.map((value) => [value.id, structuredClone(value)]))
   const moveCalls: string[] = []
   let moveCall = 0
   const pending = new Map<string, { location: SessionInfo["location"]; remaining: number }>()
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async ({ sessionID }: { sessionID: string }) => ({ owned: sessionID === options.carrier }) }),
     location: {
       get: async ({ location }: { location?: { directory?: string } }) => ({
         directory: location?.directory ?? ROOT,
@@ -88,13 +86,13 @@ function clientHarness(initial: SessionInfo[], options: {
 }
 
 describe("project session families", () => {
-  it("refuses an unmarked carrier in a family before moving any member or removing its worktree", async () => {
-    const h = clientHarness([session("ordinary", undefined, WORKTREE), session("carrier", "ordinary", WORKTREE)], { carrier: "carrier" })
+  it("refuses a carrier in a family before moving any member or removing its worktree", async () => {
+    const h = clientHarness([session("ordinary", undefined, WORKTREE), { ...session("carrier", "ordinary", WORKTREE), title: "Mission schedule carrier" }])
     await assert.rejects(moveProjectSessionFamily({ client: h.client, projectLocation: { directory: ROOT },
       sessionId: "ordinary", targetDirectory: ROOT }), (error: unknown) => error instanceof ProjectSessionError && error.statusCode === 403)
     await assert.rejects(removeProjectWorktree({ client: h.client, projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE, rootDirectory: ROOT, isTargetRegistered: async () => true,
-      remove: async () => { assert.fail("carrier worktree must remain") } }), /owned schedule controls/)
+      remove: async () => { assert.fail("carrier worktree must remain") } }), /not ordinary session input/)
     assert.deepEqual(h.moveCalls, [])
   })
   it("loads the complete paginated project inventory", async () => {

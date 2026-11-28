@@ -7,6 +7,7 @@ use std::{
 pub(super) const MAX_LINE: usize = 1024 * 1024;
 pub(super) const SHUTDOWN: &[u8] = b"codenomad:shutdown\n";
 pub(super) const RENEW_PREFIX: &str = "CODENOMAD_MANAGED_SESSION:";
+pub(super) const OPENCODE_SERVICE_START: &str = "opencode.service.start";
 pub(super) enum Line {
     Token(String),
     Ready(String),
@@ -19,8 +20,26 @@ pub(super) enum Line {
         expires: Instant,
         deadline: u64,
     },
+    NativeServiceStart {
+        id: String,
+        params: Value,
+        expires: Instant,
+        deadline: u64,
+    },
     Shutdown(bool),
     Diagnostic,
+}
+pub(super) fn native_ok(id: &str, result: Value) -> String {
+    format!(
+        "CODENOMAD_NATIVE_RESPONSE:{}\n",
+        json!({"v":1,"id":id,"ok":true,"result":result})
+    )
+}
+pub(super) fn native_error(id: &str, message: &str) -> String {
+    format!(
+        "CODENOMAD_NATIVE_RESPONSE:{}\n",
+        json!({"v":1,"id":id,"ok":false,"error":{"code":"native_error","message":message}})
+    )
 }
 pub(super) fn renew_command(id: &str) -> String {
     format!("codenomad:renew-session {id}\n")
@@ -91,16 +110,21 @@ pub(super) fn classify(line: &str) -> Line {
         let expires = Instant::now()
             .checked_add(Duration::from_millis(deadline.saturating_sub(now)))
             .unwrap_or_else(Instant::now);
-        let _ = method; // Unsupported capabilities are refused without reflecting their params or text.
+        if method == OPENCODE_SERVICE_START && now < deadline {
+            return Line::NativeServiceStart {
+                id: id.to_owned(),
+                params: request.get("params").cloned().unwrap_or(Value::Null),
+                expires,
+                deadline,
+            };
+        }
+        // Unsupported capabilities are refused without reflecting their params or text.
         let message = if now >= deadline {
             "Native request expired before execution"
         } else {
             "Native capability is not implemented by this Rune host"
         };
-        let response = format!(
-            "CODENOMAD_NATIVE_RESPONSE:{}\n",
-            json!({"v":1,"id":id,"ok":false,"error":{"code":"native_error","message":message}})
-        );
+        let response = native_error(id, message);
         return Line::Native {
             response,
             expires,
@@ -132,14 +156,14 @@ pub(super) fn fenced_response(response: String, expires: Instant, deadline: u64)
     if Instant::now() < expires && now < deadline {
         return response;
     }
-    // Match native_request::dispatch's expired error after queueing.
+    // Match native_request::dispatch's expired error after queueing, including ok responses.
     let raw = response
         .trim()
         .strip_prefix("CODENOMAD_NATIVE_RESPONSE:")
         .unwrap();
-    let mut value: Value = serde_json::from_str(raw).unwrap();
-    value["error"]["message"] = "Native request expired before execution".into();
-    format!("CODENOMAD_NATIVE_RESPONSE:{value}\n")
+    let value: Value = serde_json::from_str(raw).unwrap();
+    let id = value["id"].as_str().unwrap_or_default();
+    native_error(id, "Native request expired before execution")
 }
 pub(super) fn loopback_url(raw: &str) -> bool {
     reqwest::Url::parse(raw).is_ok_and(|url| {

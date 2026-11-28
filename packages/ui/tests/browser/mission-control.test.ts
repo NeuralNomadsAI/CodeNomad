@@ -539,30 +539,6 @@ test("the depth editor states the nesting rule and whether General subagents can
   } finally { await page.close() }
 })
 
-test("the mission editor's Scheduling never displays an OpenCode configuration path", async () => {
-  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
-  page.on("pageerror", error => errors.push(error.message))
-  let origin: string | null = "/ancestor/.opencode/opencode.jsonc"
-  try {
-    await setup(page, "remote")
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
-    await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: { location: { directory: "fixture" },
-      api: { available: true }, enabled: false, origin, activation: { available: true,
-        targets: [{ scope: "global", path: "/global/opencode.jsonc" }, { scope: "project", path: "fixture/opencode.jsonc" }] } } }))
-    await page.goto(url); await fixtureCall(page, "connectCatalog")
-    for (const path of [origin, "fixture/opencode.jsonc", null]) {
-      origin = path
-      await missionGeneralAction(page, "Create mission").click()
-      const editor = page.locator("form.mission-editor"), scheduling = editor.locator(".mission-scheduling")
-      await page.waitForFunction(() => !document.querySelector<HTMLOptionElement>('form.mission-editor .mission-scheduling option[value="daily"]')?.disabled)
-      assert.equal(await scheduling.getByText(/OpenCode configuration file:|No document path|opencode\.jsonc/).count(), 0)
-      assert.equal(await scheduling.locator("code").count(), 0)
-      await editor.getByRole("button", { name: "Cancel", exact: true }).click()
-    }
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 test("a depth read only locks the menu; only a write announces Saving", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const read = Promise.withResolvers<void>(), write = Promise.withResolvers<void>(), reading = Promise.withResolvers<void>(), writing = Promise.withResolvers<void>()

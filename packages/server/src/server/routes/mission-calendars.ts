@@ -76,7 +76,6 @@ export async function runMissionCalendarOperation(deps: MissionCalendarDeps, tar
      * or an ordinary prepared Mission when its launch criteria do not carry over; then nothing of the schedule is left.
      * The programmed Mission is saved paused and resumed last, so the two never launch together. */
     const takeOver = async (schedule: LegacySchedule) => {
-      if (schedule.busy) return
       let programmed = (await wait(calendars.list())).some(item => item.id === schedule.id)
       if (!programmed) {
         const { roots: _roots, profileID: _profile, executionHost: _host, coordinatorSelectionAuthor: _author, ...stored } = schedule.configuration

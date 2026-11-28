@@ -48,8 +48,7 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.route("**/api/workspaces/fixture/missions**", route => new URL(route.request().url()).pathname.endsWith("/missions/scheduled")
-    ? route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }) : route.fulfill({ json: {
+  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: {
     available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0,
   } }))
   await page.route("**/workspaces/fixture/instance/api/{agent,model}**", async route => {
@@ -128,10 +127,6 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     ] } })
   })
   await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } }))
-  await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: {
-    location: { directory: "/fixture" }, api: { available: true }, enabled: true, origin: null,
-    activation: { available: true, targets: [] },
-  } }))
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: {
     location: { directory: "/fixture" }, capability: { minimum: 1, maximum: 10 }, effectiveDepth: 2,
     project: { path: "/fixture/opencode.jsonc", depth: null, expectation: "fixture" },
@@ -242,8 +237,6 @@ test("creation waits for owned defaults and sends their exact snapshot through v
     return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } })
   })
   await page.route("**/api/workspaces/fixture/missions**", route => {
-    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/scheduled"))
-      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (route.request().method() !== "GET") {
       writes.push(route.request().postDataJSON())
       return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Unknown result" } })
@@ -284,7 +277,7 @@ test("creation waits for owned defaults and sends their exact snapshot through v
 
 test("recurring creation shares the draft, prefills its title and picks named conversations without budgets", async () => {
    const page = await browser.newPage({ locale: "en-US", timezoneId: "America/New_York", viewport: { width: 700, height: 1100 } })
-  const errors: string[] = [], searches: URL[] = [], writes: Array<Record<string, unknown>> = []
+  const errors: string[] = [], writes: Array<Record<string, unknown>> = []
   const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } },
     roles: { specialist: { agent: "specialist", model: { providerID: "p", id: "m" } } } }
   page.on("pageerror", error => errors.push(error.message))
@@ -295,10 +288,6 @@ test("recurring creation shares the draft, prefills its title and picks named co
     missionProfileDefaults: [{ template: "custom", profiles, taskMode: "independent" }],
   } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
-    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/scheduled"))
-      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
-    if (new URL(route.request().url()).pathname.endsWith("/capabilities")) return route.fulfill({ json: {
-      location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (route.request().method() !== "GET") {
       writes.push(route.request().postDataJSON())
       return route.fulfill({ status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" } })
@@ -308,10 +297,6 @@ test("recurring creation shares the draft, prefills its title and picks named co
   await page.route("**/workspaces/fixture/instance/api/location**", route => route.fulfill({ json: {
     directory: "/fixture", project: { id: "project" },
   } }))
-  await page.route("**/workspaces/fixture/instance/api/session**", route => {
-    const request = new URL(route.request().url()); searches.push(request)
-    return route.fulfill({ json: { data: [{ id: "ses_reference", title: "Daily reference conversation" }], cursor: {} } })
-  })
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
@@ -343,12 +328,8 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await title.inputValue(), "My daily schedule")
     assert.equal(await form.locator(".mission-conversation-picker").count(), 0, "a daily schedule does not add a global conversation control")
     await form.getByRole("button", { name: "Add a criterion", exact: true }).click()
-    await form.getByLabel("Criterion 2 type", { exact: true }).selectOption("conversation-message")
-    await form.getByRole("button", { name: "Criterion 2 source", exact: true }).click()
-    await page.getByRole("combobox", { name: "Search sources", exact: true }).fill("Daily")
-    await page.getByRole("option", { name: "Daily reference conversation", exact: true }).click()
-    assert.ok(searches.every(request => request.searchParams.get("directory") === "/fixture"))
-    assert.doesNotMatch(await form.innerText(), /ses_reference/)
+    await form.getByLabel("Criterion 2 type", { exact: true }).selectOption("files-changed")
+    await form.getByLabel("Criterion 2 file paths", { exact: true }).fill("src/review.ts")
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
     const captureDirectory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
     if (captureDirectory) {
@@ -367,8 +348,7 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(configuration.title, "My daily schedule")
     assert.equal(configuration.objective, "Updated daily review\nReview changes when the reference conversation has new messages.")
     assert.deepEqual(configuration.watchedConversationIDs, [])
-    assert.ok((configuration.launch as { when: { kind: string; conversationID?: string }[] }).when.some(row =>
-      row.kind === "conversation-message" && row.conversationID === "ses_reference"))
+    assert.ok((configuration.launch as { when: { kind: string; paths?: string[] }[] }).when.some(row => row.kind === "files-changed" && row.paths?.[0] === "src/review.ts"))
     assert.deepEqual(configuration.profiles, profiles)
     assert.equal(configuration.taskMode, "independent")
     assert.equal("budgets" in writes[0], false)
@@ -383,10 +363,6 @@ test("the Playbook selector keeps a folded model summary, separated groups and n
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } }))
-  await page.route("**/missions/scheduled/capabilities*", route => route.fulfill({ json: {
-    location: { directory: "/fixture" }, api: { available: true }, enabled: false,
-    origin: null, activation: { available: true, targets: [] },
-  } }))
   try {
     await page.goto(url)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()

@@ -33,8 +33,6 @@ function fixture() {
     ownedDirectories: new Set(["/repo/root", "/repo/worktree"]),
     missing: false,
     sessionGetError: undefined as unknown,
-    carrierOwned: false,
-    carrierError: undefined as unknown,
     session: { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } } as any,
     closed: false,
     onOwnsLocation: undefined as undefined | (() => void),
@@ -78,12 +76,6 @@ function fixture() {
         return structuredClone(state.session)
       },
     },
-    rpc: () => ({
-      scheduleCarrierRead: async () => {
-        if (state.carrierError !== undefined) throw state.carrierError
-        return { owned: state.carrierOwned }
-      },
-    }),
   }
   registerSessionAutomationsRoutes(app, {
     workspaceManager: {
@@ -230,15 +222,14 @@ test("a moved session or revoked connection publishes unavailable on read and re
   } finally { await f.app.close() }
 })
 
-test("rejects Mission schedule carriers and indeterminate carrier ownership on list and mutations", async () => {
+test("rejects Mission carriers on list and mutations", async () => {
   const f = fixture()
   try {
-    f.state.carrierOwned = true
+    f.state.session = { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" }, title: "Mission schedule carrier" } as never
     assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 403)
     assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1" })).statusCode, 403)
     assert.equal(f.calls.length, 0)
 
-    f.state.carrierOwned = false
     f.state.session = {
       id: "ses_a",
       projectID: "proj_1",
@@ -247,12 +238,6 @@ test("rejects Mission schedule carriers and indeterminate carrier ownership on l
     }
     assert.equal((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).statusCode, 403)
     assert.equal((await f.app.inject({ method: "POST", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1/pause" })).statusCode, 403)
-    assert.equal(f.calls.length, 0)
-
-    f.state.session = { id: "ses_a", projectID: "proj_1", location: { directory: "/repo/worktree" } }
-    f.state.carrierError = new Error("rpc transport down")
-    assert.deepEqual((await f.app.inject({ method: "GET", url: "/api/workspaces/w/sessions/ses_a/automations" })).json(), { status: "unavailable" })
-    assert.equal((await f.app.inject({ method: "DELETE", url: "/api/workspaces/w/sessions/ses_a/automations/aut_1" })).statusCode, 503)
     assert.equal(f.calls.length, 0)
   } finally { await f.app.close() }
 })

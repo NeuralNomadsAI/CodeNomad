@@ -14,7 +14,7 @@ Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Ve
 
 **Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
-Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem alle Zeitpläne dieses Projekts auflisten, prüfen, starten, pausieren, stoppen, fortsetzen, sofort ausführen, bearbeiten und löschen, auch die im Editor erstellten. Dieselben Revisions- und Zulassungsprüfungen gelten; eine ausdrücklich deaktivierte Zeitplanung bleibt deaktiviert. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
+Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem die geplanten Missionen dieses Projekts auflisten, speichern, pausieren, fortsetzen und löschen, auch die im Editor erstellten. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
 
 ### Konfiguration {#saved-briefs}
 
@@ -82,7 +82,7 @@ Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage,
 
 Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit; eine nicht erfüllte Bedingung kann diese verbrauchen. Zeitplanung benötigt den verfügbaren OpenCode-Dienst und Ausführungshost.
 
-Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails.
+Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet.
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
@@ -90,9 +90,9 @@ Wählen Sie **Repository-Aktivität → Ereignis**, danach optionale Filter in d
 
 Forge-Prüfungen verwenden `gh`, `glab` oder `tea` auf dem OpenCode-Host, auch bei geschlossenem CodeNomad; öffentliche Repositorys erlauben anonymen Zugriff. Selbst gehostete Forges erfordern eine dort angemeldete CLI. **github.com** bietet außerdem Kontobenachrichtigungen und Dependabot-Warnungen über angemeldetes `gh` mit [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) oder [Lesezugriff auf Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Benachrichtigungen behalten ihren Lesestatus; Warnungen umfassen behobene oder verworfene Einträge. Gespeicherte Benachrichtigungen mit leerem **GitHub-Repository** umfassen das Konto. Der erste Start setzt die Referenz.
 
-Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
+Ereignisse beziehen sich auf lokale Commits oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Ein anderer Kriteriumstyp leert die Quelle.
 
-**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
+**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein.
 
 Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Durchläufe überlappen nicht.
 
@@ -102,9 +102,9 @@ Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die 
 
 Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterhaltung vorzubereiten. Die Durchläufe warten, bis die Unterhaltung inaktiv ist.
 
-Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
+Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
-Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
+Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
 
 Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
 
@@ -122,7 +122,7 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause: nichts läuft weiter oder startet, bis Sie fortsetzen; ein orangefarbenes Warndreieck bedeutet Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
-Eine Sanduhr in der Akzentfarbe bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
+Eine Sanduhr in der Akzentfarbe bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse und gestoppte Zeitpläne sind neutral; lesen Sie den Statustext.
 
 Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** wählen Sie die wiederkehrende Zeile im aktiven Fenster ausdrücklich aus oder nutzen **Als gelesen markieren**. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
 
@@ -154,7 +154,7 @@ Eine laufende einmalige Mission weist ihre Aufgaben weiter zu und stellt deren B
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion. Ein nativer Zeitplan bietet **Status prüfen** in seinem Menü **Weitere Aktionen** an.
+Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 

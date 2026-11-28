@@ -26,7 +26,7 @@ pub(super) struct Preferences {
     pub(super) backend: Option<Backend>,
     pub(super) provider_target: Option<super::providers::Target>,
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) open_providers: bool,
+    pub(super) open_section: Option<super::responsive::Section>,
     pub(super) memory: super::memory::Setting,
     pub(super) missions: super::missions::Shared,
     pub(super) speech: super::speech::Shared,
@@ -1484,6 +1484,44 @@ impl Preferences {
         if self.locale_ready() && self.backend.is_some() && Some(locale) != self.locale_display() {
             self.config.stage(Choice::Locale, locale);
         }
+    }
+
+    pub(super) fn recent_folders(&self) -> Vec<(String, Option<u64>, Option<String>)> {
+        let Some(rows) = self.recent_folders_raw() else {
+            return Vec::new();
+        };
+        rows.iter()
+            .filter_map(|row| {
+                let path = row.get("path")?.as_str()?.trim();
+                if path.is_empty() {
+                    return None;
+                }
+                let last_accessed = row.get("lastAccessed").and_then(Value::as_u64);
+                let project_name = row
+                    .get("projectName")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned);
+                Some((path.to_owned(), last_accessed, project_name))
+            })
+            .collect()
+    }
+
+    pub(super) fn recent_folders_raw(&self) -> Option<Vec<Value>> {
+        let state = self.saved(Owner::State)?;
+        let rows = state.get("recentFolders").and_then(Value::as_array)?;
+        Some(rows.clone())
+    }
+
+    pub(super) fn apply_recent_folders_snapshot(&mut self, value: &Value) {
+        if let Some(recents) = value.get("recentFolders").filter(|v| v.is_array())
+            && let Some(state) = self.state.snapshot.as_mut().and_then(Value::as_object_mut)
+        {
+            state.insert("recentFolders".into(), recents.clone());
+            self.revision += 1;
+        }
+        self.invalidate_from_sse(Owner::State);
     }
 
     pub(super) fn binding_epoch(&self) -> u64 {

@@ -4,7 +4,7 @@ use crate::platform::{
     reads::{self, Reads},
 };
 use codenomad_client::{
-    Receiver, Wake,
+    Receiver, Sender, Wake,
     backend::Backend,
     bounded,
     history::Result,
@@ -15,18 +15,97 @@ use codenomad_client::{
 };
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     rc::Rc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
 const BUDGET: Duration = Duration::from_secs(30);
+
+/// Two-phase cancellation token shared by Missions background reads.
+///
+/// Calling `mark_aborted()` flags all flights aborted before any channel closes and wakes workers,
+/// so a worker releasing a `Reads::background` permit on a multi-threaded executor cannot wake a
+/// queued sibling flight into opening a new socket before its own cancellation runs.
+pub(super) struct CancelToken {
+    aborted: Arc<AtomicBool>,
+    tx: Sender<()>,
+}
+
+#[derive(Clone)]
+pub(super) struct CancelSignal {
+    aborted: Arc<AtomicBool>,
+    rx: Receiver<()>,
+}
+
+impl CancelToken {
+    pub(super) fn new() -> (Self, CancelSignal) {
+        let aborted = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        (
+            Self {
+                aborted: aborted.clone(),
+                tx,
+            },
+            CancelSignal { aborted, rx },
+        )
+    }
+
+    pub(super) fn mark_aborted(&self) {
+        self.aborted.store(true, Ordering::Release);
+    }
+
+    pub(super) fn cancel(self) {
+        self.mark_aborted();
+        self.tx.close();
+    }
+}
+
+impl Drop for CancelToken {
+    fn drop(&mut self) {
+        self.aborted.store(true, Ordering::Release);
+        self.tx.close();
+    }
+}
+
+impl CancelSignal {
+    pub(super) fn is_cancelled(&self) -> bool {
+        self.aborted.load(Ordering::Acquire) || self.rx.is_closed()
+    }
+
+    pub(super) async fn with_background<T>(
+        &self,
+        reads: &Reads,
+        fut: impl Future<Output = T>,
+    ) -> Option<T> {
+        if self.is_cancelled() {
+            return None;
+        }
+        let _permit = reads.background(&self.rx).await?;
+        if self.is_cancelled() {
+            return None;
+        }
+        reads::cancellable(&self.rx, fut).await
+    }
+
+    pub(super) async fn run<T>(&self, fut: impl Future<Output = T>) -> Option<T> {
+        if self.is_cancelled() {
+            return None;
+        }
+        reads::cancellable(&self.rx, fut).await
+    }
+}
 
 #[derive(Default)]
 pub(super) struct Detail {
     id: String,
     observed: Option<u64>,
     pub snapshot: Option<Snapshot>,
-    active: Option<(Demand, Receiver<Result<Answer>>)>,
+    active: Option<(Demand, CancelToken, Receiver<Result<Answer>>)>,
     staged: Option<(Demand, Result<Answer>)>,
     pending: Option<Demand>,
     retry: Option<Demand>,
@@ -126,6 +205,11 @@ impl Detail {
         }
         before
     }
+    pub fn mark_cancel(&self) {
+        if let Some((_, cancel, _)) = &self.active {
+            cancel.mark_aborted();
+        }
+    }
     pub fn cancel(&mut self) {
         self.active = None;
         self.staged = None;
@@ -151,7 +235,7 @@ impl Detail {
             return summary;
         }
         if self.staged.is_none() {
-            self.staged = self.active.as_ref().and_then(|(demand, inbox)| {
+            self.staged = self.active.as_ref().and_then(|(demand, _, inbox)| {
                 inbox.try_recv().ok().map(|answer| (demand.clone(), answer))
             });
         }
@@ -210,7 +294,7 @@ impl Detail {
         self.lookup_failed = None;
     }
     pub fn cancel_lookup(&mut self) {
-        if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _))) {
+        if matches!(self.active.as_ref(), Some((Demand::Lookup { .. }, _, _))) {
             self.active = None;
         }
         if matches!(self.staged.as_ref(), Some((Demand::Lookup { .. }, _))) {
@@ -430,25 +514,25 @@ impl Detail {
         });
         let started = Instant::now();
         let floor = self.observed;
-        self.active = Some((demand.clone(), inbox));
+        let (cancel, signal) = CancelToken::new();
+        self.active = Some((demand.clone(), cancel, inbox));
         platform::spawn(async move {
-            let (_cancel, alive) = bounded(1);
             let operation = async {
                 match (demand, more) {
                     (Demand::More, Some((read, revision))) => {
-                        let window = read_window(read?, &reads, &alive)
+                        let window = read_window(read?, &reads, &signal)
                             .await
                             .ok_or("cancelled Mission task read")??;
                         Ok(Answer::More(window, revision))
                     }
                     (Demand::Attention, Some((read, revision))) => {
-                        let window = read_window(read?, &reads, &alive)
+                        let window = read_window(read?, &reads, &signal)
                             .await
                             .ok_or("cancelled Mission task read")??;
                         Ok(Answer::Attention(window, revision))
                     }
                     (Demand::Lookup { task_id, task_key }, Some((read, revision))) => {
-                        let window = read_window(read?, &reads, &alive)
+                        let window = read_window(read?, &reads, &signal)
                             .await
                             .ok_or("cancelled Mission task lookup")??;
                         Ok(Answer::Lookup(
@@ -458,7 +542,7 @@ impl Detail {
                             task_key.unwrap_or_default(),
                         ))
                     }
-                    _ => refresh(&backend, &project, &id, previous, floor, &reads, &alive).await,
+                    _ => refresh(&backend, &project, &id, previous, floor, &reads, &signal).await,
                 }
             };
             let task = async {
@@ -471,7 +555,8 @@ impl Detail {
                     answer
                 }
             };
-            if let Some(answer) = codenomad_client::runtime::until_closed(&out, task).await
+            if let Some(answer) = signal.run(task).await
+                && !signal.is_cancelled()
                 && out.send(answer).await.is_ok()
             {
                 wake();
@@ -556,7 +641,7 @@ async fn refresh(
     previous: Option<SourceWitness>,
     mut floor: Option<u64>,
     reads: &Reads,
-    alive: &Receiver<()>,
+    cancel: &CancelSignal,
 ) -> Result<Answer> {
     for attempt in 0..2 {
         let result = read_map(
@@ -566,7 +651,7 @@ async fn refresh(
             previous.as_ref(),
             &mut floor,
             reads,
-            alive,
+            cancel,
         )
         .await;
         if let Err(error) = &result {
@@ -594,10 +679,10 @@ async fn read_map(
     previous: Option<&SourceWitness>,
     floor: &mut Option<u64>,
     reads: &Reads,
-    alive: &Receiver<()>,
+    cancel: &CancelSignal,
 ) -> Result<Answer> {
     let read = backend.mission_header(project, id)?;
-    let header = read_window(read, reads, alive)
+    let header = read_window(read, reads, cancel)
         .await
         .ok_or("cancelled Mission header")??;
     let revision = Some(header.root.revision);
@@ -620,7 +705,7 @@ async fn read_map(
     let mut reports: HashMap<String, codenomad_client::missions::Report> = HashMap::new();
     if source.page.total != 0 {
         let read = backend.mission_task_window(project, &header, 0)?;
-        let window = read_window(read, reads, alive)
+        let window = read_window(read, reads, cancel)
             .await
             .ok_or("cancelled Mission tasks")??;
         tasks = window.tasks;
@@ -636,7 +721,7 @@ async fn read_map(
     }
     if !source.pins.is_empty() || !source.report_pins.is_empty() {
         let read = backend.mission_task_pins(project, &header)?;
-        let pins = read_window(read, reads, alive)
+        let pins = read_window(read, reads, cancel)
             .await
             .ok_or("cancelled Mission pins")??;
         for pin in pins.tasks {
@@ -665,12 +750,10 @@ async fn read_map(
 pub(super) async fn read_window<T>(
     mut read: DetailRead<T>,
     reads: &Reads,
-    cancelled: &Receiver<()>,
+    cancel: &CancelSignal,
 ) -> Option<Result<T>> {
     loop {
-        let permit = reads.background(cancelled).await?;
-        let result = reads::cancellable(cancelled, read.read_next()).await?;
-        drop(permit);
+        let result = cancel.with_background(reads, read.read_next()).await?;
         match result {
             Ok(None) => {}
             Ok(Some(page)) => return Some(Ok(page)),
@@ -708,7 +791,7 @@ mod tests {
             send.try_send(Ok(Answer::New(header(revision), vec![], HashMap::new(), 0)))
                 .ok()
                 .unwrap();
-            detail.active = Some((Demand::Refresh, inbox));
+            detail.active = Some((Demand::Refresh, CancelToken::new().0, inbox));
             assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
             assert_eq!(
                 detail
@@ -726,16 +809,57 @@ mod tests {
         }))
         .unwrap();
         send.try_send(Ok(Answer::More(page, 8))).ok().unwrap();
-        detail.active = Some((Demand::More, inbox));
+        detail.active = Some((Demand::More, CancelToken::new().0, inbox));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
         assert_eq!(detail.snapshot.as_ref().unwrap().end, 0);
         assert!(detail.failed && matches!(detail.retry, Some(Demand::Refresh)));
         let (send, inbox) = bounded(1);
         send.try_send(Err(RevisionChanged(10).into())).ok().unwrap();
-        detail.active = Some((Demand::More, inbox));
+        detail.active = Some((Demand::More, CancelToken::new().0, inbox));
         assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
         assert_eq!(detail.revision_floor("other", Some(8)), Some(8));
         assert!(detail.poll(&backend, "project", "mission", None, &reads, &wake));
         assert_eq!(detail.revision_floor("mission", Some(8)), Some(10));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn marked_cancel_signal_skips_queued_background_work_when_permit_frees() {
+        crate::platform::block_on(async {
+            let reads = Reads::default();
+            let (_hold1_tx, hold1_rx) = bounded(1);
+            let (_hold2_tx, hold2_rx) = bounded(1);
+            let p1 = reads.background(&hold1_rx).await.unwrap();
+            let p2 = reads.background(&hold2_rx).await.unwrap();
+
+            let (token, signal) = CancelToken::new();
+            let entered = Arc::new(AtomicBool::new(false));
+            let entered_task = entered.clone();
+            let reads_task = reads.clone();
+            let (done_tx, done_rx) = bounded(1);
+            platform::spawn(async move {
+                let res = signal
+                    .with_background(&reads_task, async {
+                        entered_task.store(true, Ordering::SeqCst);
+                    })
+                    .await;
+                let _ = done_tx.send(res.is_some()).await;
+            });
+
+            // Phase 1: mark aborted before releasing any semaphore permit or closing `tx`.
+            token.mark_aborted();
+            drop(p1);
+            drop(p2);
+            let ran = tokio::time::timeout(Duration::from_secs(5), done_rx.recv())
+                .await
+                .expect("queued task must settle once permits free")
+                .unwrap();
+            assert!(!ran);
+            assert!(
+                !entered.load(Ordering::SeqCst),
+                "marked flight must not run its inner future after acquiring a freed permit"
+            );
+            token.cancel();
+        });
     }
 }

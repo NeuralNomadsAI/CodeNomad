@@ -273,6 +273,111 @@ fn a_matching_move_cancels_the_body_before_waiting_for_queue_space() {
         });
 }
 
+#[test]
+fn delayed_session_moved_into_bound_directory_does_not_revoke_placement() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::connect("http://127.0.0.1:9/", "").await.unwrap();
+            backend.workspace = "project".into();
+            backend.session = "session".into();
+            backend.session_directory = Some(r"D:\repo\review".into());
+
+            let (out, inbox) = crate::bounded(4);
+            let (events, _receiver) = crate::bounded(4);
+            let state = State::observing_preferences(events, Arc::new(|| {}));
+            let same_dest = json!({
+                "type": "instance.event",
+                "instanceId": "project",
+                "event": {
+                    "type": "session.moved",
+                    "location": { "directory": r"D:\repo\main" },
+                    "data": {
+                        "sessionID": "session",
+                        "location": { "directory": "d:/repo/review/" }
+                    }
+                }
+            });
+            let payload = same_dest.to_string();
+            let rev_before = state.history_revision.load(SeqCst);
+            let mark = sessions::note_inbox_frame(
+                &backend.workspace,
+                &backend.session,
+                backend.session_directory.as_deref(),
+                &state.inbox,
+                Some(&state.history_revision),
+                None,
+                None,
+                &payload,
+            );
+            assert_eq!(mark, 0);
+            assert_eq!(state.history_revision.load(SeqCst), rev_before);
+            routing::dispatch_marked(&backend, 1, &out, &state, "stream", "message", &payload, mark)
+                .await
+                .unwrap();
+            assert_eq!(state.history_revision.load(SeqCst), rev_before);
+            assert!(
+                futures_lite::future::poll_once(state.placement_changed())
+                    .await
+                    .is_none(),
+                "delayed session.moved targeting the bound directory must not revoke placement"
+            );
+            assert!(!state.placement_closed());
+            assert!(state.inbox.applied_caught_up());
+            while let Ok(input) = inbox.try_recv() {
+                assert!(
+                    !matches!(input, Input::Native(_, _, _, ref native) if native["type"] == "session.moved"),
+                    "delayed same-directory move must not forward Input::Native(session.moved)"
+                );
+            }
+
+            // Moving to a different directory or foreign workspace still revokes immediately.
+            for (label, dest_location) in [
+                ("other-dir", json!({ "directory": r"D:\repo\other" })),
+                (
+                    "foreign-workspace",
+                    json!({ "directory": r"D:\repo\review", "workspaceID": "ws_foreign" }),
+                ),
+                ("missing-dir", json!({})),
+            ] {
+                let (out, inbox) = crate::bounded(4);
+                let (events, _receiver) = crate::bounded(4);
+                let state = State::observing_preferences(events, Arc::new(|| {}));
+                let moved = json!({
+                    "type": "instance.event",
+                    "instanceId": "project",
+                    "event": {
+                        "type": "session.moved",
+                        "location": { "directory": r"D:\repo\review" },
+                        "data": {
+                            "sessionID": "session",
+                            "location": dest_location
+                        }
+                    }
+                });
+                dispatch(&backend, 1, &out, &state, "stream", "message", &moved.to_string())
+                    .await
+                    .unwrap();
+                assert!(
+                    state.placement_closed(),
+                    "{label}: session.moved must still revoke placement"
+                );
+                let mut saw_native_move = false;
+                while let Ok(input) = inbox.try_recv() {
+                    if matches!(input, Input::Native(_, _, _, ref native) if native["type"] == "session.moved") {
+                        saw_native_move = true;
+                    }
+                }
+                assert!(
+                    saw_native_move,
+                    "{label}: session.moved must still reach transport recovery"
+                );
+            }
+        });
+}
+
 #[derive(Clone)]
 struct FakeClock {
     now: Arc<std::sync::Mutex<staleness::Stamp>>,

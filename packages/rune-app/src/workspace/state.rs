@@ -2,7 +2,8 @@ mod tabs;
 use tabs::{activate, close_blocked};
 pub use tabs::{
     active_project_title, can_close_active, can_new, can_switch_tabs, close, close_ordinary,
-    new_tab, rename_tab, select, select_index, select_relative, tab_rename_seed,
+    new_tab, open_tab_for_folder, remove_closed_recent, rename_folder, rename_tab, select,
+    select_index, select_relative, tab_folder, tab_rename_seed, workspace_recent_folders,
 };
 
 mod blank_cleanup;
@@ -2039,22 +2040,24 @@ pub fn retry(s: &mut State, tx: &mut Tx) {
     connected(s);
     resume(s, tx);
 }
+pub(super) fn backend_scope(l: &crate::launcher::Launcher) -> (Option<String>, Option<String>) {
+    if l.local_connection() {
+        (None, None)
+    } else {
+        let backend_id = Some(if cfg!(target_arch = "wasm32") {
+            "web".into()
+        } else {
+            "external".into()
+        });
+        (backend_id, l.server_id.clone())
+    }
+}
+
 pub fn opened(s: &mut State, project: &Project) {
     let (Some(ui), Some(l)) = (&mut s.workspace, s.screen.launcher()) else {
         return;
     };
-    let backend_id = if l.local_connection() {
-        None
-    } else {
-        Some(
-            if cfg!(target_arch = "wasm32") {
-                "web"
-            } else {
-                "external"
-            }
-            .to_string(),
-        )
-    };
+    let (backend_id, _) = backend_scope(l);
     let occurrence = (0..super::MAX_TABS as u64).find(|ordinal| !ui.entries.iter().any(|entry| {
         matches!(&entry.saved, Tab::Workspace(w) if same_folder(&w.folder, &project.path) && w.backend_id == backend_id && (backend_id.is_none() || w.server_id == l.server_id) && w.occurrence == *ordinal)
     })).unwrap_or(0);

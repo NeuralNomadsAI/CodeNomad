@@ -19,11 +19,9 @@ async function harness() {
   const removed: string[] = []
   const cleared: string[] = []
   const deletes: unknown[][] = []
-  let sessions: Array<{ id: string; parentID?: string; location: { directory: string } }> = []
+  let sessions: Array<{ id: string; parentID?: string; title?: string; location: { directory: string } }> = []
   let active: Record<string, unknown> = {}
-  let carrier = ""
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async ({ sessionID }: { sessionID: string }) => ({ owned: sessionID === carrier }) }),
     session: {
       list: async ({ directory }: { directory: string }) => ({ data: sessions.filter(() => directory), cursor: {} }),
       active: async () => active,
@@ -56,7 +54,6 @@ async function harness() {
     base, file, registry, workspaces, removed, cleared, temporary, changes, manager, deletes,
     setSessions: (next: typeof sessions) => { sessions = next },
     setActive: (next: typeof active) => { active = next },
-    setCarrier: (id: string) => { carrier = id },
     cleanup: () => rm(base, { recursive: true, force: true }),
   }
 }
@@ -136,14 +133,13 @@ test("discarding removes conversations children first, closes the workspace and 
   } finally { await h.cleanup() }
 })
 
-test("temporary discard refuses an unmarked technical carrier before deleting any conversation or folder", async () => {
+test("temporary discard refuses a technical carrier before deleting any conversation or folder", async () => {
   const h = await harness()
   try {
     const folder = await h.temporary.createFolder()
     h.workspaces.set("temp", { id: "temp", path: folder })
-    h.setSessions([{ id: "ordinary", location: { directory: folder } }, { id: "carrier", location: { directory: folder } }])
-    h.setCarrier("carrier")
-    await assert.rejects(h.temporary.discard("temp"), /owned schedule controls/)
+    h.setSessions([{ id: "ordinary", location: { directory: folder } }, { id: "carrier", title: "Mission schedule carrier", location: { directory: folder } }])
+    await assert.rejects(h.temporary.discard("temp"), /not ordinary session input/)
     assert.deepEqual(h.removed, [])
     assert.equal(h.workspaces.has("temp"), true)
     assert.ok((await stat(folder)).isDirectory())

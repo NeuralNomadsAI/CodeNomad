@@ -1,7 +1,6 @@
 import { z } from "zod"
 import { parseProjectRead } from "../../missions/project-read-tool"
 import { missionPanelPageRequestSchema, missionPanelBytes, MISSION_PANEL_PAGE_BYTES } from "../../missions/mission-panel-page"
-import { recurrenceCurrentInput, recurrenceCurrentPageInput, recurrenceCurrentContentInput } from "../../missions/recurrence-current"
 import { isReservedMissionScheduleSessionID } from "../../missions/mission-schedule-carrier-identity"
 import { getLocalGitBranches } from "../../workspaces/git-branches"
 import { sameLocation } from "../../opencode/compatibility/location"
@@ -57,10 +56,7 @@ export async function readAgentMissionProject(deps: Deps, sessionID: string, raw
       await current()
       return result
     }
-    const value = input.kind === "panel" ? await rpc.panelPage(missionPanelPageRequestSchema.parse(input.input), call)
-      : input.kind === "current" ? await rpc.recurrenceCurrent(recurrenceCurrentInput.parse(input.input), call)
-      : input.kind === "current-page" ? await rpc.recurrenceCurrentPage(recurrenceCurrentPageInput.parse(input.input), call)
-      : await rpc.recurrenceCurrentContent(recurrenceCurrentContentInput.parse(input.input), call)
+    const value = await rpc.panelPage(missionPanelPageRequestSchema.parse(input.input), call)
     await current()
     if (missionPanelBytes(value) > MISSION_PANEL_PAGE_BYTES) throw new Error("Mission project read capacity")
     const result = value as { available?: boolean; projectID?: string; projectCanonical?: string; location?: { directory: string } }

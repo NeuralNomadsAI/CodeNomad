@@ -44,7 +44,6 @@ async function setup(page: Page, answer: (route: Route, attempt: number, body: R
   await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
-    if (path.endsWith("/capabilities")) return route.fulfill({ json: { location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (request.method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
     if (request.method() === "POST" && path.endsWith("/missions")) {
       const body = request.postDataJSON(); attempts.push(body)

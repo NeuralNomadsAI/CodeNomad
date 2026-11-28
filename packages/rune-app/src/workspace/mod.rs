@@ -40,15 +40,16 @@ pub(crate) use state::{
     confirm_unconfirmed, connected, conversation_stream_clients, detach_dead_temporary,
     detach_stopped_temporary, draft_changed, file_draft_status, file_wrap, files_tab,
     finish_discarded, has_conversation_stream, has_temporary_tabs, has_unconfirmed, input_ready,
-    new_tab, note_restored_draft_sessions_present, note_session_deleted, note_unconfirmed, opened,
-    panel_width, poll, poll_file_drafts, prepare_open, reconcile_temporary_folders,
-    recover_missing_session_draft, remove_cleaned_session, rename_tab, renew_connection,
-    restore_files_mode, restore_stashed, resume, resume_restored_draft_checks, retry,
-    schedule_blank_cleanup, schedule_catalogue, schedule_catalogue_refresh, select, select_index,
-    select_relative, session_cleanup_protected, session_deleted_hook, stash_for_discard,
-    stashed_has_in_memory_state, status, strip, tab_rename_seed, temporary_tab_info,
+    new_tab, note_restored_draft_sessions_present, note_session_deleted, note_unconfirmed,
+    open_tab_for_folder, opened, panel_width, poll, poll_file_drafts, prepare_open,
+    reconcile_temporary_folders, recover_missing_session_draft, remove_cleaned_session,
+    remove_closed_recent, rename_folder, rename_tab, renew_connection, restore_files_mode,
+    restore_stashed, resume, resume_restored_draft_checks, retry, schedule_blank_cleanup,
+    schedule_catalogue, schedule_catalogue_refresh, select, select_index, select_relative,
+    session_cleanup_protected, session_deleted_hook, stash_for_discard,
+    stashed_has_in_memory_state, status, strip, tab_folder, tab_rename_seed, temporary_tab_info,
     toggle_file_wrap, unconfirmed_drafts_full, unselect_missing, unselect_session,
-    window_inline_usage_without_history,
+    window_inline_usage_without_history, workspace_recent_folders,
 };
 pub(crate) use state::{
     close_mission_reader, deliver_detached_events, detached_workspace_ids, event_workspace_id,
@@ -110,11 +111,21 @@ pub struct Workspace {
     pub(crate) view: ViewState,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ViewState {
     right_panel: RightPanelTab,
     files_mode: Option<&'static str>,
     selected_mission: Option<String>,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            right_panel: RightPanelTab::Files,
+            files_mode: Some("workspace"),
+            selected_mission: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +137,7 @@ pub(crate) enum RightPanelTab {
 
 impl Default for RightPanelTab {
     fn default() -> Self {
-        Self::Status
+        Self::Files
     }
 }
 
@@ -429,8 +440,8 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
         return Err(Error::Unsupported);
     }
     let right_panel = match value.get("rightPanelTab").map(|key| key.as_str()) {
-        None | Some(Some("status")) => RightPanelTab::Status,
-        Some(Some("files")) => RightPanelTab::Files,
+        None | Some(Some("files")) => RightPanelTab::Files,
+        Some(Some("status")) => RightPanelTab::Status,
         Some(Some("missions")) => RightPanelTab::Missions,
         _ => return Err(Error::Unsupported),
     };

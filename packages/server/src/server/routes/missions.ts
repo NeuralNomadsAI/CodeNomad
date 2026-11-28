@@ -20,25 +20,17 @@ import { captureDisplayIdentities } from "../../workspaces/worktree-display-iden
 import { requestAdmission } from "../request-admission"
 import { registerMissionCreation } from "./mission-creation"
 import type { SettingsService } from "../../settings/service"
-import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
 import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
   missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
-import { registerMissionScheduleActivation } from "./mission-schedule-activation"
-import { registerMissionScheduled } from "./mission-scheduled"
-import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
-import { registerMissionScheduleList } from "./mission-schedule-list"
 import { registerMissionCalendars } from "./mission-calendars"
 import type { SessionPermissionModes } from "../../permissions/session-mode"
-import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
 export interface MissionRouteDeps {
   permissionModes?: SessionPermissionModes
-  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
-  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
@@ -84,11 +76,7 @@ const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), r
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
   registerMissionCreation(app, deps)
-  registerMissionScheduleList(app, deps)
   registerMissionCalendars(app, deps)
-  registerMissionScheduleActivation(app, deps)
-  registerMissionScheduled(app, deps)
-  registerMissionRecurrenceCurrent(app, deps)
   registerMissionPlaybookRoutes(app)
   // Opt-in bounded transport. A plugin without it stays unavailable: never fall back to
   // a project snapshot or legacy list that would transfer every open mission's map.

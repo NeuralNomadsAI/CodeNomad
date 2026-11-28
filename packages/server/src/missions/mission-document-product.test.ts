@@ -8,15 +8,11 @@ import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { controlResumeAdmissionID, controlReceiptID } from "./receipt-identity"
-import { applyMissionDocumentActivation as activate } from "./mission-document-activation-rpc"
 import { canonicalAuthority } from "./authority-protocol"
 import { parseMissionDocument, MISSION_DOCUMENT_PREFIX } from "./mission-document"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import { missionIsRunning } from "./lifecycle-model"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
-
-const applyMissionDocumentActivation = (store: Parameters<typeof activate>[0], input: unknown, current: () => true) =>
-  activate(store, input, current, "/project")
 
 function fixture(unified = true) {
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
@@ -603,46 +599,6 @@ test("an already-marked unified deletion cannot confirm through the journal-only
   assert.equal((await f.journal.missionEvents(mission.id)).events.some(event => event.type === "mission.document-cleaned"), false)
   f.values.set(key, saved) // Restore the same authoritative fixture bytes, not a migration.
   assert.equal((await f.control.delete(input)).cleanup!.documentPending, false)
-})
-
-test("activation RPC persists its authority, replaces an intent that failed or stored configuration targets, and stays paused through readiness", async () => {
-  const f = fixture(), selection = { agent: "worker", model: { providerID: "provider", id: "model" } }
-  const doc = await f.documents.create("scheduled", { title: "Scheduled", objective: "Work", template: "custom", taskMode: "native",
-    profiles: { coordinator: selection, roles: { specialist: selection } }, profileID: "profile", executionHost: "local",
-    roots: [{ mode: "directory-only", directory: "/project" }], watchedConversationIDs: [],
-    launch: { timing: { kind: "every", intervalMs: 900_000 }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } },
-  }, 1000, () => true)
-  let identity = { missionID: doc.id, requestID: "activate-original", expectedRevision: doc.revision }
-  let request = { ...identity, action: "prepare", authority: "a".repeat(64), targets: [] }
-  await assert.rejects(activate(f.documents, request, () => true, "/another-location"), /Location differs/)
-  let result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  const preparedRevision = result.document.revision
-  result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  assert.equal(result.document.revision, preparedRevision)
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...request, requestID: "another-in-flight", expectedRevision: preparedRevision }, () => true), /conflict/)
-  const originalIdentity = identity
-  result = await applyMissionDocumentActivation(f.documents, { ...identity, action: "failed", errorCode: "configuration-conflict" }, () => true)
-  identity = { ...identity, requestID: "activate-refreshed", expectedRevision: result.document.revision }
-  request = { ...request, ...identity }
-  result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...originalIdentity, action: "ready", effectiveOrigin: null }, () => true), /conflict/)
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...identity, action: "attempting", scope: "project", resultDigest: "b".repeat(64) }, () => true))
-  // An intent stored with configuration targets has no effect in flight: a fresh request replaces it.
-  const stored = await f.documents.change(doc.id, result.document.revision, () => true, next => {
-    next.scheduleActivation = { ...next.scheduleActivation!, state: "partial", targets: [{ scope: "project", path: "/project/opencode.jsonc",
-      expectation: "d".repeat(64), resultDigest: "b".repeat(64), attempted: true, acknowledged: false }] }
-  })
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...identity, action: "ready", effectiveOrigin: null }, () => true), /pending/)
-  identity = { ...identity, requestID: "activate-after-targets", expectedRevision: stored.revision }
-  request = { ...request, ...identity }
-  result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  assert.deepEqual(result.document.scheduleActivation!.targets, [])
-  result = await applyMissionDocumentActivation(f.documents, { ...identity, action: "ready", effectiveOrigin: "/project/opencode.jsonc" }, () => true)
-  assert.equal(result.document.state, "paused")
-  assert.equal(result.document.firstPlayedAt, null)
-  assert.equal(result.document.scheduleActivation!.state, "ready")
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...request, authority: "c".repeat(64) }, () => true), /conflict/)
-  assert.ok(!canonicalAuthority(result).includes("password"))
 })
 
 test("a durable paused/stopped document blocks new work even when the journal control publication has not caught up", async () => {

@@ -376,10 +376,19 @@ try {
               await activateControl(page,locator,{touch:false,rect:box})
             }
           }
+          const abbreviateHome = raw => raw
+            .replace(/^\/Users\/[^/]+(?=\/|$)/, '~')
+            .replace(/^\/home\/[^/]+(?=\/|$)/, '~')
+            .replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/, '~')
+            .replace(/^[A-Za-z]:\/Users\/[^/]+(?=\/|$)/, '~')
+          const projectButtonLabel = project => `${path.basename(project)} · ${abbreviateHome(project)}`
           const press=async (label,role='button')=>{
-            const match=page.getByRole(role,{name:label,exact:true})
+            const recentLabel=role==='button'&&label===values.project?projectButtonLabel(values.project):null
+            const match=recentLabel
+              ? page.getByRole(role,{name:recentLabel,exact:true}).or(page.getByRole(role,{name:label,exact:true}))
+              : page.getByRole(role,{name:label,exact:true})
             // The same fixture directory can appear both in Browse and in Recent.
-            const button=role==='button'&&label===values.project
+            const button=recentLabel
               ? match.and(page.locator(':not([disabled]):not([aria-disabled=true])')).first() : match
             const box=await waitStableBox(button,label)
             await dispatchPress(button,label,role,box)
@@ -463,7 +472,7 @@ try {
             })
             const rootBrowse = waitBrowse(null)
             void rootBrowse.catch(() => {})
-            await press(messages['folderSelection.browseMenu.title'])
+            await press(messages['folderSelection.browseMenu.thisComputer'])
             await rootBrowse
             await page.getByRole('button', {name: folderName, exact: true}).waitFor()
             await waitFolderValue(path.dirname(values.project))
@@ -485,7 +494,7 @@ try {
             if (await toggle.getAttribute('aria-expanded') !== 'true') await press(right)
             await drawer.waitFor()
             const sourceHeight = palette.metrics[colorScheme].tabActive.height
-            const rightTablist = drawer.getByRole('tablist', {name:right, exact:true})
+            const rightTablist = drawer.getByRole('tablist', {name:messages['instanceShell.rightPanel.tabs.ariaLabel'], exact:true})
             await rightTablist.waitFor()
             const tabHeights = []
             for (const key of ['status', 'files']) {
@@ -504,14 +513,14 @@ try {
             await projectTablist.getByRole('tab', {name:values.project, exact:true, selected:true}).waitFor()
             tabBar = await mobileTabBar(page, [
               messages['instanceTabs.new.ariaLabel'], messages['settings.title'],
-              messages['toastHistory.title'],
+              messages['toastHistory.title'], messages['instanceTabs.remote.ariaLabel'],
             ])
             const permission = page.getByRole('button', {
               name: messages['settings.notifications.requestPermission.action'], exact: true,
             })
             assert.equal(await permission.count(), 0, 'Notification permission belongs in Preferences, not the tab bar')
             await press(messages['settings.title'])
-            await press(messages['settings.nav.notifications'], 'radio')
+            await press(messages['settings.nav.notifications'], 'listitem')
             await permission.waitFor({state:'attached'})
             assert.equal(await permission.count(), 1)
             await press(messages['settings.close'])

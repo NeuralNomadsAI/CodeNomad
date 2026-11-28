@@ -86,9 +86,7 @@ async function open(extraForms: Array<{ id: string; sessionID: string; title: st
       if (held) { marksReady(); await marksGate }
       bytes.push(response.rawPayload.length); return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
     }
-    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: FIXTURE_PROJECT.id, schedules: [] } })
     if (path.endsWith("/missions/calendars")) return route.fulfill({ json: { calendars: [] } })
-    if (path.endsWith("/schedule") && request.method() === "GET") return route.fulfill({ json: { document: null, pending: false } })
     if (path.endsWith("/content")) {
       const response = await app.inject({ method: "GET", url: request.url().replace(/^.*\/api\/workspaces\/fixture\//, "/api/workspaces/workspace/") })
       return route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body })
@@ -480,25 +478,6 @@ for (const index of [0, 119]) test(`passive refresh keeps mission ${index}'s geo
       assert.equal(await f.page.locator('.mission-list-paging button').count(), 0)
     }
     await screenshot("missions-after-refresh")
-    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
-  } finally { release?.(); await f.close() }
-})
-
-test("a schedule-only background read leaves the refresh icon still and enabled", async () => {
-  const f = await open()
-  let release!: () => void
-  const gate = new Promise<void>(resolve => { release = resolve })
-  try {
-    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    await f.page.route("**/missions/scheduled?**", async route => { await gate; return route.fallback() })
-    const scheduleRead = f.page.waitForRequest(request => request.url().includes("/missions/scheduled?"))
-    await f.page.evaluate(() => (window as any).missionFixture.refresh())
-    await scheduleRead
-    await f.page.waitForFunction(() => !(window as any).inventoryStore.reading("fixture"))
-    const refresh = f.page.locator('.mission-control-header button[aria-label="Refresh mission map"]')
-    assert.equal(await refresh.locator(".animate-spin").count(), 0)
-    assert.equal(await refresh.isEnabled(), true)
-    release()
     assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.close() }
 })

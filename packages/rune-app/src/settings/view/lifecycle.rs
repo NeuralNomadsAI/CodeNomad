@@ -5,20 +5,15 @@ use rune_theme_codenomad::layout::Layout;
 pub(in crate::settings) fn spec() -> AppSpec<Window> {
     AppSpec {
         setup: Some(|s, wake| {
-            let mut prefs = s.shared.borrow_mut();
-            prefs.window_wake = Some(wake);
-            if std::mem::take(&mut prefs.open_providers) {
-                if s.section != Section::Providers && s.general.busy(&prefs) {
-                    s.after_palette_save = Some((
-                        prefs.binding_epoch(),
-                        super::AfterPaletteSave::Section(Section::Providers),
-                    ));
-                } else if s.general.dirty() && s.section != Section::Providers {
-                    s.pending_section = Some(Section::Providers);
-                } else {
-                    s.section = Section::Providers;
-                }
+            let requested = {
+                let mut prefs = s.shared.borrow_mut();
+                prefs.window_wake = Some(wake);
+                std::mem::take(&mut prefs.open_section)
+            };
+            if let Some(requested) = requested {
+                s.apply_requested_section(requested, None);
             }
+            let mut prefs = s.shared.borrow_mut();
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
                 prefs.refresh();
@@ -39,37 +34,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     s.request_close(tx);
                     return true;
                 }
+                let requested = std::mem::take(&mut s.shared.borrow_mut().open_section);
+                let jump = requested
+                    .is_some_and(|requested| s.apply_requested_section(requested, Some(tx)));
                 let mut prefs = s.shared.borrow_mut();
-                let jump = std::mem::take(&mut prefs.open_providers);
-                if jump && !s.config_files.busy() && s.confirm_close.is_none() && !s.closing {
-                    if s.section != Section::Providers && s.general.busy(&prefs) {
-                        s.after_palette_save = Some((
-                            prefs.binding_epoch(),
-                            super::AfterPaletteSave::Section(Section::Providers),
-                        ));
-                    } else if s.general.dirty() && s.section != Section::Providers {
-                        s.pending_section = Some(Section::Providers);
-                    } else {
-                        s.section = Section::Providers;
-                        s.general.close();
-                        s.transcript_picker.set(None);
-                        s.advanced_help = None;
-                        s.recording_shortcut = false;
-                        s.shortcut_capture = Default::default();
-                        s.behavior.close();
-                        s.opencode = super::opencode::Status::default();
-                        s.logging.close();
-                        prefs.hide_opencode();
-                        prefs.show_speech(false);
-                        prefs.memory.show(false);
-                        s.memory_help.clear();
-                        s.remote.close();
-                        s.info.close();
-                        s.missions.close();
-                        s.speech.close();
-                        s.integrations.suspend();
-                    }
-                }
                 let environment = s
                     .environment
                     .poll(&mut prefs, s.section == Section::Advanced && !s.closing);
@@ -112,6 +80,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             drop(prefs);
                             if allowed {
                                 s.switch_section(next);
+                                if s.is_narrow() {
+                                    s.narrow.open_detail_focus(tx);
+                                }
                                 return true;
                             }
                             prefs = s.shared.borrow_mut();
@@ -272,7 +243,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {
-                    s.request_close(tx);
+                    if s.is_narrow() && s.narrow.view() == super::NarrowView::Detail {
+                        s.return_to_narrow_list(tx);
+                    } else {
+                        s.request_close(tx);
+                    }
                 }
             }
             true
@@ -285,12 +260,14 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     .borrow_mut()
                     .fixture_locale(crate::strings::locale());
                 s.section = Section::Conversation;
+                s.narrow.open_detail();
             }),
             ("opencode", |s| {
                 s.shared
                     .borrow_mut()
                     .fixture_locale(crate::strings::locale());
                 s.section = Section::OpenCode;
+                s.narrow.open_detail();
                 s.opencode.fixture();
             }),
         ],

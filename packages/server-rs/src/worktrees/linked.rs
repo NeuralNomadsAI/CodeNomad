@@ -600,10 +600,10 @@ pub fn family(rows: &[Value], session: &str) -> Result<(String, Vec<Value>), Err
     found.sort_by_key(|(depth, _)| *depth);
     Ok((root, found.into_iter().map(|(_, row)| row).collect()))
 }
-async fn inactive(app: &App, members: &[Value]) -> Result<(), Error> {
+async fn inactive<T: std::borrow::Borrow<Value>>(app: &App, members: &[T]) -> Result<(), Error> {
     let active = native_get(app, "/api/session/active", 256 * 1024).await?;
     let active = active["data"].as_object().ok_or_else(native_error)?;
-    if members.iter().any(|row| row["id"].as_str().is_some_and(|id| active.contains_key(id))) {
+    if members.iter().any(|row| row.borrow()["id"].as_str().is_some_and(|id| active.contains_key(id))) {
         return Err(conflict("Active sessions block this operation"));
     }
     Ok(())
@@ -611,6 +611,48 @@ async fn inactive(app: &App, members: &[Value]) -> Result<(), Error> {
 async fn native_move(app: &App, id: &str, where_to: &str) -> Result<(), Error> {
     let body = Some(json!({"directory": where_to}));
     native(app, Method::POST, &format!("/api/session/{id}/move"), &[], body, 16384).await.map(drop)
+}
+
+/// OpenCode 2.4.2+ cascades `Session.move` to same-location descendants (`project-session-families.ts`).
+/// Partition a family into same-location subtrees rooted at each member whose parent is absent or
+/// sits at a different directory, preserving `members` ancestry order inside every group.
+fn same_location_groups<'a>(members: &'a [Value]) -> Result<Vec<(&'a Value, Vec<&'a Value>)>, Error> {
+    let mut by_id = HashMap::with_capacity(members.len());
+    for member in members {
+        by_id.insert(row_id(member)?, directory(member)?);
+    }
+    let mut groups = Vec::new();
+    for root in members {
+        let root_dir = directory(root)?;
+        let parent_same_dir = root["parentID"]
+            .as_str()
+            .and_then(|parent| by_id.get(parent).copied())
+            .is_some_and(|parent_dir| parent_dir == root_dir);
+        if parent_same_dir {
+            continue;
+        }
+        let mut covered = HashSet::from([row_id(root)?]);
+        loop {
+            let mut grew = false;
+            for member in members {
+                let id = row_id(member)?;
+                if !covered.contains(id)
+                    && directory(member)? == root_dir
+                    && member["parentID"].as_str().is_some_and(|parent| covered.contains(parent))
+                {
+                    covered.insert(id);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let group =
+            members.iter().filter(|member| row_id(member).ok().is_some_and(|id| covered.contains(id))).collect();
+        groups.push((root, group));
+    }
+    Ok(groups)
 }
 enum MoveOutcome {
     Moved(String, Vec<Value>),
@@ -664,25 +706,28 @@ async fn move_members(
     if checked.get(&target.slug)? != target {
         return Err(conflict("Worktree changed before the session move"));
     }
-    let mut attempted = Vec::new();
+    let groups = same_location_groups(&active_members)?;
+    let mut attempted = false;
     let mut invalidation = None;
     let operation = async {
-        for member in &active_members {
-            let id = row_id(member)?;
-            inactive(app, std::slice::from_ref(member)).await?;
+        for (root, group) in &groups {
+            inactive(app, group).await?;
             principal.live()?;
             if !crate::sessions::permission_mode::workspace_current(app, w) {
                 return Err(conflict("Workspace changed"));
             }
-            if directory(member)? == target.service {
+            if directory(root)? == target.service {
                 continue;
             }
             invalidation.get_or_insert_with(|| blocking_invalidation(app));
-            attempted.push(member);
-            native_move(app, id, &target.service).await?;
-            let now = crate::opencode::session_record(app, id).await?;
-            if now["projectID"] != cat.project || directory(&now)? != target.service {
-                return Err(conflict("Session move could not be verified"));
+            attempted = true;
+            native_move(app, row_id(root)?, &target.service).await?;
+            for member in group {
+                let id = row_id(member)?;
+                let now = crate::opencode::session_record(app, id).await?;
+                if now["projectID"] != cat.project || directory(&now)? != target.service {
+                    return Err(conflict("Session move could not be verified"));
+                }
             }
         }
         let current = sessions(app, &cat.project).await?;
@@ -700,23 +745,35 @@ async fn move_members(
     }
     .await;
     if let Err(e) = operation {
-        for member in attempted.into_iter().rev() {
-            let id = row_id(member)?;
-            let old = directory(member)?;
-            let now = crate::opencode::session_record(app, id).await?;
-            if directory(&now)? == old {
-                continue;
-            }
-            let verified = catalogue(app, w, false).await?;
-            let verified_evac = evacuating.and_then(|t| verified.get(&t.slug).ok().filter(|v| *v == t));
-            let original_owner = member_owner(cat, evacuating, old);
-            let verified_owner = member_owner(&verified, verified_evac, old);
-            if directory(&now)? != target.service || verified_owner.is_none() || verified_owner != original_owner {
-                return Err(conflict("Session move requires manual recovery"));
-            }
-            native_move(app, id, old).await?;
-            if directory(&crate::opencode::session_record(app, id).await?)? != old {
-                return Err(conflict("Session rollback could not be verified"));
+        if attempted {
+            // Restore in ancestry order (parent before child) so each restored ancestor is never
+            // disturbed by later child moves, and any same-location descendant cascaded by an
+            // ancestor is either already restored or repaired cleanly on its own turn.
+            let mut allowed_from = HashSet::from([target.service.as_str()]);
+            for member in &active_members {
+                let id = row_id(member)?;
+                let old = directory(member)?;
+                let now = crate::opencode::session_record(app, id).await?;
+                let current_dir = directory(&now)?;
+                if current_dir == old {
+                    continue;
+                }
+                let verified = catalogue(app, w, false).await?;
+                let verified_evac = evacuating.and_then(|t| verified.get(&t.slug).ok().filter(|v| *v == t));
+                let original_owner = member_owner(cat, evacuating, old);
+                let verified_owner = member_owner(&verified, verified_evac, old);
+                if now["projectID"] != cat.project
+                    || !allowed_from.contains(current_dir)
+                    || verified_owner.is_none()
+                    || verified_owner != original_owner
+                {
+                    return Err(conflict("Session move requires manual recovery"));
+                }
+                native_move(app, id, old).await?;
+                allowed_from.insert(old);
+                if directory(&crate::opencode::session_record(app, id).await?)? != old {
+                    return Err(conflict("Session rollback could not be verified"));
+                }
             }
         }
         return Err(e);
@@ -1061,15 +1118,17 @@ async fn remove_owned(
             if verified.get(&slug).ok() != Some(target) {
                 return Err(conflict("Checkout changed; sessions remain at the safe destination"));
             }
-            for member in moved.into_iter().rev() {
+            let mut allowed_from = HashSet::from([root.service.as_str()]);
+            for member in moved {
                 let id = row_id(member)?;
                 let original = directory(member)?;
                 let session = crate::opencode::session_record(&app, id).await?;
-                if directory(&session)? == original {
+                let current_dir = directory(&session)?;
+                if current_dir == original {
                     continue;
                 }
                 if session["projectID"] != cat.project
-                    || directory(&session)? != root.service
+                    || !allowed_from.contains(current_dir)
                     || member_owner(&verified, verified.get(&slug).ok(), original)
                         != member_owner(&cat, Some(target), original)
                     || member_owner(&verified, verified.get(&slug).ok(), original).is_none()
@@ -1078,6 +1137,7 @@ async fn remove_owned(
                 }
                 inactive(&app, std::slice::from_ref(&session)).await?;
                 native_move(&app, id, original).await?;
+                allowed_from.insert(original);
                 if directory(&crate::opencode::session_record(&app, id).await?)? != original {
                     return Err(conflict("Evacuation rollback could not be verified"));
                 }
@@ -1569,6 +1629,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+#[path = "linked_move_tests.rs"]
+mod linked_move_tests;
 
 #[cfg(test)]
 #[path = "mutation_race.rs"]

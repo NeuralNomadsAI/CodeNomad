@@ -182,7 +182,6 @@ impl Setting {
             && self.review.cleanup_current(intent)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn cancel_cleanup_confirmation(&mut self) -> bool {
         self.review.cancel_cleanup_confirmation()
     }

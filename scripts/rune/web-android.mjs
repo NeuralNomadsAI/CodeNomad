@@ -284,7 +284,7 @@ async function runAndroid() {
   const documentStarted=await page.evaluate(()=>performance.timeOrigin)
   const cut=performance.now()
   await command('cut')
-  const connecting=page.getByText(messages['instanceShell.connection.connecting'],{exact:true})
+  const connecting=solid?page.getByText(messages['instanceShell.connection.connecting'],{exact:true}):page.getByRole('img',{name:messages['instanceShell.connection.connecting'],exact:true})
   const recovering=solid?page.getByText(messages['instanceShell.connection.disconnected'],{exact:true}).or(connecting).first():connecting
   if(!comparison)await recovering.waitFor()
   const resume=performance.now()
