@@ -17,6 +17,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     s.pending_section = Some(Section::Providers);
                 } else {
                     s.section = Section::Providers;
+                    s.narrow_view = super::NarrowView::Detail;
                 }
             }
             prefs.memory.show(s.section == Section::General);
@@ -51,6 +52,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                         s.pending_section = Some(Section::Providers);
                     } else {
                         s.section = Section::Providers;
+                        s.narrow_view = super::NarrowView::Detail;
                         s.general.close();
                         s.transcript_picker.set(None);
                         s.advanced_help = None;
@@ -112,6 +114,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             drop(prefs);
                             if allowed {
                                 s.switch_section(next);
+                                if s.is_narrow() {
+                                    s.narrow_view = super::NarrowView::Detail;
+                                    tx.focus("settings-narrow-back", true);
+                                }
                                 return true;
                             }
                             prefs = s.shared.borrow_mut();
@@ -272,7 +278,11 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {
-                    s.request_close(tx);
+                    if s.is_narrow() && s.narrow_view == super::NarrowView::Detail {
+                        s.return_to_narrow_list(tx);
+                    } else {
+                        s.request_close(tx);
+                    }
                 }
             }
             true
