@@ -54,7 +54,7 @@ test("schedules stay above events; the connectors between cards come from the sh
 })
 
 test("all events map to the native source contract and reject unsafe sources with their row index", () => {
-  const sources = { "branch-commits": "refs/heads/dev", "remote-branch-commits": "dev", "conversation-message": "ses_source", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
+  const sources = { "branch-commits": "refs/heads/dev", "remote-branch-commits": "dev", "files-changed": "", "github-notification": "", "github-security-alert": "acme/repo",
     "github-pull-request": "acme/repo", "github-issue": "acme/repo", "repository-activity": "" }
   for (const kind of missionEventKinds) {
     const policy = missionSchedulingPolicy(draft([row(kind, { source: sources[kind], files: "src/a.ts\nsrc/b.ts",
