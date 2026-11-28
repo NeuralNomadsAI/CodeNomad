@@ -328,4 +328,23 @@ describe("session tree", () => {
       matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
     }).length, 0, "text and directory must match the same session")
   })
+
+  it("backtracks ancestor tracking cleanly across deep sibling trees", () => {
+    const sessions = sessionMap([
+      ["r1", null, 100],
+      ["r1-a", "r1", 200],
+      ["r1-a-1", "r1-a", 300],
+      ["r1-b", "r1", 250],
+      ["r2", null, 400],
+      ["r2-a", "r2", 500],
+      ["r2-a-1", "r2-a", 600],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["r1", "r2"], undefined, undefined, true)
+    assert.deepEqual(
+      collectSessionThreadIds(threads),
+      ["r2", "r2-a", "r2-a-1", "r1", "r1-a", "r1-a-1", "r1-b"],
+    )
+    assert.equal(threads[0].children[0].children[0].depth, 2)
+    assert.equal(threads[1].children[0].children[0].depth, 2)
+  })
 })
