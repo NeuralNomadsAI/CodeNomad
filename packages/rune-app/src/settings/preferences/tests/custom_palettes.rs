@@ -1053,41 +1053,77 @@ fn preset_edit_merges_only_locally_edited_fields_onto_live_preset() {
         );
         let pre_get = poll_next_request(&mut prefs, &listener).await;
         assert!(pre_get.first.starts_with("GET "));
-        pre_get
-            .reply(
-                200,
-                json!({
-                    "appearancePreferences": {
-                        "mode": "dark",
-                        "dark": {
-                            "scheme": { "id": "custom", "appearance": "dark", "colors": remote_edit.to_json() },
-                            "presetId": "p1"
-                        }
-                    },
-                    "activeColorSchemePresetId": "p1",
-                    "colorSchemePresets": {
-                        "p1": { "name": "Midnight Renamed", "appearance": "dark", "colors": remote_edit.to_json() }
-                    }
-                }),
-            )
-            .await;
+        let pre_get_state = json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": { "id": "custom", "appearance": "dark", "colors": remote_edit.to_json() },
+                    "presetId": "p1"
+                }
+            },
+            "activeColorSchemePresetId": "p1",
+            "colorSchemePresets": {
+                "p1": { "name": "Midnight Renamed", "appearance": "dark", "colors": remote_edit.to_json() }
+            }
+        });
+        pre_get.reply(200, pre_get_state.clone()).await;
         let patch = poll_next_request(&mut prefs, &listener).await;
         assert!(patch.first.starts_with("PATCH "));
-        assert_eq!(
-            patch.body["colorSchemePresets"]["p1"]["name"],
-            "Midnight Renamed"
+        assert!(
+            patch.body["colorSchemePresets"]["p1"].get("name").is_none(),
+            "preset color delta must not overwrite concurrent renames: {}",
+            patch.body
         );
         assert_eq!(
             patch.body["colorSchemePresets"]["p1"]["colors"]["accentPrimary"],
             "#FF2266"
         );
-        assert_eq!(
-            patch.body["colorSchemePresets"]["p1"]["colors"]["borderBase"], "#33AA99",
-            "preset edit must keep concurrent field updates visible in preflight GET: {}",
+        assert!(
+            patch.body["colorSchemePresets"]["p1"]["colors"]
+                .get("borderBase")
+                .is_none(),
+            "preset color delta must omit unedited keys: {}",
             patch.body
         );
-        let mut reply = patch.body.clone();
-        reply["appearancePreferences"]["mode"] = json!("dark");
+        assert_eq!(
+            patch.body["appearancePreferences"]["dark"]["scheme"]["colors"]["accentPrimary"],
+            "#FF2266"
+        );
+        assert!(
+            patch.body["appearancePreferences"]["dark"]["scheme"]["colors"]
+                .get("borderBase")
+                .is_none(),
+            "active preset slot delta must omit unedited keys: {}",
+            patch.body
+        );
+        fn merge_patch(target: &Value, patch: &Value) -> Value {
+            let Some(patch_obj) = patch.as_object() else {
+                return patch.clone();
+            };
+            let mut out = target.as_object().cloned().unwrap_or_default();
+            for (key, value) in patch_obj {
+                if value.is_null() {
+                    out.remove(key);
+                } else {
+                    let base = out.get(key).cloned().unwrap_or(Value::Null);
+                    out.insert(key.clone(), merge_patch(&base, value));
+                }
+            }
+            Value::Object(out)
+        }
+        let reply = merge_patch(&pre_get_state, &patch.body);
+        assert_eq!(
+            reply["colorSchemePresets"]["p1"]["name"],
+            "Midnight Renamed"
+        );
+        assert_eq!(
+            reply["colorSchemePresets"]["p1"]["colors"]["accentPrimary"],
+            "#FF2266"
+        );
+        assert_eq!(
+            reply["colorSchemePresets"]["p1"]["colors"]["borderBase"],
+            "#33AA99"
+        );
         patch.reply(200, reply).await;
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
         while prefs.palette_saving() {

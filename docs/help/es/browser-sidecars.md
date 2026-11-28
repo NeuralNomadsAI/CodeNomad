@@ -34,7 +34,7 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 
 Cada sesión tiene una sola vista previa nativa. Si una pestaña duplicada muestra **Vista previa abierta en otra pestaña**, elige **Ir a la pestaña** para encontrarla o **Abrir aquí** para moverla dentro de la misma ventana. La pestaña anterior muestra entonces el mismo mensaje. Al cerrar la pestaña que contiene la vista previa, puedes abrirla en otra.
 
-El agente abre la vista previa en la pestaña que la contiene o, si aún no está abierta, en la última pestaña usada para esa sesión. Las acciones sobre la página se aplican a la vista previa nativa visible.
+Mientras una ventana de escritorio muestra una conversación, sus agentes pueden controlar su vista previa con las herramientas de navegador de OpenCode (OpenCode 2.4 o posterior); se rechaza ejecutar scripts en la página y, en la app Tauri en macOS y Linux, no pueden retroceder, avanzar ni recargar. En Electron y en la app Tauri de Windows también pueden leer los mensajes de consola y las solicitudes de red de la vista previa; ven los encabezados y los cuerpos de texto de solicitudes y respuestas mientras la vista previa los conserve, salvo los valores de los encabezados de cookies y de autorización. El agente abre la vista previa en la pestaña que la contiene o, si aún no está abierta, en la última pestaña usada para esa sesión. Las acciones sobre la página se aplican a la vista previa nativa visible. Las páginas se cargan por la red de este equipo, como en la vista previa que ves, así que `localhost` es este equipo aunque OpenCode se ejecute en WSL.
 
 El agente toma una instantánea antes de interactuar con la vista previa o capturarla. Si la vista previa cambia, el comando se detiene en lugar de usar otra.
 

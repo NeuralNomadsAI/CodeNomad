@@ -1,7 +1,12 @@
 //! Missions: one-time runs, reads, the daily recurrence and the calendar, each a thin
 //! admission in front of the native Missions plugin.
 pub mod activity;
+mod agent_control;
+mod agent_read;
+mod agent_settings;
 mod bridge;
+#[cfg(test)]
+mod bridge_m8_tests;
 pub mod calendar;
 mod cleanup;
 pub mod configuration;

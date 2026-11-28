@@ -26,6 +26,9 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         #[cfg(not(target_arch = "wasm32"))]
         layer.extend(chat::authentication::dialog(s));
         let body = layout::with_overlays(base, layer);
+        // Android draws the window under its system bars and keyboard.
+        #[cfg(target_os = "android")]
+        let body = layout::safe_area(cx, body);
         #[cfg(target_arch = "wasm32")]
         {
             rune::col()

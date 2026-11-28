@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { hasKeyboardOcclusion, installKeyboardOffset, isTextEntry, keyboardInset } from "./keyboard-offset"
+import { createLayoutKeyboardTracker, hasKeyboardOcclusion, installKeyboardOffset, isTextEntry, keyboardInset } from "./keyboard-offset"
 
 const stale = { innerHeight: 900, viewportHeight: 763, viewportOffsetTop: 0 }
 
@@ -65,4 +65,26 @@ test("the offset is recomputed on window resize and focus changes, and removed o
   dispose()
   assert.equal(properties.has("--keyboard-offset"), false)
   assert.equal(listeners.size, 0)
+})
+
+test("a keyboard that shrinks the whole window (Firefox web app) is measured from the full height", () => {
+  // Measured on a Firefox 160 installed web app: 845 px closed, 475 px open.
+  const track = createLayoutKeyboardTracker()
+  const active = { tagName: "TEXTAREA" }
+  const win = { innerWidth: 400, innerHeight: 845, visualViewport: { scale: 1 }, matchMedia: () => ({ matches: true }),
+    document: { activeElement: active } } as unknown as Window & { innerWidth: number; innerHeight: number }
+  assert.equal(track(win), 0)
+  win.innerHeight = 475
+  assert.equal(track(win), 370)
+  win.innerHeight = 800
+  assert.equal(track(win), 0, "browser chrome")
+  win.innerHeight = 475
+  ;(win.document as { activeElement: unknown }).activeElement = null
+  assert.equal(track(win), 0, "not editing")
+  ;(win.document as { activeElement: unknown }).activeElement = active
+  win.innerWidth = 845
+  assert.equal(track(win), 0, "rotation starts from the new geometry")
+  win.innerWidth = 400
+  win.innerHeight = 845
+  assert.equal(track(win), 0, "keyboard closed")
 })

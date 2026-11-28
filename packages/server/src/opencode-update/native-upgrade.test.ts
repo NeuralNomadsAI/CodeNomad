@@ -8,6 +8,7 @@ import { InstallationInterruptedError, withInstallationLock } from "./installati
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { installSharedOpenCode, npmExecutable, npmCommandDirectory } from "./shared-installation"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
+import { RECOMMENDED, newerPatch } from "../opencode/runtime-version-fixture"
 
 test("native upgrade scopes bundled npm and prefix in the prefix, cleans its shim, and retains it on interruption", async () => {
   // Electron's executable needs the scoped `node` command; Tauri's Node (also
@@ -99,7 +100,7 @@ test("native upgrade npm/npx commands override hostile caller PATH and cwd witho
     const env: NodeJS.ProcessEnv = { PATH: [hostile, process.platform === "win32" ? path.join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/bin"].join(path.delimiter),
       ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec } : {}) }
     const original = { ...env }
-    await upgradeSharedOpenCode({ binary: "verified-opencode", version: "2.3.2", prefix, node: process.execPath,
+    await upgradeSharedOpenCode({ binary: "verified-opencode", version: RECOMMENDED, prefix, node: process.execPath,
       npm: path.join(bundled, "npm-cli.js"), env, platform: process.platform,
       execute: async (_file, _args, childEnv, options) => {
         assert.notEqual(options!.cwd, hostile, "the native command owns cwd as well as PATH")
@@ -108,7 +109,7 @@ test("native upgrade npm/npx commands override hostile caller PATH and cwd witho
             ? spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", name], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
             : spawnSync(name, [], { cwd: options?.cwd ?? hostile, env: childEnv, windowsHide: true, encoding: "utf8" })
           assert.equal(result.status, 0, result.stderr)
-          assert.deepEqual(JSON.parse(result.stdout), { execPath: process.execPath, cli: path.join(bundled, name + "-cli.js"), prefix, allow: "@opencode/cli@2.3.2" })
+          assert.deepEqual(JSON.parse(result.stdout), { execPath: process.execPath, cli: path.join(bundled, name + "-cli.js"), prefix, allow: `@opencode/cli@${RECOMMENDED}` })
         }
       } })
     assert.deepEqual(env, original)
@@ -164,9 +165,9 @@ test("shared update delegates to native CLI, verifies publication, and never ret
     assert.equal(calls, 1, "no downgrade or same-version native invocation")
     assert.equal(registrations, 2)
     assert.equal(await readFile(binary, "utf8"), minimum)
-    await writeFile(binary, "2.3.3")
+    await writeFile(binary, newerPatch())
     await installSharedOpenCode(minimum, options)
-    assert.equal(await readFile(binary, "utf8"), "2.3.3", "never downgrade a newer verified installation")
+    assert.equal(await readFile(binary, "utf8"), newerPatch(), "never downgrade a newer verified installation")
     assert.equal(calls, 1)
   } finally { await rm(home, { recursive: true, force: true }) }
 })

@@ -8,7 +8,7 @@ Browser- und Tablet-Zugriff verlagern die Ausführung nicht vom Host.
 
 1. Installieren Sie Node.js 24 LTS und npm.
 2. Stellen Sie Git im **PATH des Backend-Prozesses** bereit. Git allein in WSL genügt für ein Windows-Backend nicht.
-3. Installieren oder wählen Sie OpenCode: **2.3.0** ist das erforderliche Minimum. Siehe [OpenCode-Einrichtung](opencode.md).
+3. Installieren oder wählen Sie OpenCode: **2.4.0** ist das erforderliche Minimum. Siehe [OpenCode-Einrichtung](opencode.md).
 4. Wählen Sie den Startordner des Servers oder übergeben Sie `--workspace-root` ausdrücklich.
 
 Ohne Git bleiben Unterhaltungen nur im ausdrücklich geöffneten physischen Ordner verfügbar; Git- und Worktree-Vorgänge schlagen fehl. Installieren Sie Git und starten Sie das Backend nach einer PATH-Änderung neu. Das Arbeitsbereichs-Stammverzeichnis begrenzt Öffnen/Durchsuchen, nicht Agentenausführung: siehe [Sicherheit](security.md).
@@ -80,7 +80,7 @@ Flags übersteuern ihre Umgebungsentsprechungen. Flags mit Wert verwenden das ge
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; erlaubt das Durchsuchen des gesamten Dateisystems. Keine Agenten-Sandbox-Einstellung. |
 | `--config <path>` | `CLI_CONFIG` | Aufgelöster aktiver Standard: `~/.config/codenomad/config.yaml`. Akzeptiert Verzeichnis oder YAML-Datei für expliziten Speicherort. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; dokumentierte Stufen: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; sonst in die gewählte Datei schreiben. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, zusätzlich `logs/server.log` neben der Konfigurationsdatei; eine gewählte Datei ersetzt beides. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; Laufzeit-Authentifizierungsbenutzername. Eine gespeicherte Auth-Datei behält ihren Benutzernamen ohne Laufzeit-Passwortüberschreibung. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Nicht gesetzt; reines Laufzeitpasswort mit Vorrang vor der verwalteten Auth-Datei. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; Zeichen außer Buchstaben, Ziffern, `_` und `-` werden `_`. |

@@ -20,6 +20,8 @@ import { createBackendClient, registerBackendClient } from "../../../src/lib/bac
 import { backendEvents } from "../../../src/lib/backend-events"
 import { getSessionPreview } from "../../../src/stores/session-previews"
 import { alertDialogState } from "../../../src/stores/alerts"
+import { getToastHistory } from "../../../src/lib/notifications"
+import { localLinkPath, worktreeLinkPath, type SessionLinkBase } from "../../../src/components/markdown-session-links"
 
 const id = "markdown-session-links", scope = "/fixture-root"
 const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -87,11 +89,11 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   <div>
     <div id="main-root">
       <Markdown part={{ id: "part", type: "text", version: 0,
-          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x)." }}
+          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](./docs), [clip](./media/clip.mp4), [shot](./shot.png), [album](./album.png), [photo](file:///C:/Users/me/bato.jpg), [notes](file:///fixture-root/notes.md), [locked](./locked), [gone](./gone.md)." }}
         instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
     </div>
     <div id="sub-root">
-      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
+      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md) and [docs](./docs)." }}
         instanceId={id} sessionId="ses_sub" />
     </div>
     <div id="child-root">
@@ -132,4 +134,7 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   pending: () => Boolean(rejectPending),
   rejectPending: () => rejectPending?.(),
   alert: () => alertDialogState(),
+  localLinkPath: (href: string, base: SessionLinkBase) => localLinkPath(href, base),
+  worktreeLinkPath: (href: string, base: SessionLinkBase) => worktreeLinkPath(href, base),
+  errorToasts: () => getToastHistory().filter(item => item.variant === "error").map(item => item.message),
 }

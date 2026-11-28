@@ -20,8 +20,10 @@ test("native schedule availability recognizes consumed shapes independently of v
     (value: any) => { value.components.schemas["Automation.Info"].properties.status.enum = "active" },
     (value: any) => { value.components.schemas["Automation.Info"].required = 3 },
     (value: any) => { value.components.schemas["Automation.Trigger"].anyOf.pop() },
+    (value: any) => { value.components.schemas["Automation.CreatePayload"].properties.action.anyOf[0].properties.type.enum = ["prompt"] },
+    (value: any) => { delete value.components.schemas["Automation.Info"].properties.action.anyOf[0].properties.code },
     (value: any) => { delete value.components.schemas["Automation.CreatePayload"].properties.trigger },
-    (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.experimental.properties.automations },
+    (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.automations },
     (value: any) => { delete value.paths["/api/experimental/automation/{automationID}"].delete.responses["204"] },
   ]) {
     const value = contract(); mutate(value)
@@ -29,11 +31,14 @@ test("native schedule availability recognizes consumed shapes independently of v
   }
 })
 
-test("the on/off setting qualifies at the top level or in the experimental block", () => {
+test("the on/off setting qualifies only at the top level", () => {
   const root = contract(), config = root.components.schemas["Config.InfoEncoded"] as any
   config.properties = { automations: { type: "boolean" }, experimental: { type: "object", properties: {} } }
   assert.deepEqual(nativeScheduleCapability(root), { available: true })
   config.properties.automations.type = "string"
+  assert.deepEqual(nativeScheduleCapability(root), { available: false, reason: "incompatible-contract" })
+  // A runtime that reads the flag from its experimental block is another contract.
+  config.properties = { experimental: { type: "object", properties: { automations: { type: "boolean" } } } }
   assert.deepEqual(nativeScheduleCapability(root), { available: false, reason: "incompatible-contract" })
 })
 
@@ -79,12 +84,12 @@ test("read-only reader keeps API support, effective per-Location flag and origin
   await assert.rejects(reader.read("w", { directory: "/project" }), /replaced/)
 })
 
-test("capability trusts daemon environment, all-flags and channel defaults rather than document-only inference", async () => {
-  let flag = { enabled: true, provenance: "all-flags" }
+test("capability trusts the daemon's environment, setting and channel default rather than document-only inference", async () => {
+  let flag: { enabled: boolean; provenance: string; path?: string } = { enabled: true, provenance: "automations-setting", path: "/global/opencode.jsonc" }
   const connection: any = { endpoint: { url: "http://127.0.0.1:1234" }, assertCurrent() {},
     fetch: async () => Response.json(contract()), client: { rpc: () => ({ scheduleFlag: async () => flag }) } }
   const documents: any = { readConfigDocuments: async () => ({ location: { directory: "/project" }, documents: [], entries: [
-    { type: "document", path: "/global/opencode.jsonc", info: { experimental: { all_flags: true } } },
+    { type: "document", path: "/global/opencode.jsonc", info: { automations: true } },
     { type: "document", path: "/project/opencode.jsonc", info: { experimental: {} } },
   ] }) }
   const reader = new NativeScheduleCapabilityReader(documents, { getSharedServiceConnection: async () => connection } as any)

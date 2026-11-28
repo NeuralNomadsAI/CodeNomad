@@ -2054,7 +2054,7 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
             && caret_ime[1] + caret_ime[3] <= stack_ime[1] + stack_ime[3] + 1.0,
         "wrapping IME preedit caret must stay unclipped inside 28px session-stack: caret={caret_ime:?}, stack={stack_ime:?}"
     );
-    // Commit / clear preedit, then test selection inversion (Ctrl+End -> Ctrl+Shift+Home -> Ctrl+A):
+    // Commit / clear preedit, then test selection inversion (Ctrl+End -> Ctrl+Shift+Home -> Select All):
     // sorted range() stays (0, len) while active caret moves from line 1 to line 10.
     rt.ime(rune::Ime::Preedit(String::new(), None, vec![]));
     settle(&mut rt);
@@ -2073,10 +2073,12 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
             ..rune::Mods::default()
         },
     };
-    let ctrl_a = rune::KeyEvent {
+    let select_all = rune::KeyEvent {
         key: rune::Key::Command('a'),
         mods: rune::Mods {
-            ctrl: true,
+            cmd: true,
+            ctrl: !cfg!(target_os = "macos"),
+            logo: cfg!(target_os = "macos"),
             ..rune::Mods::default()
         },
     };
@@ -2088,8 +2090,8 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
     settle(&mut rt);
     let len_inv = rt.state.draft.text.len();
     assert_eq!((rt.state.draft.anchor, rt.state.draft.focus), (len_inv, 0));
-    rt.key(ctrl_a.clone());
-    rt.key_up(ctrl_a);
+    rt.key(select_all.clone());
+    rt.key_up(select_all.clone());
     settle(&mut rt);
     assert_eq!((rt.state.draft.anchor, rt.state.draft.focus), (0, len_inv));
     let stack_inv = element_rect(&rt, "session-stack");
@@ -2098,24 +2100,17 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
         .into_iter()
         .find(|e| e.path.ends_with("/composer/scroll/input"))
         .and_then(|e| e.caret)
-        .expect("focused composer must expose drawn caret after Ctrl+A inversion");
+        .expect("focused composer must expose drawn caret after Select All inversion");
     assert!(
         caret_inv[1] >= stack_inv[1] - 1.0
             && caret_inv[1] + caret_inv[3] <= stack_inv[1] + stack_inv[3] + 1.0,
-        "Ctrl+A selection inversion must scroll 28px session-stack to reveal line-10 caret: caret={caret_inv:?}, stack={stack_inv:?}"
+        "Select All selection inversion must scroll 28px session-stack to reveal line-10 caret: caret={caret_inv:?}, stack={stack_inv:?}"
     );
 
     // Same-length single-operation replacement ("abcdefghi" -> "abcd\nefgh", cursor stays at 9)
     // must still trigger outer stack caret reveal when caret moves to line 2.
-    let ctrl_a_2 = rune::KeyEvent {
-        key: rune::Key::Command('a'),
-        mods: rune::Mods {
-            ctrl: true,
-            ..rune::Mods::default()
-        },
-    };
-    rt.key(ctrl_a_2.clone());
-    rt.key_up(ctrl_a_2.clone());
+    rt.key(select_all.clone());
+    rt.key_up(select_all.clone());
     settle(&mut rt);
     rt.paste("abcdefghi");
     settle(&mut rt);
@@ -2131,8 +2126,8 @@ fn focused_interruption_and_composer_caret_follow_viewport_changes() {
         tx.scroll_to_y("session-stack", (cur_sy + align_dy).max(0.0));
     });
     settle(&mut rt);
-    rt.key(ctrl_a_2.clone());
-    rt.key_up(ctrl_a_2);
+    rt.key(select_all.clone());
+    rt.key_up(select_all);
     rt.paste("abcd\nefgh");
     settle(&mut rt);
     assert_eq!(rt.state.draft.text, "abcd\nefgh");

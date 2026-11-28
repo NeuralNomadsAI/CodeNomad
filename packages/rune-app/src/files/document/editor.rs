@@ -657,7 +657,9 @@ impl Editor {
             if draft.recovered && draft.original.is_none() {
                 let same = observed.is_some() && observed == draft.version;
                 draft.original = disk_text(&preview.path, &preview.bytes);
-                draft.error = (!same).then_some(Error::Conflict(None));
+                draft.error = (!same).then_some(Error::Conflict(
+                    codenomad_client::files::WriteConflict::ChangedOnDisk,
+                ));
                 if same {
                     draft.recovered = false;
                 }

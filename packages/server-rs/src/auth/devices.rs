@@ -46,6 +46,8 @@ struct Device {
     origin: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     push_epoch: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    server: bool,
 }
 impl Device {
     fn public(&self) -> Value {
@@ -452,6 +454,10 @@ impl Devices {
         }
         Some((id, entry.1.clone()))
     }
+    pub fn is_server_device(&self, id: Uuid) -> bool {
+        self.doc.devices.iter().any(|d| d.id == id && (d.server || d.name.starts_with("CodeNomad ·")))
+    }
+
     fn issue_with_base(&mut self, origin: Option<String>, base: &str) -> Result<Value, Fail> {
         let code = URL_SAFE_NO_PAD.encode(entropy::<24>()?);
         let expires_at =
@@ -466,6 +472,7 @@ impl Devices {
         name: String,
         origin: Option<&str>,
         tunnel_active: bool,
+        server: bool,
     ) -> Result<Option<(Value, String)>, Fail> {
         if self.disabled_by_admin || self.revocation_locked {
             return Ok(None);
@@ -494,6 +501,7 @@ impl Devices {
             last_seen_at: now,
             origin: origin.map(str::to_owned),
             push_epoch: None,
+            server,
         };
         let public = d.public();
         let evicted = self.mutate_persisted(|doc| {
@@ -657,7 +665,7 @@ pub async fn exchange(State(app): State<Shared>, Extension(channel): Extension<C
     let code = code.filter(|_| !invalid_json && (!server || valid_server));
     if let Some(code) = code {
         let name = if server { format!("CodeNomad · {}", hostname.unwrap()) } else { device_name(&agent) };
-        match d.exchange(code, name, (!channel.ingress).then_some(&channel.origin), tunnel_active) {
+        match d.exchange(code, name, (!channel.ingress).then_some(&channel.origin), tunnel_active, server) {
             Ok(Some((device, token))) => {
                 let no_store = (header::CACHE_CONTROL, "no-store".to_owned());
                 if server {
@@ -741,10 +749,56 @@ mod tests {
         );
         let until = Instant::now() - Duration::from_secs(1);
         devices.pairing = Some(Pairing { hash: hash("fixture"), until, origin: None });
-        assert!(devices.exchange("fixture", "Device".into(), None, true).unwrap().is_none());
+        assert!(devices.exchange("fixture", "Device".into(), None, true, false).unwrap().is_none());
         devices.pairing.as_mut().unwrap().until = Instant::now() + Duration::from_secs(1);
-        assert!(devices.exchange("fixture", "Device".into(), Some("https://other.invalid"), true).unwrap().is_none());
+        assert!(
+            devices.exchange("fixture", "Device".into(), Some("https://other.invalid"), true, false).unwrap().is_none()
+        );
         assert!(devices.doc.devices.is_empty());
         assert!(devices.pairing.is_some());
+    }
+
+    #[test]
+    fn server_paired_device_persists_server_flag_distinct_from_browser() {
+        let dir = std::env::temp_dir().join(format!("cn-devices-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("remote-control.json");
+        let doc = Document { version: 1, route: "test".into(), ..Default::default() };
+        fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+        let mut devices = Devices::new(
+            path.clone(),
+            doc,
+            false,
+            "https://localhost:1234".into(),
+            vec!["https://localhost:1234".into()],
+            true,
+            false,
+        );
+
+        devices.pairing =
+            Some(Pairing { hash: hash("browser-code"), until: Instant::now() + Duration::from_secs(60), origin: None });
+        let (browser_pub, _) = devices.exchange("browser-code", "Browser".into(), None, true, false).unwrap().unwrap();
+        let browser_id = Uuid::parse_str(browser_pub["id"].as_str().unwrap()).unwrap();
+        assert!(!devices.is_server_device(browser_id));
+
+        devices.pairing =
+            Some(Pairing { hash: hash("server-code"), until: Instant::now() + Duration::from_secs(60), origin: None });
+        let (server_pub, _) = devices.exchange("server-code", "Host".into(), None, true, true).unwrap().unwrap();
+        let server_id = Uuid::parse_str(server_pub["id"].as_str().unwrap()).unwrap();
+        assert!(devices.is_server_device(server_id));
+
+        let reloaded: Document = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        let reloaded_devices = Devices::new(
+            path,
+            reloaded,
+            false,
+            "https://localhost:1234".into(),
+            vec!["https://localhost:1234".into()],
+            true,
+            false,
+        );
+        assert!(!reloaded_devices.is_server_device(browser_id));
+        assert!(reloaded_devices.is_server_device(server_id));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -15,8 +15,17 @@ path = "tests/probes/notifications_web.rs"
 crate-type = ["cdylib"]
 required-features = ["test-support"]
 
+# The Android library: the application itself, for Rune's Android host. Behind a feature so
+# that no other build compiles the application a second time.
+[[example]]
+name = "android"
+path = "src/main.rs"
+crate-type = ["cdylib"]
+required-features = ["android"]
+
 [features]
 default = []
+android = []
 test-support = ["rune-theme-codenomad/test-support"]
 
 [dependencies]

@@ -67,6 +67,7 @@ pub(crate) struct Panel {
     pub(super) control_fields: super::control_fields::Fields,
     pub(super) observation: Observation,
     pub(super) reader: Reader,
+    pub(super) calendars: super::calendars::Calendars,
     reader_suspended: bool,
 }
 
@@ -74,7 +75,7 @@ const KINDS: [Kind; 2] = [Kind::Summaries, Kind::Cleanups];
 
 impl Panel {
     pub(crate) fn is_composing(&self) -> bool {
-        self.filter.is_composing()
+        self.filter.is_composing() || self.calendars.is_composing()
     }
 
     pub(crate) fn new(backend: Backend, project: Option<String>, reads: Reads, wake: Wake) -> Self {
@@ -104,6 +105,7 @@ impl Panel {
             control_fields: Default::default(),
             observation: Observation::default(),
             reader: Reader::default(),
+            calendars: super::calendars::Calendars::default(),
             reader_suspended: false,
         }
     }
@@ -132,6 +134,7 @@ impl Panel {
         self.detail.cancel();
         self.detail.clear_lookup_cache();
         self.reader.invalidate();
+        self.calendars.reset_for_rebind();
         if self.visible || self.reader.is_open() {
             self.refresh();
         }
@@ -146,6 +149,7 @@ impl Panel {
         self.evictable_inactive_bytes()
             .saturating_add(self.summaries.len().saturating_mul(256))
             .saturating_add(self.cleanups.len().saturating_mul(128))
+            .saturating_add(self.calendars.retained_bytes())
     }
 
     pub(crate) fn evictable_inactive_bytes(&self) -> usize {
@@ -210,6 +214,7 @@ impl Panel {
         self.refresh_due = None;
         self.detail.cancel();
         self.reader.suspend();
+        self.calendars.cancel();
         self.cancel_probe();
     }
 
@@ -217,6 +222,7 @@ impl Panel {
         self.reader
             .take_auth_expired()
             .or_else(|| self.detail.take_auth_expired())
+            .or_else(|| self.calendars.take_auth_expired())
     }
 
     #[cfg(test)]
@@ -291,6 +297,7 @@ impl Panel {
             }
             self.control_fields.cancel();
             self.observation.cancel();
+            self.calendars.cancel();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
                     cancel.close();
@@ -304,6 +311,8 @@ impl Panel {
         if self.visible {
             self.detail.refresh();
             self.observation.refresh();
+            self.calendars
+                .refresh(&self.backend, &self.reads, &self.wake);
             for kind in KINDS {
                 if self.busy(kind) {
                     self.lanes[kind as usize].owed = true;
@@ -314,6 +323,24 @@ impl Panel {
         } else if self.reader.is_open() {
             self.detail.refresh();
         }
+    }
+
+    pub(super) fn refresh_calendars(&mut self) {
+        self.calendars
+            .retry_refresh(&self.backend, &self.reads, &self.wake);
+    }
+
+    pub(super) fn toggle_calendar_pause(&mut self, id: &str) {
+        self.calendars.toggle_pause(id, &self.backend, &self.wake);
+    }
+
+    pub(super) fn save_calendar_editor(&mut self) {
+        self.calendars.save_editor(&self.backend, &self.wake);
+    }
+
+    pub(crate) fn confirm_calendar_delete(&mut self, accept: bool) {
+        self.calendars
+            .confirm_delete(accept, &self.backend, &self.wake);
     }
 
     pub(crate) fn invalidate(&mut self, change: Option<(&str, u64)>, now: f64) {
@@ -330,6 +357,7 @@ impl Panel {
             // A reconnect retires publication authority while keeping the display.
             self.detail.cancel();
             self.observation.cancel();
+            self.calendars.on_reconnect();
             self.reader.invalidate();
             for lane in &mut self.lanes {
                 if let Some((_, cancel)) = lane.active.take() {
@@ -721,6 +749,19 @@ impl Panel {
             &self.reads,
             &self.wake,
         );
+        let (cal_changed, cal_mutated) =
+            self.calendars
+                .poll(self.visible, &self.backend, &self.reads, &self.wake);
+        changed |= cal_changed;
+        if cal_mutated && self.visible {
+            for kind in KINDS {
+                if self.busy(kind) {
+                    self.lanes[kind as usize].owed = true;
+                } else {
+                    self.start(kind, Read::Refresh);
+                }
+            }
+        }
         changed | self.poll_control_fields()
     }
 

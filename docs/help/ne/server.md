@@ -8,7 +8,7 @@ browser र tablet पहुँचले execution host बाहिर सा�
 
 1. Node.js 24 LTS र npm स्थापना गर्नुहोस्।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
-3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.3.0**। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.4.0**। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।
 
 Git बिना स्पष्ट खोलिएको physical folder मा मात्र कुराकानी उपलब्ध हुन्छन्; Git र worktree कार्य असफल हुन्छन्। Git स्थापना र PATH परिवर्तनपछि backend restart गर्नुहोस्। workspace root ले opening/browsing सीमित गर्छ, agent execution होइन: [सुरक्षा](security.md) हेर्नुहोस्।
@@ -80,7 +80,7 @@ flag ले environment counterpart override गर्छन्। value-taking 
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; full-filesystem browsing अनुमति। agent sandbox सेटिङ होइन। |
 | `--config <path>` | `CLI_CONFIG` | resolved active default: `~/.config/codenomad/config.yaml`। स्पष्ट स्थानका लागि directory वा YAML file स्वीकार्छ। |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; documented level: `trace`, `debug`, `info`, `warn`, `error`। |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; अन्यथा चयनित file मा लेख्छ। |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, साथै configuration file सँगैको `logs/server.log`; रोजिएको file ले दुवैको सट्टा लिन्छ। |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; runtime auth username। runtime password override नभए stored auth file ले आफ्नै username राख्छ। |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | unset; runtime-only password, managed auth file भन्दा अघि पर्छ। |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; अक्षर, अङ्क, `_` र `-` बाहेक character `_` बन्छन्। |

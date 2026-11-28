@@ -5,7 +5,6 @@ import type { Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
-import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { launchAutomationBrowser, openAutomationPage } from "./automation-session"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
@@ -167,7 +166,6 @@ test("typing never lands in another field, and normalized inputs keep the browse
   } finally { await run.close() }
 })
 
-const emptyRecurrence = () => recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
 const profiles = { coordinator: { agent: "coordinator", model: { providerID: "p", id: "m" } } }
 const createdMission = (body: Record<string, unknown>) => ({ version: 1, id: "msn_created", projectID: "project", projectCanonical: "/fixture", title: body.title,
   objective: body.objective, template: body.template, status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1,
@@ -189,7 +187,6 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") {
-        if (pathname === "/api/workspaces/fixture/missions/recurrence") return route.fulfill({ json: emptyRecurrence() })
         if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
         if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
         return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
@@ -257,7 +254,6 @@ for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome
     await page.route("**/api/workspaces/fixture/missions**", missionPanelRoute(async route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") {
-        if (pathname === "/api/workspaces/fixture/missions/recurrence") return route.fulfill({ json: emptyRecurrence() })
         if (pathname === "/api/workspaces/fixture/missions/scheduled") return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
         if (pathname !== "/api/workspaces/fixture/missions") return route.fallback()
         if (!holdMap) return route.fulfill(map())

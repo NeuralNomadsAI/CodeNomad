@@ -34,7 +34,7 @@ Native previews share cookies, sign-ins and site storage across projects/session
 
 Each session has one native preview. If a duplicate tab shows **Preview open in another tab**, choose **Go to tab** to find it, or **Open here** to move it within the same window. The previous tab then shows the same message. Closing the owning tab frees the preview for another tab.
 
-An agent opens the preview in its owning tab or, if there is none, the last tab used for the session. Page actions target the visible native preview.
+While a desktop window shows a conversation, its agents can control the conversation's preview with OpenCode's browser tools (OpenCode 2.4 or later); running page scripts is refused, and in the Tauri app on macOS and Linux they cannot go back, forward or reload. In Electron and the Windows Tauri app they can also read the preview's console messages and network requests; they see request and response headers and text bodies while the preview still holds them, except cookie and authorization header values. An agent opens the preview in its owning tab or, if there is none, the last tab used for the session. Page actions target the visible native preview. Pages load over this computer's network, as in the preview you see, so `localhost` is this computer even when OpenCode runs in WSL.
 
 The agent takes a snapshot before acting on or capturing the preview. If the preview changes, the command stops instead of using a different preview.
 

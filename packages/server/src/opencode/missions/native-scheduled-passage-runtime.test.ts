@@ -2,26 +2,25 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import os from "node:os"
 import { createHash } from "node:crypto"
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { DatabaseSync } from "node:sqlite"
 import test from "node:test"
 import type { Plugin } from "@opencode/plugin/effect"
-import type { ProviderEditor, ProviderRecord } from "@opencode/plugin/effect/provider"
-import { Context, Effect, Exit, Schema, Scope } from "effect"
+import { Context, Effect, Schema } from "effect"
 import { Location } from "@opencode/schema/location"
 import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Automation } from "@opencode/schema/automation"
-import { missionAutomationID } from "./native-mission-automation"
+import { missionAutomationID, MISSION_WAKE_CODE } from "./native-mission-automation"
 import type { MissionConfiguration } from "../../missions/launch-policy"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
-import type { MissionDocument } from "../../missions/mission-document"
+import { projectMissionDocument, type MissionDocument } from "../../missions/mission-document"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { acquireNativeScheduledPassageRuntime, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
+import { acquireNativeScheduledPassageCapability } from "./native-scheduled-passage-capability"
 import type { NativeCreateInput, NativeDocumentPassageCommand } from "./native-service-adapter"
-import { registerNativeScheduleProvider } from "./native-schedule-provider-registration"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL } from "./native-schedule-carrier-binding"
 import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
@@ -39,8 +38,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     writeFileSync(file, bytes)
     return { file, sha256: createHash("sha256").update(bytes).digest("hex") }
   }
-  const installation = { registrationFile: path.join(root, "registration.json"), provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
-  const providerScope = await Effect.runPromise(Scope.make())
+  const installation = { registrationFile: path.join(root, "registration.json"), runtime: artifact("runtime.mjs") }
   const db = new DatabaseSync(":memory:")
   db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT NOT NULL,time_created INTEGER NOT NULL,time_updated INTEGER NOT NULL);
     CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER,metadata TEXT);
@@ -61,7 +59,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     scheduleID: item.scheduleID, sessionID: item.sessionID, highWater: 0, pendingWake: null, wakePreparing: null }))
   const infos = new Map(descriptors.map(item => [missionAutomationID(item.scheduleID), Schema.decodeUnknownSync(Automation.Info)({ id: missionAutomationID(item.scheduleID),
     sessionID: item.sessionID, name: item.name, projectID: "project", directory, trigger: item.when, tz: "UTC", status: "active", runCount: 0,
-    nextDueAt: at + 900_000, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: item.sessionID } }, time: { created: at, updated: at } })]))
+    nextDueAt: at + 900_000, action: { type: "code", code: MISSION_WAKE_CODE }, time: { created: at, updated: at } })]))
   for (const item of descriptors) sessions.set(item.sessionID, Schema.decodeUnknownSync(Session.Info)({ id: item.sessionID, projectID: "project",
     location: { directory }, model: NATIVE_SCHEDULE_CARRIER_MODEL, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
     time: { created: at, updated: at }, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: "review", timeGeneration: 1, role: item.role, slot: 0 } } }))
@@ -81,7 +79,11 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   }
   const native = {
     active: Effect.sync(() => new Set(active)),
-    get: (id: string) => Effect.sync(() => { assert.equal(transaction, false); return sessions.get(id) }),
+    get: (id: string) => Effect.suspend(() => {
+      assert.equal(transaction, false)
+      const session = sessions.get(id)
+      return session ? Effect.succeed(session) : Effect.fail(Object.assign(new Error("Not found"), { _tag: "SessionNotFoundError", sessionID: id }))
+    }),
     create: (input: NativeCreateInput) => Effect.sync(() => {
       assert.equal(transaction, false)
       const session = Schema.decodeUnknownSync(Session.Info)({ ...input, projectID: "project", cost: 0,
@@ -128,8 +130,6 @@ test("real SQLite factory fences broken initial/business capabilities but observ
   graph = Context.add(graph, tag("@opencode/Session"), native)
   for (const name of ["Form", "Permission", "Shell"]) graph = Context.add(graph, tag(`@opencode/${name}`), { list: () => Effect.succeed([]) })
   graph = Context.add(graph, tag("@opencode/Automation"), { get: (id: string) => Effect.sync(() => infos.get(id)), enabled: () => Effect.sync(() => enabled) })
-  const transforms: Array<(editor: ProviderEditor) => void> = []
-  let records = new Map<string, ProviderRecord>()
   const updateMetadata = (id: string, metadata: Record<string, unknown>) => {
     Object.assign(sessions.get(id)!, { metadata })
     db.prepare("UPDATE session_v2 SET metadata=? WHERE id=?").run(JSON.stringify(metadata), id)
@@ -139,16 +139,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     if (failRelease) throw Error("Fixture update unavailable")
     updateMetadata(sessionID, metadata); releaseWrites++
     if (loseReleaseACK) { loseReleaseACK = false; throw Error("Lost release ACK") }
-  }) }, provider: {
-    transform: (callback: (editor: ProviderEditor) => void) => Effect.sync(() => { transforms.push(callback); return { dispose: Effect.void } }),
-    get: ({ providerID }: { providerID: string }) => Effect.sync(() => {
-      records = new Map()
-      const editor = { get: (id: string) => records.get(id), add: ({ info, models }: Parameters<ProviderEditor["add"]>[0]) =>
-        records.set(info.id, { provider: info, models: new Map(models.map(model => [model.id, model])) }) } as unknown as ProviderEditor
-      for (const transform of transforms) transform(editor)
-      return { data: records.get(providerID)?.provider }
-    }),
-  }, model: { list: () => Effect.sync(() => ({ data: [...records.values()].flatMap(record => [...record.models.values()]) })) } } as unknown as Plugin.Context
+  }) } } as unknown as Plugin.Context
   const entry = { current, signal: new AbortController().signal }
   let retired: NativeScheduledPassageRuntime | undefined, owner: NativeMissionDocumentStore | undefined
   const invoke = <T>(use: (runtime: NativeScheduledPassageRuntime) => Promise<T>, source = ctx, nativeGraph = graph) => Effect.runPromiseWith(nativeGraph)(Effect.scoped(Effect.gen(function* () {
@@ -158,7 +149,6 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     return yield* Effect.promise(() => use(runtime))
   })))
   try {
-    await Effect.runPromise(registerNativeScheduleProvider(ctx, installation).pipe(Effect.provideService(Scope.Scope, providerScope)))
     const configuration: MissionConfiguration = { title: "Native factory", objective: "Do useful work", template: "custom", taskMode: "native",
       profileID: "profile", executionHost: "local", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: [],
       profiles: { coordinator: { agent: "worker", model: { providerID: "unit", id: "model" } },
@@ -181,7 +171,7 @@ test("real SQLite factory fences broken initial/business capabilities but observ
         receipts: [], checks: [], slots: descriptors, retired: [], auxiliaryReady: true, error: null }
       changes.synchronized(next, "first_play", calendars)
     })
-    await t.test("runtime preflight verifies native ACK/message before readiness and publishes no KV or HWM", async () => {
+    await t.test("runtime preflight verifies durable Code Mode preparation before readiness and publishes no KV or HWM", async () => {
       const principal = calendars[0], messageID = `msg_${principal.scheduleID}_1`
       const wake = { missionID: doc.id, generation: doc.timeGeneration, scheduleID: principal.scheduleID,
         sessionID: principal.sessionID, run: 1, messageID }
@@ -192,14 +182,16 @@ test("real SQLite factory fences broken initial/business capabilities but observ
       assert.deepEqual(snapshot(), before)
       const info = infos.get(missionAutomationID(principal.scheduleID))!
       infos.set(info.id, { ...info, runCount: 1 })
-      messages.set(messageID, Schema.decodeUnknownSync(SessionMessage.Info)({ type: "user", id: messageID,
-        text: NATIVE_SCHEDULE_CARRIER_SIGNAL, time: { created: at },
-        metadata: { schedule: { id: principal.scheduleID, run: 1, dueAt: at, late: false } } }))
+      doc = await owner!.change(doc.id, doc.revision, current, next => changes.prepareWake(next,
+        { scheduleID: principal.scheduleID, run: 1, messageID, dueAt: at }))
+      const prepared = snapshot()
       assert.deepEqual(await invoke(runtime => runtime.preflight({ ...entry, missionID: doc.id, wake })),
         { messagePresent: true, ready: true, cutoff: at + 2000 })
-      assert.deepEqual(snapshot(), before)
+      assert.deepEqual(snapshot(), prepared)
       assert.equal((await owner!.read(doc.id) as MissionDocument).calendars[0].highWater, 0)
       assert.equal(sends, 0); assert.equal(environments, 0)
+      doc = await owner!.change(doc.id, doc.revision, current, next => { next.calendars[0].wakePreparing = null })
+      infos.set(info.id, info)
     })
     const originalRevision = doc.revision
     enabled = false
@@ -208,14 +200,16 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     const reservedID = doc.pending!.id
     assert.equal(doc.launchedCount, 0); assert.equal(sends, 0); assert.equal(environments, 0)
     enabled = true
-    unlinkSync(installation.provider.file)
+    const savedAuxiliary = infos.get("aut_reconciliation")!
+    infos.set(savedAuxiliary.id, { ...savedAuxiliary, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL,
+      to: { session: savedAuxiliary.sessionID! } } })
     assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: "review" })), "unknown")
     assert.equal(sends, 0); assert.equal(environments, 0)
     doc = await owner.read("review") as MissionDocument
     doc = await owner.change(doc.id, doc.revision, current, next => { next.state = "paused"; next.pending!.manualAllowed = false })
     assert.deepEqual(await invoke(runtime => runtime.controlPassage({ ...entry, missionID: "review", requestID: "pause_without_provider", action: "pause" })), { pending: false })
     doc = await owner.change(doc.id, doc.revision, current, next => { next.state = "running" })
-    writeFileSync(installation.provider.file, "provider.mjs")
+    infos.set(savedAuxiliary.id, savedAuxiliary)
     doc = await owner.read("review") as MissionDocument
     doc = await owner.change(doc.id, doc.revision, current, next => { next.calendarOwner!.auxiliaryReady = false })
     assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: "review" })), "unknown")
@@ -244,12 +238,13 @@ test("real SQLite factory fences broken initial/business capabilities but observ
     infos.set(auxiliary.id, auxiliary)
     assert.equal(await invoke(runtime => runtime.prepareBusiness(pending.coordinatorSessionID, entry)), true)
     assert.equal(environments, 2)
-    writeFileSync(installation.provider.file, "damaged bytes")
+    infos.set(auxiliary.id, { ...auxiliary, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: auxiliary.sessionID! } } })
     await assert.rejects(invoke(runtime => runtime.prepareBusiness(pending.coordinatorSessionID, entry)))
     await assert.rejects(invoke(runtime => runtime.executeBusiness(pending.coordinatorSessionID, entry, control => control.declare(pending.coordinatorSessionID,
       { taskKey: "refused_task", title: "Refused", brief: "Do bounded work", role: "diagnostician", blockedBy: [] }))))
     assert.equal((await owner.read("review") as MissionDocument).everCreatedTask, false)
     assert.equal(environments, 2); assert.equal(sends, 1)
+    infos.set(auxiliary.id, auxiliary)
     // The user may switch the coordinator conversation's model after admission.
     const coordinator = sessions.get(pending.coordinatorSessionID)!
     sessions.set(coordinator.id, { ...coordinator, model: { providerID: "other", id: "chat", variant: "high" } } as unknown as Session.Info)
@@ -357,5 +352,135 @@ test("real SQLite factory fences broken initial/business capabilities but observ
         requestID: "second_immediate", expectedRevision: converted.revision })))
       assert.equal(sends, 2); assert.equal(sessions.size, beforeSessions + 1)
     })
-  } finally { await Effect.runPromise(Scope.close(providerScope, Exit.void)); db.close() }
+    await t.test("passage capability refuses a prompt auxiliary without qualifying the passage", async () => {
+      enabled = true
+      let candidate = await owner!.create("prompt_capability_fence", configuration, at, current)
+      candidate = await owner!.change(candidate.id, candidate.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation }
+        changes.play(next, "play_prompt", at, [])
+        changes.synchronized(next, "play_prompt", calendars)
+        changes.reserve(next, { kind: "manual", requestID: "manual_prompt" }, at + 1, [])
+      })
+      const auxiliary = infos.get("aut_reconciliation")!
+      infos.set(auxiliary.id, { ...auxiliary, action: { type: "prompt", prompt: NATIVE_SCHEDULE_CARRIER_SIGNAL, to: { session: auxiliary.sessionID! } } })
+      const auxSession = sessions.get(auxiliary.sessionID!)!
+      sessions.set(auxSession.id, { ...auxSession, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: {
+        missionID: candidate.id, timeGeneration: 1, role: "reconciliation", slot: 0 } } } as Session.Info)
+      await Effect.runPromiseWith(graph)(Effect.gen(function* () {
+        const cap = yield* acquireNativeScheduledPassageCapability(ctx, current)
+        assert.match(String(yield* Effect.flip(Effect.catchCause(cap.prepare(candidate), cause => Effect.fail(cause)))), /schedule-calendar-requires-code/)
+        assert.throws(() => cap.assertCurrent(candidate), /unqualified/)
+      }))
+      assert.deepEqual(await owner!.read(candidate.id), candidate)
+      infos.set(auxiliary.id, auxiliary)
+      sessions.set(auxSession.id, auxSession)
+    })
+    await t.test("Code Mode scheduled passage admits and runs business without a provider", async () => {
+      enabled = true
+      const aux = infos.get("aut_reconciliation")!
+      infos.set(aux.id, { ...aux, action: { type: "code", code: MISSION_WAKE_CODE } })
+      const { model: _legacy, ...auxWithoutModel } = sessions.get("ses_reconciliation")!
+      let codeDoc = await owner!.create("code_no_provider", configuration, at, current)
+      codeDoc = await owner!.change(codeDoc.id, codeDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation: { registrationFile: installation.registrationFile, runtime: installation.runtime } }
+        changes.play(next, "play_code", at, [])
+        changes.synchronized(next, "play_code", calendars)
+      })
+      const auxMeta = { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: codeDoc.id, timeGeneration: 1, role: "reconciliation", slot: 0 } }
+      sessions.set("ses_reconciliation", { ...auxWithoutModel, metadata: auxMeta } as Session.Info)
+      const bare = { storage: stored, location } as unknown as Plugin.Context
+      assert.equal(await invoke(runtime => runtime.runNow({ ...entry, missionID: codeDoc.id, requestID: "manual_code", expectedRevision: codeDoc.revision }), bare), "pending")
+      codeDoc = await owner!.read(codeDoc.id) as MissionDocument
+      assert.equal(codeDoc.launchedCount, 1)
+      assert.equal(await invoke(runtime => runtime.prepareBusiness(codeDoc.pending!.coordinatorSessionID, entry), bare), true)
+      const declared = await invoke(runtime => runtime.executeBusiness(codeDoc.pending!.coordinatorSessionID, entry, control => control.declare(
+        codeDoc.pending!.coordinatorSessionID, { taskKey: "code_task", title: "Code work", brief: "Bounded work", role: "specialist", blockedBy: [] })), bare)
+      assert.equal(declared?.value.contract.taskKey, "code_task")
+      assert.equal((await owner!.read(codeDoc.id) as MissionDocument).everCreatedTask, true)
+    })
+    await t.test("missing reused coordinator settles as not-started, blocks the calendar visibly, and unlocks structural edit", async () => {
+      const beforeSends = sends
+      const missingDescriptors = (["principal", "reconciliation"] as const).map(role => ({ role, slot: 0, timeGeneration: 1,
+        scheduleID: `sch_missing_${role}`, sessionID: `ses_missing_${role}`, name: `Missing ${role}`, creation: "adopted" as const,
+        when: { type: "every" as const, every: "15 minutes", tz: "UTC" }, endsAt: null, ambiguous: [] }))
+      const missingCalendars = missingDescriptors.map(item => ({ role: item.role, slot: 0, timeGeneration: 1,
+        scheduleID: item.scheduleID, sessionID: item.sessionID, highWater: 0, pendingWake: null, wakePreparing: null }))
+      for (const item of missingDescriptors) {
+        infos.set(missionAutomationID(item.scheduleID), Schema.decodeUnknownSync(Automation.Info)({ id: missionAutomationID(item.scheduleID),
+          sessionID: item.sessionID, name: item.name, projectID: "project", directory, trigger: item.when, tz: "UTC", status: "active", runCount: 0,
+          nextDueAt: at + 900_000, action: { type: "code", code: MISSION_WAKE_CODE }, time: { created: at, updated: at } }))
+        sessions.set(item.sessionID, Schema.decodeUnknownSync(Session.Info)({ id: item.sessionID, projectID: "project",
+          location: { directory }, model: NATIVE_SCHEDULE_CARRIER_MODEL, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: at, updated: at }, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: "missing_reused", timeGeneration: 1, role: item.role, slot: 0 } } }))
+      }
+      const beforeSessions = sessions.size
+      let missingDoc = await owner!.create("missing_reused", { ...configuration, coordinatorSessionID: "ses_deleted_reused" }, at, current)
+      missingDoc = await owner!.change(missingDoc.id, missingDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation, slots: missingDescriptors }
+        changes.play(next, "play_missing_reused", at, [])
+        changes.synchronized(next, "play_missing_reused", missingCalendars)
+        changes.reserve(next, { kind: "manual", requestID: "manual_missing_reused" }, at + 1, [])
+      })
+      assert.equal(projectMissionDocument(missingDoc).edit.structural, false)
+      assert.equal(await invoke(runtime => runtime.reconcile({ ...entry, missionID: missingDoc.id })), "settled")
+      missingDoc = await owner!.read(missingDoc.id) as MissionDocument
+      assert.equal(missingDoc.pending, null)
+      assert.equal(missingDoc.blocked, "failed")
+      assert.equal(missingDoc.launchedCount, 0)
+      assert.equal(missingDoc.coordinatorReleases.length, 0)
+      assert.equal(missingDoc.history.length, 1)
+      assert.equal(missingDoc.history[0].outcome, "failed")
+      assert.equal(missingDoc.history[0].reason, "not-started")
+      assert.equal(projectMissionDocument(missingDoc).edit.structural, true)
+      assert.equal(sends, beforeSends)
+      assert.equal(sessions.size, beforeSessions)
+    })
+    await t.test("principal wake settling missing reused coordinator unlocks Edit and Resume while the Code Mode wake is still in flight", async () => {
+      const beforeSends = sends
+      const wakeDescriptors = (["principal", "reconciliation"] as const).map(role => ({ role, slot: 0, timeGeneration: 1,
+        scheduleID: `sch_wake_missing_${role}`, sessionID: `ses_wake_missing_${role}`, name: `Wake Missing ${role}`, creation: "adopted" as const,
+        when: { type: "every" as const, every: "15 minutes", tz: "UTC" }, endsAt: null, ambiguous: [] }))
+      const wakeCalendars = wakeDescriptors.map(item => ({ role: item.role, slot: 0, timeGeneration: 1,
+        scheduleID: item.scheduleID, sessionID: item.sessionID, highWater: 0, pendingWake: null, wakePreparing: null }))
+      // While the Code Mode principal wake is running, runCount is still 0 and nextDueAt points at the firing slot (<= cutoff).
+      const firingDueAt = at + 1_000
+      for (const item of wakeDescriptors) {
+        infos.set(missionAutomationID(item.scheduleID), Schema.decodeUnknownSync(Automation.Info)({ id: missionAutomationID(item.scheduleID),
+          sessionID: item.sessionID, name: item.name, projectID: "project", directory, trigger: item.when, tz: "UTC", status: "active", runCount: 0,
+          nextDueAt: item.role === "principal" ? firingDueAt : at + 900_000, action: { type: "code", code: MISSION_WAKE_CODE }, time: { created: at, updated: at } }))
+        sessions.set(item.sessionID, Schema.decodeUnknownSync(Session.Info)({ id: item.sessionID, projectID: "project",
+          location: { directory }, model: NATIVE_SCHEDULE_CARRIER_MODEL, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          time: { created: at, updated: at }, metadata: { [NATIVE_SCHEDULE_CARRIER_MARKER]: { missionID: "wake_missing_reused", timeGeneration: 1, role: item.role, slot: 0 } } }))
+      }
+      const beforeSessions = sessions.size
+      let wakeDoc = await owner!.create("wake_missing_reused", { ...configuration, coordinatorSessionID: "ses_deleted_wake_reused" }, at, current)
+      const principal = wakeCalendars[0]
+      wakeDoc = await owner!.change(wakeDoc.id, wakeDoc.revision, current, next => {
+        next.calendarOwner = { ...doc.calendarOwner!, installation, slots: wakeDescriptors }
+        changes.play(next, "play_wake_missing", at, [])
+        changes.synchronized(next, "play_wake_missing", wakeCalendars)
+        changes.prepareWake(next, { scheduleID: principal.scheduleID, run: 1, messageID: `msg_${principal.scheduleID}_1`, dueAt: firingDueAt })
+      })
+      assert.equal(await invoke(runtime => runtime.wake({
+        ...entry,
+        missionID: wakeDoc.id,
+        wake: { missionID: wakeDoc.id, generation: 1, scheduleID: principal.scheduleID, sessionID: principal.sessionID,
+          run: 1, messageID: `msg_${principal.scheduleID}_1`, dueAt: firingDueAt },
+      })), "settled")
+      wakeDoc = await owner!.read(wakeDoc.id) as MissionDocument
+      assert.equal(wakeDoc.pending, null)
+      assert.equal(wakeDoc.blocked, "failed")
+      assert.equal(wakeDoc.launchedCount, 0)
+      assert.equal(wakeDoc.calendars[0].highWater, 1)
+      assert.equal(wakeDoc.calendars[0].pendingWake, null)
+      assert.equal(wakeDoc.calendars[0].wakePreparing, null)
+      assert.equal(wakeDoc.fanIn?.completed, true)
+      assert.equal(projectMissionDocument(wakeDoc).edit.structural, true)
+      const actions = missionScheduleAvailableActions(wakeDoc)
+      assert.ok(actions.includes("configure"))
+      assert.ok(actions.includes("resume"))
+      assert.equal(sends, beforeSends)
+      assert.equal(sessions.size, beforeSessions)
+    })
+  } finally { db.close() }
 })

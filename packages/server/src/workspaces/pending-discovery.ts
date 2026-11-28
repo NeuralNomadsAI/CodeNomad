@@ -7,6 +7,7 @@ type Compaction = { active: boolean; created: number; sequence?: number }
 type State = {
   compactions: Map<string, Compaction>
   settlements: Map<string, number>
+  warmBootstraps: Set<string>
   loadedOnly?: boolean
   checkedAt: number
   checking?: Promise<void>
@@ -15,7 +16,7 @@ const states = new WeakMap<ServiceConnection, State>()
 const stateFor = (connection: ServiceConnection) => {
   let state = states.get(connection)
   if (!state) {
-    state = { compactions: new Map(), settlements: new Map(), checkedAt: Date.now() }
+    state = { compactions: new Map(), settlements: new Map(), warmBootstraps: new Set(), checkedAt: Date.now() }
     states.set(connection, state)
   }
   return state
@@ -44,8 +45,27 @@ export function carryPendingCompactions(previous: ServiceConnection, next: Servi
   // Capability and settlement grants are deliberately not carried across connections.
 }
 
-export function markLoadedPendingSupported(connection: ServiceConnection, supported: boolean): void {
-  stateFor(connection).loadedOnly = supported
+export function markLoadedPendingSupported(connection: ServiceConnection, supported: boolean, bootstrapDirectory?: string): void {
+  const state = stateFor(connection)
+  state.loadedOnly = supported
+  if (!supported) {
+    state.warmBootstraps.clear()
+    return
+  }
+  if (!bootstrapDirectory) return
+  if (state.warmBootstraps.size >= 128 && !state.warmBootstraps.has(bootstrapDirectory)) {
+    state.warmBootstraps.delete(state.warmBootstraps.values().next().value!)
+  }
+  state.warmBootstraps.add(bootstrapDirectory)
+}
+
+export function isLoadedPendingWarm(connection: ServiceConnection, bootstrapDirectory: string): boolean {
+  const state = states.get(connection)
+  return Boolean(state?.loadedOnly === true && state.warmBootstraps.has(bootstrapDirectory))
+}
+
+export function clearLoadedPendingWarm(connection: ServiceConnection, bootstrapDirectory: string): void {
+  states.get(connection)?.warmBootstraps.delete(bootstrapDirectory)
 }
 
 export function grantPendingReconciliation(connection: ServiceConnection, workspaceId: string, directory: string): void {

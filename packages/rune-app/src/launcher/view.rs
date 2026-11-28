@@ -29,6 +29,7 @@ pub fn view(s: &State) -> El {
                 literal_field(&l.address)
                     .disabled(l.authentication_required)
                     .label(t("rune.server"))
+                    .input_mode(rune::InputMode::Url)
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Address))
                     .build(&field_kit(layout::dark()))
                     .key("server-address"),
@@ -38,6 +39,7 @@ pub fn view(s: &State) -> El {
                 literal_field(&l.password)
                     .label(t("authRecovery.password"))
                     .secure()
+                    .autofill(rune::Autofill::CurrentPassword)
                     .on_edit(crate::screen::edit(&scope, crate::screen::Editor::Password))
                     .on_submit(crate::screen::action_tx(&scope, launcher::connect))
                     .build(&field_kit(layout::dark()))

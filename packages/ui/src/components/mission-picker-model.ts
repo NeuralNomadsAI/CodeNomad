@@ -1,4 +1,3 @@
-import type { RecurrenceSchedule } from "../stores/mission-recurrence"
 import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 
 /** Colour carries attention; the waiting underline and pause/warning shapes
@@ -6,8 +5,10 @@ import type { UnifiedMissionSchedule } from "../stores/mission-schedules"
 export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "waiting" | "unconfirmed" | "idle"
 
 export interface MissionPickerEntry {
-  /** `mission:<id>` or `schedule:<id>`. */
+  /** `mission:<id>` or `scheduled:<id>`. */
   key: string
+  /** Latest real activity (epoch ms), never a future wake; the shared list is ordered by it. */
+  activityAt: number
   title: string
   /** Full localized state for tooltips and screen readers. */
   status: string
@@ -17,6 +18,8 @@ export interface MissionPickerEntry {
   childActivity?: "permission" | "working" | "idle"
   /** A Mission whose plan holds no task: like a session without children, no chevron. */
   leaf?: boolean
+  /** A programmed Mission: an ordinary row with the recurring icon. */
+  recurring?: boolean
 }
 
 /** A one-time Mission's own state from native requests and observed actor activity:
@@ -45,7 +48,7 @@ interface ScheduleMarkFacts {
   state: string; prepared: boolean; uncertain: boolean; interrupted: boolean
   pending: boolean; waiting: boolean; outcome?: string
 }
-/** Both document adapters use the same priority, including Pause over pending work.
+/** Pause wins over pending work.
  * Only a positive native observation can supply waiting or working. */
 function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, seen: boolean): MissionMark {
   if (openRequests) return "permission"
@@ -58,18 +61,6 @@ function projectScheduleMark(facts: ScheduleMarkFacts, openRequests: number, see
   if (facts.outcome === "failed") return "interrupted"
   if (facts.outcome === "completed" && !seen) return "done"
   return facts.waiting ? "waiting" : "idle"
-}
-
-export function scheduleMark(schedule: RecurrenceSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
-  return projectScheduleMark({ state: schedule.state, prepared: false,
-    interrupted: schedule.state === "interrupted" || schedule.state === "running" && !schedule.pending
-      && schedule.latestResult?.outcome === "failed",
-    uncertain: !fresh || schedule.controls.some(control => !control.controlsComplete) || Boolean(schedule.lastError)
-      || schedule.state !== "paused" && (schedule.pending?.status === "uncertain"
-      || schedule.state === "running" && !schedule.pending && !(schedule.nextDueAt !== null && schedule.nextDueAt > now)),
-    pending: schedule.state !== "paused" && Boolean(schedule.pending),
-    waiting: schedule.state === "running" && schedule.nextDueAt !== null && schedule.nextDueAt > now,
-    outcome: schedule.latestResult?.outcome }, openRequests, seen)
 }
 
 export function unifiedScheduleMark(doc: UnifiedMissionSchedule, openRequests = 0, seen = true, fresh = true, now = Date.now()): MissionMark {
@@ -92,6 +83,18 @@ export function missionMarkStateKey(mark: MissionMark): string | undefined {
   return mark === "waiting" ? "missionsPanel.state.waiting" : mark === "done" ? "missionsPanel.state.unreadSuccess"
     : mark === "unconfirmed" ? "missionsPanel.state.unconfirmed" : mark === "prepared" ? "missions.control.run.prepared"
     : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
+}
+
+// A running passage carries no progress time in the schedule data: it sorts first.
+const RUNNING = Number.MAX_SAFE_INTEGER
+
+export function unifiedScheduleActivityAt(doc: UnifiedMissionSchedule): number {
+  return doc.pendingPassage ? RUNNING : Math.max(doc.latestResult?.settledAt ?? 0, doc.firstPlayedAt ?? 0, doc.createdAt)
+}
+
+/** One list for every kind, latest activity first; the key breaks ties stably. */
+export function sortMissionPickerEntries(entries: MissionPickerEntry[]): MissionPickerEntry[] {
+  return entries.sort((a, b) => b.activityAt - a.activityAt || a.key.localeCompare(b.key))
 }
 
 export function filterMissionPickerEntries(entries: readonly MissionPickerEntry[], query: string): MissionPickerEntry[] {

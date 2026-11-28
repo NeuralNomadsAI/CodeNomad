@@ -159,6 +159,30 @@ test("native deletion conflicts are input-bound refusals and exact tombstone rep
   }
 })
 
+test("check racing with compaction returns exact replay for recorded checks and pre-write refusal for fresh checks", async () => {
+  const tombstone = {
+    id: "deleted_schedule", deletedAt: 100, requestID: "delete_original", expectedRevision: 5, deleteManagedSessions: false,
+    checks: [{ requestID: "check_recorded", expectedRevision: 6 }],
+  }
+  const execute = (request: object) => Effect.runPromise(controlNativeMissionSchedule({} as never, {
+    request, store: { read: async () => structuredClone(tombstone) }, current: () => true,
+  } as never, undefined, Effect.runPromise).pipe(Effect.scoped))
+  const replayed = await execute({ missionID: tombstone.id, requestID: "check_recorded", expectedRevision: 6, action: "check" as const, transport: { sessionID: "human_cookie" } })
+  assert.ok("deleted" in replayed && replayed.deleted)
+  assert.equal(replayed.pending, false)
+  assert.deepEqual("checkReceipt" in replayed ? replayed.checkReceipt : undefined, { id: tombstone.id, requestID: "check_recorded", expectedRevision: 6, action: "check" })
+  for (const fresh of [
+    { missionID: tombstone.id, requestID: "check_fresh_after_compact", expectedRevision: 6, action: "check" as const, transport: { sessionID: "human_cookie" } },
+    { missionID: tombstone.id, requestID: "check_recorded", expectedRevision: 7, action: "check" as const, transport: { sessionID: "human_cookie" } },
+  ]) {
+    const refused = await execute(fresh)
+    assert.ok("refusal" in refused)
+    assert.equal(refused.pending, false)
+    assert.deepEqual(refused.refusal, { missionID: tombstone.id, requestID: fresh.requestID, action: "check",
+      expectedRevision: fresh.expectedRevision, payloadDigest: missionSchedulePayloadDigest({}), reason: "control-conflict" })
+  }
+})
+
 test("native manual passage identities refuse changed revision or another action before native effects", async t => {
   const f = await ownerFixture(t), document = await f.read()
   const snapshot = { ...document, pending: { origin: { kind: "manual", requestID: "manual_original" }, manualExpectedRevision: 5 } }

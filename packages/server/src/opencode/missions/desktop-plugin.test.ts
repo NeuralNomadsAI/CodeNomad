@@ -55,13 +55,14 @@ test("presence-owned setup registers one-time Missions without touching the reti
     } as never)
     assert.equal(typeof cleanup, "function")
     try {
-      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete"])
+      assert.deepEqual(tools, ["inspect", "delegate", "revise", "report", "briefing", "interrupt", "prepare", "schedule", "settings", "control", "configure", "delete", "mission_calendar_run"])
       requestRange = range
       assert.deepEqual((await snapshot!() as { missions: unknown[] }).missions, [])
       assert.ok(rangeReads > 0)
     } finally { await cleanup?.() }
     assert.deepEqual(touched.filter(key => key.startsWith(RETIRED)), [], "no retired namespace read, create or repair")
-    assert.ok(touched.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`) || key === MISSION_JOURNAL_STORAGE_PREFIX), touched.join(", "))
+    assert.ok(touched.every(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/`) || key === MISSION_JOURNAL_STORAGE_PREFIX
+      || key.startsWith("codenomad-missions/registered-v1/")), touched.join(", "))
     for (const [key, value] of old) assert.deepEqual(values.get(key), value)
     assert.equal([...values.keys()].filter(key => key.startsWith(RETIRED)).length, old.size, "nothing created under the old namespace")
   } finally { await rm(directory, { recursive: true, force: true }) }
@@ -181,5 +182,29 @@ test("passage authors use ordinary preparation and authored reads while their so
     assert.equal(event.tools.mission_delegate, undefined)
     assert.equal(event.tools.mission_report, undefined)
     assert.equal(event.tools.mission_interrupt, undefined)
+  } finally { await cleanup?.(); await rm(directory, { recursive: true, force: true }) }
+})
+
+test("the calendar tool accepts only an Automation run of a calendar carrier", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "opencode", "missions-calendar-caller-"))
+  const tools = new Map<string, any>(), registration = { dispose: async () => {} }, removed: string[] = []
+  const metadata = new Map<string, Record<string, unknown>>([["ses_plain", {}], ["ses_carrier", { "codenomad.mission-calendar": { version: 1 } }]])
+  const cleanup = await desktopPlugin(directory).setup({ location: { directory, project: { id: "project", canonical: directory } },
+    // Registered when the service stopped, but nothing is running: this activation stays unregistered and forgets the key.
+    storage: { get: async (key: string) => key.startsWith("codenomad-missions/registered-v1/") ? true : undefined, set: async () => assert.fail("No write"),
+      remove: async (key: string) => { removed.push(key) }, scan: async () => ({ entries: [] }) },
+    session: { get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "project", location: { directory }, metadata: metadata.get(sessionID) }),
+      hook: async () => registration },
+    rpc: { register: async () => assert.fail("No backend and no run: Missions stays unregistered") },
+    tool: { transform: async (callback: any) => { callback({ namespace() {}, add: (tool: any) => tools.set(tool.name, tool) }); return registration } },
+  } as never)
+  try {
+    const run = (sessionID: string, messageID: string) => tools.get("mission_calendar_run").execute({ objective: "Review", template: "custom" },
+      { sessionID, messageID, id: "call", progress: async () => {} })
+    assert.equal(removed.length, 1)
+    assert.match(removed[0]!, /^codenomad-missions\/registered-v1\//)
+    await assert.rejects(run("ses_plain", "msg_aut_01ABC_1"), /^Error: mission-calendar-caller$/)
+    await assert.rejects(run("ses_carrier", "msg_typed_by_a_model"), /^Error: mission-calendar-caller$/)
+    await assert.rejects(run("ses_carrier", "msg_aut_01ABC_1_send"), /^Error: mission-calendar-caller$/)
   } finally { await cleanup?.(); await rm(directory, { recursive: true, force: true }) }
 })

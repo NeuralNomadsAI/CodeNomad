@@ -5,8 +5,6 @@ import { Form } from "@opencode/schema/form"
 import { Permission } from "@opencode/schema/permission"
 import { Shell } from "@opencode/schema/shell"
 import { canonicalAuthority } from "../../missions/authority-protocol"
-import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
-import { stableToken } from "../../missions/journal"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { nativeMessageDataSQL } from "./native-message-data"
@@ -42,8 +40,6 @@ export type PassageSessionObservation = {
 }
 export interface NativePassageObservation {
   assertCurrent(): true
-  /** Synchronous fence only for native admission, which runs outside a SQL transaction. */
-  assertScheduleCurrent(document: RecurrenceDocument, dispatch: boolean): true
   exists(sessionID: string): Promise<boolean>
   session(sessionID: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation>
   children(sessionID: string): Promise<string[]>
@@ -52,24 +48,6 @@ export interface NativePassageObservation {
 }
 
 const serviceStartedAt = Date.now() - process.uptime() * 1000
-
-/** Read-only recognition of the private terminal/background projections before
- * admitting work. Zero-row queries validate columns/functions without a scan. */
-export const qualifyNativePassageStorage = Effect.fn("missions.qualifyPassageStorage")(function* () {
-  const found = yield* Effect.serviceOption(databaseTag)
-  const database = Option.isSome(found) ? found.value as { db?: { $client?: SqlClient.SqlClient } } : undefined
-  if (!Predicate.isFunction(database?.db?.$client?.unsafe)) throw new Error("Native passage storage unavailable")
-  for (const sql of [
-    "SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message WHERE 0",
-    "SELECT message_id,session_id,ordinal,type,data FROM session_part WHERE 0",
-    "SELECT json_extract(value,'$.recovery.kind') AS kind FROM kv WHERE 0",
-  ]) {
-    const read = database.db!.$client!.unsafe(sql, []).withoutTransform
-    if (!Effect.isEffect(read)) throw new Error("Native passage storage contract unavailable")
-    const result = yield* read
-    if (!Array.isArray(result) || result.length) throw new Error("Native passage storage recognition incomplete")
-  }
-})
 
 /** Read-only native contracts, not signed authority or event replay. Unknown
  * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
@@ -95,8 +73,6 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
     return value
   }
   const running = sessions.active as NativeEffect
-  const sync = (sql: string, params: readonly unknown[]) => Effect.runSync(database.db!.$client!.unsafe(sql, params)
-    .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
   const assertCurrent = (): true => {
     if (Context.get(graph, databaseTag) !== database || Context.get(graph, locationTag) !== location)
       throw new Error("Native passage Location changed")
@@ -117,17 +93,6 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       }
       guard()
       return guard
-    },
-    assertScheduleCurrent: (document: RecurrenceDocument, dispatch: boolean): true => {
-      assertCurrent()
-      const key = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${document.projectID}\0${document.projectCanonical}`, 24)}/${document.id}`
-      const prefix = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
-      const raw = sync("SELECT value FROM kv WHERE key=?", [`${prefix}${key}`])[0]?.value
-      if (typeof raw !== "string") throw new Error("Passage schedule unavailable")
-      const fresh = parseRecurrenceDocument(JSON.parse(raw), document.projectID, document.projectCanonical, document.id)
-      if (fresh.pending?.passage.id !== document.pending?.passage.id || !samePassageObservation(fresh.config, document.config)
-        || dispatch && !recurrenceDispatchAllowed(fresh)) throw new Error("Passage schedule changed")
-      return true
     },
     exists: async (id: string) => { assertCurrent(); return (await query("SELECT id FROM session_v2 WHERE id=?", [id])).length === 1 },
     session: async (id: string, messageID?: string, baseline?: CoordinatorBaseline[number], owner?: CoordinatorInputOwner): Promise<PassageSessionObservation> => {

@@ -7,6 +7,7 @@ import { useConfig, type VisibilityPreference } from "../../stores/preferences"
 import { getMessageContentIcon } from "../message-content-icons"
 import {
   TRANSCRIPT_PRESETS,
+  transcriptCustomAvailable,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -23,6 +24,7 @@ export const ChatSettingsSection: Component = () => {
 
   const visibilityRows = createMemo(() => transcriptVisibilityRows(t))
   const currentPreset = createMemo(() => transcriptPreset(preferences()))
+  const presets = createMemo(() => transcriptCustomAvailable(preferences()) ? [...TRANSCRIPT_PRESETS, "custom" as const] : TRANSCRIPT_PRESETS)
 
   const setVisibilityRowMode = (row: VisibilityRow, mode: VisibilityPreference) => {
     updatePreferences(transcriptVisibilityPatch(preferences(), row, mode))
@@ -38,14 +40,14 @@ export const ChatSettingsSection: Component = () => {
         </div>
 
         <div class="settings-expansion-presets" aria-label={t("settings.behavior.expansionPresets.ariaLabel")}>
-          <For each={TRANSCRIPT_PRESETS}>
+          <For each={presets()}>
             {(preset) => (
               <button
                 type="button"
                 class="settings-expansion-preset"
                 data-selected={currentPreset() === preset ? "true" : "false"}
                 aria-pressed={currentPreset() === preset}
-                onClick={() => updatePreferences(transcriptPresetPatch(preset))}
+                onClick={() => { if (preset !== "custom" || currentPreset() !== "custom") updatePreferences(transcriptPresetPatch(preset, preferences())) }}
               >
                 <span class="settings-expansion-preset-title">{t(`settings.behavior.expansionPreset.${preset}.title`)}</span>
               </button>

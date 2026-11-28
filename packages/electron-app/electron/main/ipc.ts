@@ -3,7 +3,7 @@ import fs from "node:fs"
 import { setupDialogIPC } from "./dialog-ipc"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
-import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
+import { openLocalPath, openWorkspaceTarget, type LocalPathResult, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
@@ -184,6 +184,15 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       openPath: (path) => shell.openPath(path), revealPath: (path) => shell.showItemInFolder(path),
     })
     return { ok: true }
+  })
+
+  ipcMain.handle("workspace:openLocalPath", async (event, payload: { path?: unknown; keep?: unknown }): Promise<{ result: LocalPathResult }> => {
+    local(event)
+    const { path, keep } = payload ?? {}
+    if (typeof path !== "string" || (keep !== "none" && keep !== "text" && keep !== "files")) throw new Error("Invalid local path request")
+    return { result: await openLocalPath(path, keep, {
+      openPath: (target) => shell.openPath(target), revealPath: (target) => shell.showItemInFolder(target),
+    }) }
   })
 
   ipcMain.handle("workspace:setMenuEnabled", (event, enabled: unknown, viewState: unknown): { ok: true } => {

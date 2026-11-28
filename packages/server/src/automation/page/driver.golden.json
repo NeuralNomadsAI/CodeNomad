@@ -12,6 +12,14 @@
       "plain": "00dc80a3a639c149c0c70802ceb70e09a25d052f07ab004b1bcdc797f6502452",
       "marked": "16fc863adeeb35e15870bc1196a7ec044b2092ab8743be1c19afefa67f2e3102"
     },
+    "select-values": {
+      "plain": "4242559206951f1edbcf742f196ddcb02a81a126b38d22b174b76df29bf735be",
+      "marked": "9bcf6382a3577a45e6ad7ae963e54bd2e03a9f5b2412e121c0f40629b660ffd8"
+    },
+    "file-input": {
+      "plain": "0552888aab19ff766ec73671730b4831c2a641647ae7e57a267bf934b65e0d99",
+      "marked": "bc9641ace42eee2bb1f0488d28eb40f48390b2c29039dba011b987d1c49ba4a0"
+    },
     "focus": {
       "plain": "6fb37154d05f9387248ef22993ebcb95a850c49b561a5627ebaf36ad5854228f",
       "marked": "eb92152919a890f84e4073024c27ef00bbfd268f532208fcaa839f9bc6cc6683"
@@ -51,6 +59,14 @@
     "contains": {
       "plain": "5d62cfc6187d07d0a964a1eb3db5f6a49a84f375c437d3f606d3e7b07460ed80",
       "marked": "7c9d1e411468befe4839f1c066446cc828617a04f0e3c8f7c4db01b2f74b5f8a"
+    },
+    "checked-state": {
+      "plain": "cd5885823746ee36acfc9a1eb08bf2a7223418a296e35e8f255c4bf9e0477a82",
+      "marked": "63baecbbc759c1935f0cef3933d6571493eda9f5fded84b2216caa854c02d779"
+    },
+    "body-text-includes": {
+      "plain": "b7d89286ec60de695b9e6f3808d3cd474495b3c7ca3fe27ac027ab8a933cd4de",
+      "marked": "3377a702eef3862f24463c354683d6c48f06d4359b6f17ecede5e79809f65d2a"
     }
   },
   "globals": {

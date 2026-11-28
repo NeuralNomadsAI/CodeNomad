@@ -165,7 +165,10 @@ fn a_detached_save_updates_the_fingerprint_of_edits_made_during_the_put() {
                 .await;
             poll(&mut editor, |ui| ui.reader.receipt().1 && !ui.reader.busy()).await;
             assert_eq!(
-                editor.document.error() == Some(Error::Conflict(None)),
+                editor.document.error()
+                    == Some(Error::Conflict(
+                        codenomad_client::files::WriteConflict::ChangedOnDisk
+                    )),
                 conflict
             );
             assert!(editor.document.dirty());
@@ -445,7 +448,12 @@ fn overwrite_and_discard_decisions_are_scoped_and_writes_require_versions() {
         assert_eq!(put.body["contents"], "c");
         put.reply(409, serde_json::json!({})).await;
         poll(&mut ui, |ui| !ui.document.pending()).await;
-        assert_eq!(ui.document.error(), Some(Error::Conflict(None)));
+        assert_eq!(
+            ui.document.error(),
+            Some(Error::Conflict(
+                codenomad_client::files::WriteConflict::Other
+            ))
+        );
         http.quiet().await;
         ui.refresh_document(ui.document.scope());
         let discard = ui.document.confirmation().unwrap();
@@ -496,6 +504,54 @@ fn lost_write_acknowledgement_reconciles_before_an_explicit_new_save() {
         put.reply(204, serde_json::Value::Null).await;
         poll(&mut ui, |ui| !ui.document.pending()).await;
         assert!(!ui.document.dirty());
+        http.quiet().await;
+    });
+}
+
+#[test]
+fn typed_put_refusals_preserve_their_specific_save_error_variants() {
+    platform::block_on(async {
+        let http = Http::new().await;
+        let mut ui = http.ui(Store::default(), "tab-typed-put");
+        open(&mut ui, &http, "first.txt", "YQ==", "a").await;
+        edit(&mut ui, "b");
+        for (status, body, expected) in [
+            (
+                413,
+                serde_json::json!({"error": "Too large"}),
+                Error::TooLarge,
+            ),
+            (
+                403,
+                serde_json::json!({"error": "Forbidden"}),
+                Error::AccessDenied,
+            ),
+            (
+                401,
+                serde_json::json!({"error": "Unauthorized"}),
+                Error::Unauthorized,
+            ),
+            (
+                404,
+                serde_json::json!({"error": "Workspace not found"}),
+                Error::WorkspaceUnavailable,
+            ),
+            (
+                404,
+                serde_json::json!({"error": "Missing"}),
+                Error::NotFound,
+            ),
+        ] {
+            save(&mut ui);
+            request(&mut ui, &http, "GET", "first.txt")
+                .await
+                .preview("first.txt", "YQ==", Some("v2"))
+                .await;
+            let put = request(&mut ui, &http, "PUT", "first.txt").await;
+            put.reply(status, body).await;
+            poll(&mut ui, |ui| !ui.document.pending()).await;
+            assert_eq!(ui.document.error(), Some(expected));
+        }
         http.quiet().await;
     });
 }

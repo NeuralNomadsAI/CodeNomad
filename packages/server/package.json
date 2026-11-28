@@ -1,6 +1,6 @@
 {
   "name": "@neuralnomads/codenomad",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "CodeNomad Server",
   "license": "MIT",
   "author": {
@@ -34,8 +34,8 @@
     "@fastify/cors": "^11.4.1",
     "@fastify/reply-from": "^12.8.1",
     "@fastify/static": "^10.1.10",
-    "@opencode/client": "2.3.2",
-    "@opencode/schema": "2.3.2",
+    "@opencode/client": "2.4.1",
+    "@opencode/schema": "2.4.1",
     "commander": "^12.1.0",
     "dom-accessibility-api": "0.7.1",
     "effect": "4.1.0",
@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@codenomad/remote-tunnel": "file:../remote-tunnel",
-    "@opencode/plugin": "2.3.2",
+    "@opencode/plugin": "2.4.1",
     "@types/node-forge": "^1.3.14",
     "@types/npm-package-arg": "^6.1.4",
     "@types/ws": "^8.18.2",

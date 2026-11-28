@@ -22,11 +22,17 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 per-version sections here.
 
 Positive shared-service test fixtures declare `MINIMUM_OPENCODE_VERSION` when
-serving the pinned client contract. Version-refusal scenarios supply their
-explicit incompatible identity.
+serving the pinned client contract. Test runtime versions come from
+`opencode/runtime-version-fixture.ts` (`MINIMUM`, `RECOMMENDED`, `newerPatch()`,
+`NEXT_MINOR`, `NEXT_MAJOR`, `BELOW_MINIMUM`), never a literal near the supported
+range, so changing the minimum edits only `runtime-support.ts`. Version-refusal
+scenarios supply their explicit incompatible identity.
 
-Minimum and recommended runtime **2.3.2** (`runtime-support.ts`), with **2.3.2**
-client/schema/plugin pins and the matching `effect` **4.1.0**. CodeNomad
+Minimum runtime **2.4.0** and recommended **2.4.1** (`runtime-support.ts`), with **2.4.1**
+client/schema/plugin pins and the matching `effect` **4.1.0**. The minimum carries the
+browser tools' permission hook: 2.3 accepts the same `experimental.browser` attachment
+(`BROWSER_AUTOMATION.md`), but its blanket session grant overrides a configured
+`browser` deny. CodeNomad
 qualifies background subagent delivery: every subagent call returns at once
 (`metadata.status: "running"`) and the child reports to its parent through
 synthetic `<subagent sessionID state …>` or `<background-result kind="subagent" sessionID state …>`
@@ -53,10 +59,10 @@ environment or the replay shape give a concrete reason. OpenCode reads older
 stored data.
 
 Missions schedules qualify the consumed Automation API, effective automations
-setting and retained plugin/provider bundle independently of general runtime admission.
-The setting is top-level `automations` (on by default, highest document wins) or, on
-runtimes whose flag resolver still lists it, `experimental.automations`. On top-level
-runtimes `missions/native-automations-setting.ts` keeps Missions schedules off for
+setting and retained runtime bundle independently of general runtime admission.
+The setting is top-level `automations` (on by default, highest document wins); a runtime
+whose schema lacks it, or whose flag resolver lists `automations`, has no schedule
+capability. `missions/native-automations-setting.ts` keeps Missions schedules off for
 `-automations` or `-schedules` in `OPENCODE_FLAGS`, whatever the documents say, and for a
 saved legacy OFF in local JSON/JSONC documents or inline config (decoded with OpenCode's
 substitution) unless a top-level choice in a higher document decides;
@@ -66,8 +72,7 @@ and [transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md). Recognition uses the
 consumed capabilities, including on future versions. Schedule delivery qualification
 uses the minimum/latest CI matrix, including cold scheduled passage admission with
 the retained product bundle and CodeNomad backend closed; keep results in PR/CI evidence.
-Context hooks retain native message IDs; Missions consumes the transport's
-[native read/authority contract](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md#context-read-authority-and-bounds).
+
 
 GPT-6.2 on Responses routes uses OpenCode's cacheable developer-message prefix
 for both ordinary steps and provider compaction. CodeNomad leaves prompt
@@ -117,6 +122,29 @@ owning their Location, so the UI applies `changed` directly and reads only on
 demand, on reconnect and after its own commands ([refresh rules](CACHE_REFRESH_CONVENTIONS.md)).
 `scripts/test-session-goal-native.mjs` (private daemon, local provider whose plain
 reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI matrix.
+
+### Session automations (`/automation`)
+
+The Status tab's automations block reads and controls a Session's native automations
+through `GET /api/workspaces/:id/sessions/:sessionId/automations`,
+`POST .../automations/:automationId/{pause,resume}` and
+`DELETE .../automations/:automationId` (`server/routes/session-automations.ts`,
+`opencode/automation-contract.ts`). The route resolves the Session, maps only native
+`SessionNotFoundError` to 404 (other lookup failures answer `unavailable`/503), checks
+workspace ownership of the Session's Location and refuses Mission schedule/watchdog
+carriers (`assertOrdinaryMissionScheduleSession`). Reads call OpenCode's
+`GET /api/experimental/automation?sessionID=...` with a 4 MiB response budget,
+validate each row's `sessionID`, `projectID` and independent workspace ownership of its
+saved `directory` (preserving automations created before moving the Session across
+owned worktrees of the same project), skip unreadable or unrecognized rows safely,
+project only bounded display fields and revalidate session/workspace authority after the
+last async check before answering. `404`/`405`/`501` answer `unsupported`; transport
+errors or malformed envelopes answer `unavailable`; the UI hides the block for both.
+Mutations inspect the target automation first, verify Session, project and directory
+ownership, revalidate the Session and dispatch `POST .../pause`, `POST .../resume` or
+`DELETE ...` in the automation's verified directory, fencing publication with a final
+authority check and flagging genuine upstream error messages (`upstream: true`) so
+fixed route errors localize on the client.
 
 ### Contract notes
 
@@ -251,9 +279,13 @@ capability is deliberately never probed during an observed compaction.
 Candidate traversal constructs no cold Locations; native HTTP middleware may
 warm or rebuild the single bootstrap root, and root eviction or a config rebuild
 constructs it again. Pending recovery waits for catalogue activation at that
-owned root, then rechecks ownership and compaction admission and dispatches once.
-The authenticated, validated snapshot itself establishes coverage. Snapshots
-can go stale after leases release, so per-kind
+owned root (within a 15-second activation budget inside the 30-second route
+deadline) on a cold bootstrap, then rechecks ownership and compaction admission
+and dispatches once. Once a connection proves the snapshot works at that
+bootstrap root, subsequent batches dispatch directly and re-activate once on a
+400 `rpc.unavailable`/`rpc.method_not_found` response before concluding
+unsupported. The authenticated, validated snapshot itself establishes coverage.
+Snapshots can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ### Fixed pruning broker admission
@@ -297,11 +329,11 @@ integrity repair and WSL translation use the shared lifecycle. Build it with
 operations, safe projections, preference-following registration, useful full errors and an uncertain
 write response with one dispatch. Never automatically replay a memory mutation.
 
-All managed bundle payloads (automation, memory, session-pruning, Missions runtime and
-Missions carrier provider) share `opencode/desktop-plugin-artifact.ts` for digest
-verification, atomic repair and bounded lock retries. Provisioning verifies both
-Missions payloads before publishing its shim or lease. Failures flow through the
-shared provisioning error deduplication and pending-request recovery notice.
+All managed bundle payloads (automation, memory, session-pruning and Missions)
+share `opencode/desktop-plugin-artifact.ts` for digest verification, atomic repair
+and bounded lock retries. Provisioning verifies the runtime before publishing its
+shim or lease. Failures use the shared provisioning error deduplication and
+pending-request recovery notice.
 
 Artifact identities use exact BigInt device/inode values. When Windows pathname
 stats report device zero, verification opens the name independently and compares
@@ -324,4 +356,11 @@ Verification errors identify the failed file, identity, size or digest check.
 - The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. When an ownership lookup still fails after its retry, the relay evicts that cache entry and pulses that recipient's status alone (`error` with `event routing failed`, then `connected`), so its clients run their reconnect reconciliation (one pass per instance, with later requests coalesced into one trailing pass, `ui/src/lib/trailing-resync.ts`). The same pulse answers a session event whose location lookup still fails after its retry or returns an unreadable location (the failure is cached 2 s from its retry's settlement, like a resolved location; it reaches the session's recent recipients, or every recipient when none is known, and the event itself is never broadcast), and a refusal for a recipient that already received the session's events without an intervening move or deletion (a bounded per-session recipient record, kept across ownership invalidation, released by stop/error). A location a recipient never owned stays a silent rejection. Like native location subscriptions, `session.moved` reaches the owners of its envelope (old) location and of its destination, plus the session's recorded recipients, so the old project learns that the session left even when the envelope names only the destination. Pulses are leading and trailing, at most every 5 s, doubling to 60 s while failures persist. Each reconciliation runs every read even when one fails, always reloads the active transcript, and a failed pass retries after 1, 2, 4, 8 and 16 s; instance removal cancels the retry. Never fail the shared subscription for one recipient's lookup: that resyncs every instance. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
 - Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Each desktop runtime builder emits `// CodeNomad plugin IDs: ["..."]` as the payload's first line with its actual exported IDs. The content-addressed digest covers this descriptor; [plugin controls](PLUGIN_CONTROLS.md#codenomad-managed-plugins) use it to identify installed plugins omitted from native runtime inventory. Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
 - The Design agent and skills exist once, as native OpenCode files in `packages/server/src/opencode/design/opencode/` (`agents/design.md`, `skills/design-*/SKILL.md`, `NOTICE.md`, `LICENSE-APACHE-2.0.txt`), which also work unchanged when copied into a project's `.opencode/` or the global OpenCode configuration folder; the public help links this folder for that use (`docs/help/<locale>/extensions.md#design-without-codenomad`), so moving it means updating those links. Each file keeps its licence notice in frontmatter comments and its references inside its own body: never add sibling files, CLI or form protocols, URLs or brand names (`design/content.test.ts` checks them, with the attribution of each adapted file). `design/content.ts` embeds the files as text through the build's `.md` loader and parses them strictly: bundles call `loadDesignContent()`; `tsx` cannot import `.md`, so checkout code and tests read the files and call `parseDesignContent()`. The agent prompt starts with `codenomad-design-content: <DESIGN_CONTENT_VERSION>`; raise the version whenever the skill, direction or recipe identifiers change. Validate content changes with that test, the self-contained bundle test in `native-plugin-build.test.mjs` and `scripts/test-design-content-native.mjs`. That native test enables project discovery, which walks every ancestor directory: outside CI it refuses to run under the user's home unless `CODENOMAD_NATIVE_FIXTURE_PARENT` names a parent outside it.
-- Missions provisioning installs `provider.mjs` as a separate content-addressed local provider beside its content-addressed runtime. The managed shim supplies native absolute `{provider:{file,sha256},runtime:{file,sha256}}` paths as the factory's second argument; WSL translation applies only to backend filesystem I/O. Lease release and upgrades retain both payloads for native carrier recovery. Registration paths are acquired during arming in the current native RPC graph by `missions/native-schedule-installation.ts`, from the own-process record under native Global state and current ServerInfo URLs, then authenticated with exact-file public Service discovery.
+- Missions provisioning installs its content-addressed runtime and passes native absolute
+  `{runtime:{file,sha256}}` as the shim factory's second argument. Managed-entry
+  recognition accepts a persisted `provider` descriptor and ignores it. WSL translation
+  applies only to backend filesystem I/O. Lease release and upgrades retain installed
+  runtime payloads. During arming, `missions/native-schedule-installation.ts` resolves the
+  own-process registration from native Global state and current ServerInfo URLs, then
+  authenticates it with exact-file public Service discovery. Only Code Mode calendar rows
+  qualify for admission; an owned prompt row permits Pause, Stop and Delete.

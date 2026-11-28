@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
 import {readFile} from 'node:fs/promises'
 import {test} from 'node:test'
-import {shell, themeCss} from './web-shell.mjs'
+import {pairShell, shell, themeCss} from './web-shell.mjs'
 
-test('HTML escapes catalogue values and preserves browser zoom', () => {
+test('HTML escapes catalogue values, enables viewport-fit=cover, and preserves browser zoom', () => {
   const html = shell({title: '<title>', failed: '"<error>', loading: '<loading>', retry: '<retry>'}, 'rtl')
   assert(html.includes('dir="rtl"'))
   assert(html.includes('&lt;title&gt;') && html.includes('&quot;&lt;error&gt;'))
+  assert(html.includes('content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"'))
   assert(!html.includes('user-scalable=no') && !html.includes('maximum-scale=1'))
+
+  const pairHtml = pairShell({title: '<pair>', heading: '<head>', guidance: '"guide"'}, '', '')
+  assert(pairHtml.includes('&lt;pair&gt;') && pairHtml.includes('&lt;head&gt;') && pairHtml.includes('&quot;guide&quot;'))
+  assert(pairHtml.includes('content="width=device-width,initial-scale=1,viewport-fit=cover"'))
+  assert(!pairHtml.includes('user-scalable=no') && !pairHtml.includes('maximum-scale=1'))
 })
 test('web boot theme uses both generated appearances and refuses CSS injection', async () => {
   const theme = JSON.parse(await readFile(new URL('../../crates/rune-theme-codenomad/assets/theme.json', import.meta.url), 'utf8'))

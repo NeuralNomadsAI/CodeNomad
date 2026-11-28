@@ -32,12 +32,11 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
       && type(fields(branch)[trigger], "string") && type(fields(branch).tz, "string")
       && includes(resolve(fields(branch).type).enum, trigger))
   })
-  const prompt = (schema: unknown, withTarget: boolean) => {
+  const code = (schema: unknown) => {
     const actions = resolve(schema).anyOf
-    return Array.isArray(actions) && actions.some((branch: unknown) => type(branch, "object") && required(branch, ["type", "prompt"])
-      && includes(resolve(fields(branch).type).enum, "prompt") && type(fields(branch).prompt, "string")
-      && (!withTarget || required(branch, ["to"]) && Array.isArray(resolve(fields(branch).to).anyOf)
-        && resolve(fields(branch).to).anyOf.some((target: unknown) => required(target, ["session"]) && type(fields(target).session, "string"))))
+    const branches = Array.isArray(actions) ? actions : [schema]
+    return branches.some((branch: unknown) => type(branch, "object") && required(branch, ["type", "code"])
+      && includes(resolve(fields(branch).type).enum, "code") && type(fields(branch).code, "string"))
   }
   const info = (schema: unknown) => {
     const properties = fields(schema)
@@ -47,17 +46,16 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
       && type(properties.nextDueAt, "number") && type(properties.expires, "number")
       && type(properties.status, "string") && ["active", "paused", "done"].every(status => includes(resolve(properties.status).enum, status))
       && type(properties.time, "object") && ["created", "updated"].every(key => type(fields(properties.time)[key], "number"))
-      && when(properties.trigger) && prompt(properties.action, true)
+      && when(properties.trigger) && code(properties.action)
   }
   const inputs = (schema: unknown) => {
     const properties = fields(schema)
     return type(schema, "object") && required(schema, ["name", "trigger", "action"])
       && type(properties.sessionID, "string") && type(properties.name, "string") && type(properties.expires, "string")
-      && when(properties.trigger) && prompt(properties.action, false)
+      && when(properties.trigger) && code(properties.action)
   }
-  // The on/off setting is top-level `automations`, or `experimental.automations` on runtimes that read that block.
-  const config = fields(document.components?.schemas?.["Config.InfoEncoded"])
-  let valid = type(config.automations, "boolean") || type(fields(config.experimental).automations, "boolean")
+  // The on/off setting is top-level `automations`.
+  let valid = type(fields(document.components?.schemas?.["Config.InfoEncoded"]).automations, "boolean")
   for (const [path, method, name] of routes) {
     const operation = document.paths[path][method]
     valid &&= operation.operationId === `experimental.automation.${name}`
@@ -91,6 +89,6 @@ export class NativeScheduleCapabilityReader {
     connection.assertCurrent()
     const flag = await readNativeScheduleFlag(connection, location)
     return { location: snapshot.location, api: nativeScheduleCapability(contract), enabled: flag.enabled,
-      provenance: flag.provenance, origin: nativeScheduleFlagOrigin(snapshot.entries, flag) }
+      provenance: flag.provenance, origin: nativeScheduleFlagOrigin(flag) }
   }
 }

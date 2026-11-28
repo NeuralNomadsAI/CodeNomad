@@ -152,6 +152,11 @@ impl Preferences {
         self.config.snapshot = Some(json!({ "settings": settings }));
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_config_doc(&mut self, doc: Value) {
+        self.config.snapshot = Some(doc);
+    }
+
     fn seen_drop(&self, client_id: &str) -> u64 {
         self.seen_drops
             .iter()

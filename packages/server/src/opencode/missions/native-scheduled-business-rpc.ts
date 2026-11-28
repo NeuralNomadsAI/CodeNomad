@@ -13,7 +13,7 @@ import { scheduledPassageOwner } from "./native-scheduled-passage-owner"
 import { requiresMissionCalendar } from "../../missions/launch-policy"
 import type { NativeDocumentBusiness } from "./desktop-plugin"
 import type { nativeInvocation } from "./native-invocation"
-import { assertNativeScheduleCarrierArtifacts, nativeScheduleDocumentKey, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
+import { assertNativeScheduleCarrierArtifacts, nativeScheduleDocumentKey, nativeScheduleRuntimeIdentity, type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS, NATIVE_SCHEDULE_TRANSPORT_RESPONSE_BYTES } from "./native-schedule-transport"
 import { assertNativeScheduleIncarnation, nativeScheduleIncarnationGuard, readNativeScheduleIncarnation, type NativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { acquireNativeScheduledPassageRuntime, isNativeScheduledPassageFamily, type NativeScheduledPassageRuntime } from "./native-scheduled-passage-runtime"
@@ -65,19 +65,24 @@ function json(value: unknown, request = true): unknown {
   return parsed
 }
 
-/** Public facade and exact KV only. Ordinary/daily sources do not discover or RPC. */
+/** Public facade and exact KV only. Ordinary sources do not discover or RPC. */
 async function source(ctx: Plugin.Context, sessionID: string, run: Run, current: () => true) {
-  let root: Effect.Success<ReturnType<typeof ctx.session.get>> | undefined
+  type SourceSession = Effect.Success<ReturnType<typeof ctx.session.get>>
+  const family: SourceSession[] = []
+  let root: SourceSession | undefined
   const owned = await isNativeScheduledPassageFamily(sessionID, async value => {
     current()
     const session = await run(Effect.suspend(() => { current(); return ctx.session.get({ sessionID: Session.ID.make(value) }) }))
     current()
-    if (session.projectID !== ctx.location.project.id || session.location.directory !== ctx.location.directory
-      || session.location.workspaceID !== ctx.location.workspaceID) throw new Error("Business source moved")
+    family.push(session)
     if (!session.parentID) root = session
     return session
   })
   if (!owned || !root) return undefined
+  for (const session of family) {
+    if (session.projectID !== ctx.location.project.id || session.location.directory !== ctx.location.directory
+      || session.location.workspaceID !== ctx.location.workspaceID) throw new Error("Business source moved")
+  }
   const marker = root.metadata?.["codenomad.mission"] as { missionID?: unknown; document?: { missionID?: unknown; passageID?: unknown; coordinatorReused?: unknown } } | undefined
   if (typeof marker?.document?.missionID !== "string") throw new Error("Business document marker unavailable")
   const stored = await run(ctx.storage.get(nativeScheduleDocumentKey(ctx, marker.document.missionID)))
@@ -87,7 +92,7 @@ async function source(ctx: Plugin.Context, sessionID: string, run: Run, current:
   if (!doc.pending || doc.pending.id !== marker.document.passageID || doc.pending.missionID !== marker.missionID) return undefined
   if (!doc.calendarOwner || !doc.pending.configuration.roots.some(root => root.directory === ctx.location.directory)) throw new Error("Business installation unavailable")
   return { binding: { documentID: doc.id, passageID: doc.pending.id, missionID: doc.pending.missionID, rootID: root.id },
-    installation: doc.calendarOwner.installation, requiresCalendar: requiresMissionCalendar(doc.pending.configuration.launch) }
+    installation: nativeScheduleRuntimeIdentity(doc.calendarOwner.installation), requiresCalendar: requiresMissionCalendar(doc.pending.configuration.launch) }
 }
 
 async function boundedResponse(response: Response, signal: AbortSignal): Promise<Response> {
@@ -199,7 +204,7 @@ export async function executeNativeScheduledBusiness(runtime: Runtime, entry: En
 /** Only this HTTP receiver acquires B's full native runtime. The optional
  * acquirer is a typed test seam; no RPC input can select code or capabilities. */
 export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerScheduledBusinessRpc")(function* (
-  ctx: Plugin.Context, artifacts: NativeScheduleArtifacts | undefined, invocation: Invocation,
+  ctx: Plugin.Context, _artifacts: NativeScheduleArtifacts | undefined, invocation: Invocation,
   acquire: Acquire = run => acquireNativeScheduledPassageRuntime(ctx, run),
 ) {
   let active = true
@@ -214,10 +219,7 @@ export const registerNativeScheduledBusinessRpc = Effect.fn("missions.registerSc
       if (!found) return { selected: false }
       if (!isDeepStrictEqual(found.binding, input.binding))
         throw new Error("Business receiver binding differs")
-      if (found.requiresCalendar) {
-        if (artifacts && !isDeepStrictEqual(found.installation.provider, artifacts.provider)) throw new Error("Business receiver provider differs")
-        assertNativeScheduleCarrierArtifacts(found.installation)
-      }
+      if (found.requiresCalendar) assertNativeScheduleCarrierArtifacts(found.installation)
       const incarnation = nativeScheduleIncarnationGuard(found.installation.registrationFile, input.incarnation as NativeScheduleIncarnation)
       const live = (): true => { signal.throwIfAborted(); current(); return incarnation() }
       live()

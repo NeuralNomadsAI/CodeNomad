@@ -1,7 +1,10 @@
 //! Workspace persistence, background tabs and active-panel updates.
 #[cfg(target_arch = "wasm32")]
 use super::platform;
-use super::{State, Tx, catalogue, observation::poll_cached, panel_state, resume};
+use super::{
+    State, Tx, blank_cleanup, catalogue, idle_markers, observation::poll_cached, panel_state,
+    resume,
+};
 
 pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     let Some(mut ui) = s.workspace.take() else {
@@ -42,6 +45,8 @@ pub fn poll(s: &mut State, now: f64, tx: &mut Tx) -> bool {
     platform::pairing::set_defer_checks(s, true);
     let (cached_changed, deleted_by_tab) = poll_cached(s, &mut ui, Some(now), tx);
     changed |= cached_changed;
+    changed |= blank_cleanup::poll(s, &mut ui, tx);
+    changed |= idle_markers::poll(s, &mut ui, now, tx);
     changed |= crate::timeline::sync_outline_mutation(s);
     let (missions_changed, mission_auth_expired) = panel_state::poll_missions(&mut ui, s, tx);
     changed |= missions_changed;

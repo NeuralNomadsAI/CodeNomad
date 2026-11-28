@@ -30,8 +30,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   writeFileSync(registrationFile, JSON.stringify({ ...identity, password: "unit-private-auth" }))
   const artifact = (name: string) => { const file = path.join(directory, name); writeFileSync(file, name)
     return { file, sha256: createHash("sha256").update(name).digest("hex") } }
-  const provider = artifact("provider"), savedRuntime = artifact("runtime-old"), newRuntime = artifact("runtime-current")
-  const artifacts = { provider, runtime: upgradedRuntime ? newRuntime : savedRuntime }
+  const savedRuntime = artifact("runtime-old"), newRuntime = artifact("runtime-current")
+  const artifacts = { runtime: upgradedRuntime ? newRuntime : savedRuntime }
   const location = { directory, project: { id: "project", directory, canonical: directory } }
   const values = new Map<string, any>()
   const documents = new NativeMissionDocumentStore({ get: async key => structuredClone(values.get(key)),
@@ -50,7 +50,7 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
     changes.reserve(next, { kind: scheduled ? "manual" : "immediate", requestID: "original" }, at + 1, [])
     if (!lostACK) changes.admitted(next, next.pending!.id, at + 2)
     next.calendarOwner = missionCalendarOwnerSchema.parse({ version: 1, installation: { registrationFile,
-      provider, runtime: savedRuntime },
+      runtime: savedRuntime },
       profileSource: { profileID: "profile", executionHost: "local", configYamlPath: path.join(directory, "profile.yaml") },
       placement: { rootsDigest: "a".repeat(64), roots: [{ directory, physical: directory, dev: "1", ino: "1", birth: "1" }], routing: [], gitEnvironmentDigest: "a".repeat(64) },
       operation: { requestID: "first_play", expectedRevision: 0, fingerprint: "a".repeat(64), action: "play", pending: false, startedAt: at },
@@ -60,7 +60,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   const sessions = new Map<string, any>([[rootID, { id: rootID, location: { directory }, projectID: "project",
     metadata: { "codenomad.mission": { missionID: pending.missionID, document: { missionID: doc.id, passageID: pending.id } } } }],
   [childID, { id: childID, parentID: rootID, location: { directory }, projectID: "project" }],
-  ["ses_ordinary", { id: "ses_ordinary", location: { directory }, projectID: "project" }]])
+  ["ses_ordinary", { id: "ses_ordinary", location: { directory }, projectID: "project" }],
+  ["ses_ordinary_child", { id: "ses_ordinary_child", parentID: "ses_ordinary", location: { directory }, projectID: "project" }]])
   const handlers: Record<string, (raw: unknown) => Effect.Effect<unknown, unknown>> = {}
   const calls = { http: 0, discover: 0, acquired: 0, reconcile: 0, environment: 0, method: [] as string[], privateSource: [] as boolean[], originalPrompts: 0 }
   const state = { originalPresent, active: true, promptLock: false, afterDiscover: async () => {}, response: undefined as Response | undefined,
@@ -149,7 +150,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   const invoke = <T>(use: () => Promise<T>) => Effect.runPromiseWith(partial)(invocation.capture(Effect.promise(use)))
   const receive = (method: string, raw: unknown) => Effect.runPromiseWith(full)(handlers[method](raw))
   const binding = { documentID: doc.id, passageID: pending.id, missionID: pending.missionID, rootID }
-  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime, control }
+  const moveSession = (sessionID: string) => { sessions.get(sessionID).location.directory = path.join(directory, "other") }
+  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime, control, moveSession }
 }
 
 test("ordinary callbacks use only public ancestry: zero discovery, HTTP or private acquisition", async t => {
@@ -160,10 +162,25 @@ test("ordinary callbacks use only public ancestry: zero discovery, HTTP or priva
   assert.ok(f.calls.privateSource.every(value => !value))
 })
 
-test("pure immediate context prepares ENV and reports without technical files, current provider identity or a Schedule tag", async t => {
+test("ordinary callbacks allow linked sessions in different directories", async t => {
   const f = await fixture(t)
-  rmSync(f.artifacts.provider.file); rmSync(f.savedRuntime.file)
-  f.artifacts.provider = { file: path.join(f.savedRuntime.file, "different-provider"), sha256: "c".repeat(64) }
+  f.moveSession("ses_ordinary")
+  assert.equal(await f.invoke(() => f.bridge.prepare("ses_ordinary_child")), false)
+  assert.equal(await f.invoke(() => f.bridge.select("ses_ordinary_child")), undefined)
+  assert.equal(f.calls.http, 0); assert.equal(f.calls.discover, 0); assert.equal(f.calls.acquired, 0)
+})
+
+test("scheduled business rejects a moved family member before discovery", async t => {
+  const f = await fixture(t)
+  f.moveSession(f.childID)
+  await assert.rejects(f.invoke(() => f.bridge.prepare(f.childID)), /Business source moved/)
+  await assert.rejects(f.invoke(() => f.bridge.select(f.childID)), /Scheduled Mission business unavailable/)
+  assert.equal(f.calls.http, 0); assert.equal(f.calls.discover, 0); assert.equal(f.calls.acquired, 0)
+})
+
+test("pure immediate context prepares ENV and reports without technical files or an Automation service", async t => {
+  const f = await fixture(t)
+  rmSync(f.savedRuntime.file)
   await f.invoke(async () => {
     const route = await f.bridge.select(f.rootID)
     assert.ok(route, "immediate remains selected business, never ordinary fallback")
@@ -179,7 +196,7 @@ test("pure immediate context prepares ENV and reports without technical files, c
 
 test("a scheduled pending with the same missing technical files is blocked before native acquisition or ENV", async t => {
   const f = await fixture(t, false, true, false, true)
-  rmSync(f.artifacts.provider.file); rmSync(f.savedRuntime.file)
+  rmSync(f.savedRuntime.file)
   await assert.rejects(f.invoke(() => f.bridge.select(f.rootID)))
   assert.equal(f.calls.acquired, 0); assert.equal(f.calls.environment, 0)
   assert.deepEqual(f.calls.method, [])
@@ -201,7 +218,7 @@ test("the derived calendar requirement is captured even when binding IDs and ins
   })
 })
 
-test("same exact provider accepts an intact saved runtime across upgrade; missing old bytes or a different provider stay blocked", async t => {
+test("intact saved runtime is accepted across upgrades; missing saved runtime stays blocked", async t => {
   const f = await fixture(t, false, true, true, true)
   assert.notEqual(f.artifacts.runtime.sha256, f.savedRuntime.sha256)
   await f.invoke(async () => {
@@ -211,10 +228,6 @@ test("same exact provider accepts an intact saved runtime across upgrade; missin
   })
   assert.deepEqual(f.calls.method, ["contextFor"])
   const selected = f.calls.acquired
-  f.artifacts.provider = { ...f.artifacts.provider, sha256: "c".repeat(64) }
-  await assert.rejects(f.invoke(() => f.bridge.select(f.rootID)))
-  assert.equal(f.calls.acquired, selected)
-  f.artifacts.provider = { ...f.artifacts.provider, sha256: createHash("sha256").update("provider").digest("hex") }
   rmSync(f.savedRuntime.file)
   await assert.rejects(f.invoke(() => f.bridge.select(f.rootID)))
   assert.equal(f.calls.acquired, selected, "missing saved bundle fails before native runtime acquisition")

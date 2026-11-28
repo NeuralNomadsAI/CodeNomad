@@ -8,7 +8,7 @@ Browser and tablet access do not move execution off the host.
 
 1. Install Node.js 24 LTS and npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: **2.3.0** is the required minimum. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: **2.4.0** is the required minimum. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).
@@ -80,7 +80,7 @@ Flags override their environment counterparts. Value-taking flags use the shown 
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; allow full-filesystem browsing. Not an agent sandbox setting. |
 | `--config <path>` | `CLI_CONFIG` | Resolved active default: `~/.config/codenomad/config.yaml`. Accepts a directory or YAML file for explicit placement. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; documented levels: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; otherwise write to the chosen file. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, plus `logs/server.log` beside the configuration file; a chosen file replaces both. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; runtime auth username. A stored auth file retains its stored username when no runtime password overrides it. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Unset; runtime-only password, takes precedence over the managed auth file. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; characters outside letters, digits, `_` and `-` become `_`. |

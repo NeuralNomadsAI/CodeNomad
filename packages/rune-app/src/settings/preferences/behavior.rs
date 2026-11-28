@@ -145,6 +145,15 @@ impl Preferences {
         }
     }
 
+    pub(in crate::settings) fn auto_cleanup_blank_sessions(&self) -> bool {
+        self.advanced_toggle(Toggle::EmptySessions) == Some(true)
+    }
+
+    pub(in crate::settings) fn keep_unseen_subagent_idle_status(&self) -> bool {
+        self.advanced_toggle(Toggle::UnseenSubagents)
+            .unwrap_or_else(|| Toggle::UnseenSubagents.default_value())
+    }
+
     pub(in crate::settings) fn new_conversation_permissions(&self) -> &'static str {
         match self
             .saved(Owner::Config)

@@ -73,8 +73,10 @@ Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur.
 ## Yanıtlardan dosya açma {#open-files-from-replies}
 
 1. Aracı yanıtları proje dosyalarına göreli ve mutlak yollarla bağlantı verir.
-2. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree’sinden okuyarak dosya önizlemesinde açar.
-3. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree’si dışındaki bağlantılar normal bağlantı davranışını korur.
+2. Düz metin olarak veya satır içi kod içinde yazılan bir yol da, sohbetin worktree'sinin dosyayı içerdiği bilindiğinde bağlantı olur; herhangi bir yazı sisteminden dosya adları da tanınır. Var olmayan yollar düz metin olarak kalır. Masaüstü uygulamasında, bu bilgisayardaki bir proje için klasörler de bağlantıya dönüşür.
+3. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree'sinden okuyarak dosya önizlemesinde açar.
+4. Masaüstü uygulamasında, bu bilgisayardaki bir proje için dosya önizlemesi gösterebildiği metin dosyalarını ve görselleri açar. Klasörler, diğer dosyalar (videolar, PDF'ler…), worktree dışındaki yollar ve `file:` bağlantıları, Ctrl/⌘ tıklama ve orta tıklamada her zaman olduğu gibi sisteminizle açılır; açılamazlarsa bir hata görünür.
+5. Diğer durumlarda değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree'si dışındaki bağlantılar normal bağlantı davranışını korur.
 
 ## Komutlar ve Shell modu {#commands-shell}
 
@@ -116,6 +118,14 @@ Kapatmak ana oturumu kesmeden bekleyen yan isteği iptal eder. Etkin konuşmadan
 3. O satırda **Hedefi duraklat** veya **Hedefi sürdür** öğesini kullanın ya da `/goal pause` veya `/goal resume` gönderin. Hedefi kaldırmak için **Hedefi temizle** öğesini veya `/goal clear` komutunu kullanın.
 
 Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başlar. OpenCode; oturumu durdurduğunuzda, bir çalıştırma başarısız olduğunda, ilerleme durduğunda, tur sınırına ulaşıldığında veya hizmet yeniden başladığında hedefi kendisi de duraklatır; devam etmek için sürdürün. Duraklatmak veya temizlemek, yapılmış işi geri almaz. Hedef yoksa veya hedef desteği olmayan bir OpenCode hizmetinde satır görünmez.
+
+## /automation ile oturum otomasyonlarını izleyin {#automations}
+
+1. Bir konuşmada `/automation` ile (veya ajanın otomasyon araçlarıyla) zamanlanmış ya da olay tabanlı otomasyonlar oluşturun veya yönetin.
+2. Konuşmanın otomasyonları olduğu sürece **Durum**, bunları **Tokenlar** üzerinde (etkin bir hedef varsa **Hedef** altında) listeler: her satır durumu (**Etkin**, **Duraklatıldı** veya **Tamamlandı**), adı, sonraki çalıştırmayı ya da kuralı ve çalıştırma sayısını gösterir. Tamamlananlar açılana kadar **Tamamlananlar (N)** altında katlı kalır.
+3. Tetikleyiciyi, zamanlamayı ve son çıktıyı görmek için satırın üzerine gelin veya odaklanın ya da ayrıntı penceresini açmak için tıklayın. Satırdaki **Otomasyonu duraklat**, **Otomasyonu sürdür** veya **Otomasyonu sil** düğmeleriyle doğrudan yönetin.
+
+Yalnızca etkin konuşmaya ait otomasyonlar gösterilir. Bir otomasyonu silmek geri alınamaz ve yapılmış işi geri çevirmez. Otomasyon yoksa veya otomasyon API'sini sunmayan bir OpenCode hizmetinde blok görünmez.
 
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 

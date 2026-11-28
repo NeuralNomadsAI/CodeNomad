@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount } from "solid-js"
-import { hasKeyboardOcclusion } from "../../lib/keyboard-offset"
+import { hasKeyboardOcclusion, layoutKeyboardInset } from "../../lib/keyboard-offset"
 
 const TRANSCRIPT_RESERVE = 64
 
@@ -28,13 +28,15 @@ export function usePromptViewport(wrapper: () => HTMLElement | undefined, interr
       const top = viewport?.offsetTop ?? 0
       const bottom = top + (viewport?.height ?? window.innerHeight)
       const visible = visibleHeight(rect, top, bottom)
-      const occluded = hasKeyboardOcclusion(window)
+      const layoutInset = layoutKeyboardInset(window)
+      const occluded = layoutInset > 0 || hasKeyboardOcclusion(window)
       const sessionRect = session.getBoundingClientRect()
-      // The host has already shortened the layout. Add that space back only
-      // to the reference, without treating a visual viewport pan as a resize.
-      const inset = host ? parseFloat(getComputedStyle(host).paddingBottom) : 0
+      // The host or the browser (layoutInset) has already shortened the layout.
+      // Add that space back only to the reference, without treating a visual
+      // viewport pan as a resize.
+      const inset = (host ? parseFloat(getComputedStyle(host).paddingBottom) : 0) + layoutInset
       const reference = occluded
-        ? Math.max(0, Math.min(rect.bottom + inset, window.innerHeight) - Math.max(rect.top, 0))
+        ? Math.max(0, Math.min(rect.bottom + inset, window.innerHeight + layoutInset) - Math.max(rect.top, 0))
         : visible
       let fieldSpace: number | undefined
       if (occluded) {

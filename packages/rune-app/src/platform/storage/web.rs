@@ -35,30 +35,31 @@ impl BrowserStage {
         if self.departing.replace(true) {
             return;
         }
-        if !self.frozen.get()
-            && self.restore.get() == RestoreMode::Enabled
-            && let Ok(pending) = self.pending_file_drafts.try_borrow()
-            && let Some(bytes) = pending.as_ref()
-            && bytes.len() <= FILE_DRAFT_BYTES
-            && let Ok(text) = std::str::from_utf8(bytes)
-        {
-            let _ = self.storage.set_item(Store::FILE_DRAFTS, text);
+        struct SessionStorage<'a>(&'a web_sys::Storage);
+        impl super::WebDepartStorage for SessionStorage<'_> {
+            fn set_item(&mut self, key: &str, value: &str) -> std::result::Result<(), ()> {
+                self.0.set_item(key, value).map_err(|_| ())
+            }
         }
+        let pending = self.pending_file_drafts.try_borrow();
         let current = self.payload.try_borrow();
-        let release_records = if self.frozen.get() || self.restore.get() == RestoreMode::Unknown {
-            // An unconfirmed startup-state mutation or unreadable preference must keep records.
-            false
-        } else if self.restore.get() == RestoreMode::Enabled && !self.snapshot_suppressed.get() {
-            current.as_ref().ok().is_some_and(|current| {
-                !current.0.is_empty()
-                    && std::str::from_utf8(&current.0).is_ok_and(|text| {
-                        self.storage.set_item(Store::KEY, text).is_ok()
-                            && self.storage.set_item(Store::RELEASED, "1").is_ok()
-                    })
-            })
-        } else {
-            true
-        };
+        let mut storage = SessionStorage(&self.storage);
+        let release_records = super::depart_web_state(
+            &mut storage,
+            super::WebDepartInput {
+                frozen: self.frozen.get(),
+                restore: self.restore.get(),
+                snapshot_suppressed: self.snapshot_suppressed.get(),
+                snapshot: current.as_ref().ok().map(|current| current.0.as_slice()),
+                pending_file_drafts: pending.as_ref().ok().map(|pending| pending.as_deref()),
+                max_file_draft_bytes: FILE_DRAFT_BYTES,
+                keys: super::WebDepartKeys {
+                    state: Store::KEY,
+                    file_drafts: Store::FILE_DRAFTS,
+                    released: Store::RELEASED,
+                },
+            },
+        );
         if let Ok(openings) = self.openings.try_borrow() {
             if let Some(openings) = openings.as_ref() {
                 cancel_openings(openings);

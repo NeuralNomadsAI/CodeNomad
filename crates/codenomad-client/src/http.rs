@@ -588,15 +588,18 @@ pub async fn pairing_required() -> Result<Option<bool>> {
 }
 
 pub fn is_unauthorized(error: &crate::history::Error) -> bool {
-    error
-        .downcast_ref::<reqwest::Error>()
-        .and_then(reqwest::Error::status)
-        == Some(reqwest::StatusCode::UNAUTHORIZED)
+    error.downcast_ref::<crate::files::FileError>() == Some(&crate::files::FileError::Unauthorized)
+        || error
+            .downcast_ref::<reqwest::Error>()
+            .and_then(reqwest::Error::status)
+            == Some(reqwest::StatusCode::UNAUTHORIZED)
 }
 
 pub fn authentication_expired(error: &crate::history::Error) -> bool {
     cfg!(not(target_arch = "wasm32"))
         && (error.is::<crate::stream::hub::AuthenticationExpired>()
+            || error.downcast_ref::<crate::files::FileError>()
+                == Some(&crate::files::FileError::Unauthorized)
             || error
                 .downcast_ref::<reqwest::Error>()
                 .and_then(reqwest::Error::status)

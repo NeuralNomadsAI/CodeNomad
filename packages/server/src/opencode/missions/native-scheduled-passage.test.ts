@@ -140,6 +140,10 @@ async function fixture(existing = false, author?: string) {
       const original = snapshot()
       const checks: (() => void)[] = []
       return { family: () => [...states.keys()].map(id => [id, -1, null, null, 0] as [string, number, null, null, number]),
+        absentSession: (id: string) => {
+          checks.push(() => assert.equal(sessions.has(id), false, "Selected native session exists"))
+          assert.equal(sessions.has(id), false, "Selected native session exists")
+        },
         coordinator() {},
         journal(prefix: string, except?: string) {
           const rows = () => JSON.stringify([...values].filter(([key]) => key.startsWith(prefix) && key !== except))
@@ -227,34 +231,6 @@ test("an agent's own active root is admitted at once and reused on later passage
   assert.deepEqual(f.counts(), { sends: 2, creates: 0, environments: 2 })
 })
 
-test("agent adoption refuses uncertain ownership and another document's reserved coordinator", async () => {
-  const f = await fixture(true, "ses_author")
-  f.states.get("ses_existing")!.active = false
-  f.sessions.get("ses_existing")!.metadata!["codenomad.mission"] = { missionID: "unknown_owner" }
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  delete f.sessions.get("ses_existing")!.metadata!["codenomad.mission"]
-  const doc = await f.read()
-  let other = await f.store.create("another", doc.configuration, at, current)
-  other = await f.store.change(other.id, other.revision, current, next => changes.play(next, "other_play", at, []))
-  other = await f.store.change(other.id, other.revision, current, next => changes.synchronized(next, "other_play", [
-    { role: "principal", slot: 0, scheduleID: "sch_other", sessionID: "ses_other", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
-    { role: "reconciliation", slot: 0, scheduleID: "sch_other_aux", sessionID: "ses_other_aux", timeGeneration: next.timeGeneration, highWater: 0, pendingWake: null, wakePreparing: null },
-  ]))
-  await f.store.change(other.id, other.revision, current, next => changes.reserve(next, { kind: "manual", requestID: "other_run" }, at, []))
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-})
-
-test("agent adoption refuses an ordinary active mission even when its native marker is absent", async () => {
-  const f = await fixture(true, "ses_author")
-  f.states.get("ses_existing")!.active = false
-  const control = new MissionControl({ project: { id: "project", canonical: "/project", location: f.native.location },
-    storage: f.storage, sessions: f.native as unknown as MissionSessionAdapter })
-  await control.create({ requestID: "other_mission", objective: "Other work", template: "custom", coordinatorSessionID: "ses_existing" })
-  await assert.rejects(f.admit(), /coordinator-owned/)
-  assert.deepEqual(f.counts(), { sends: 0, creates: 0, environments: 0 })
-})
-
 test("agent adoption revalidates at each lazy native profile/metadata effect entry", async () => {
   for (const blockedWrite of [1, 2, 3]) {
     const f = await fixture(true, "ses_author")
@@ -334,9 +310,31 @@ test("a quiet inherited descendant in another worktree does not block settlement
 
 test("a missing selected coordinator is never recreated and original proof still prevents replay", async () => {
   const f = await fixture(true)
+  const original = (await f.read()).pending!
   f.sessions.delete("ses_existing")
-  await assert.rejects(f.admit(), /missing/)
-  assert.equal(f.counts().creates, 0)
+  await f.use(async input => {
+    const admission = await admitNativeScheduledPassage(input)
+    assert.equal(admission.kind, "not-started")
+    assert.equal(admission.current(), true)
+    // If the deleted session reappears before publication, the absence fence aborts the CAS.
+    f.sessions.set(original.coordinatorSessionID, { id: original.coordinatorSessionID, projectID: "project", location: { directory: "/project" } })
+    assert.throws(() => admission.current(), /Native state changed|Selected native session exists/)
+    // Without an absence fence, a missing reused coordinator stays unknown rather than settling unfenced.
+    f.sessions.delete("ses_existing")
+    assert.equal((await admitNativeScheduledPassage({ ...input, settlementFence: undefined })).kind, "unknown")
+  })
+  assert.deepEqual(f.counts(), { creates: 0, sends: 0, environments: 0 })
+  // Once admission has been attempted or recorded, absence must preserve uncertainty.
+  f.sessions.delete("ses_existing")
+  let doc = await f.read()
+  await f.store.change(doc.id, doc.revision, current, next => {
+    next.pending!.coordinatorBaseline = [[original.coordinatorSessionID, -1, null, null, 0]]
+    next.pending!.admissionAttempted = true
+  })
+  assert.equal((await f.admit()).kind, "unknown")
+  doc = await f.read()
+  await f.store.change(doc.id, doc.revision, current, next => { changes.admitted(next, original.id, at + 1500) })
+  assert.equal((await f.admit()).kind, "unknown")
   const g = await fixture(true); g.crash = true
   await assert.rejects(g.admit(), /lost native ACK/)
   const pending = (await g.read()).pending!
@@ -394,6 +392,15 @@ test("archive publication fences native changes and only exact archived ownershi
   assert.equal(scheduledPassageOwner(later, later, "ses_existing", marker), undefined, "a later pending does not invalidate exact archive ownership")
   assert.throws(() => scheduledPassageOwner(undefined, archived, "ses_existing", marker))
   assert.throws(() => scheduledPassageOwner({ deletedAt: 1 }, archived, "ses_existing", marker))
+  // A conversation a passage created for itself is an ordinary one again once its passage is archived or its schedule deleted:
+  // a person may pick it to coordinate another Mission.
+  const own = { ...marker, document: { missionID: marker.document.missionID, passageID: marker.document.passageID } }
+  const tombstone = { version: 1, id: doc.id, projectID: doc.projectID, projectCanonical: doc.projectCanonical, revision: archived.revision + 1, deletedAt: at + 4000,
+    timeGeneration: doc.timeGeneration, requestID: "delete_schedule", expectedRevision: archived.revision, deleteManagedSessions: false }
+  assert.equal(scheduledPassageOwner(tombstone, archived, "ses_existing", own), undefined)
+  assert.equal(scheduledPassageOwner(archived, archived, "ses_existing", own), undefined)
+  assert.throws(() => scheduledPassageOwner({ ...tombstone, id: "msn_other_schedule" }, archived, "ses_existing", own), /tombstone differs/)
+  assert.throws(() => scheduledPassageOwner(doc, doc, "ses_existing", { ...own, document: { ...own.document, passageID: "psg_other" } }), /pending differs/)
   assert.throws(() => scheduledPassageOwner(doc, doc, "ses_wrong", marker), /pending differs/)
   assert.throws(() => scheduledPassageOwner(archived, archived, "ses_existing", { ...marker, missionID: "wrong" }), /archive unavailable/)
 })

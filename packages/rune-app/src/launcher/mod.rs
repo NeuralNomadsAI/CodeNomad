@@ -961,8 +961,11 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
             }
             if !stopped_in_flight && !auth_required_now && !stale_connection {
                 let mut present = HashSet::new();
-                present.insert(created_id);
+                present.insert(created_id.clone());
                 crate::workspace::note_restored_draft_sessions_present(s, &present);
+            }
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
             }
         }
         Ok(Reply::CreatedUnbound(session, submitted)) => {
@@ -974,6 +977,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 || l.project
                     .as_ref()
                     .is_some_and(|p| stopped_during_pending.contains_key(&p.id));
+            let created_id = session.id.clone();
             if !stopped_in_flight && !l.sessions.iter().any(|row| row.id == session.id) {
                 l.sessions.insert(0, session);
             }
@@ -985,6 +989,9 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
                 crate::strings::t("sessionList.reload.error"),
                 true,
             );
+            if !stopped_in_flight {
+                crate::workspace::schedule_blank_cleanup(s, &created_id);
+            }
         }
         Ok(Reply::CreatePrecheckFailed) => {
             l.error = Some("sessionList.reload.error");

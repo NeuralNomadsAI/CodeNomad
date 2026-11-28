@@ -1,10 +1,14 @@
 import { declaration, ELEMENT_FUNCTIONS, GLOBAL_FUNCTIONS, handleResult } from "./functions"
-import { OBJECT_GROUP, type PageChannel, type PageOperation } from "./protocol"
+import { OBJECT_GROUP, PageDriverUnsupportedError, type PageChannel, type PageOperation } from "./protocol"
 import { semanticTree } from "./semantic-tree"
 import type { AxNode } from "./snapshot"
 import { operationDriver } from "./driver"
 import { parsePageOperation } from "./operations"
 const optional = (key: string, value: unknown): Record<string, unknown> => value === undefined ? {} : { [key]: value }
+async function layoutViewport(channel: PageChannel) {
+  const metrics = await channel.send("Page.getLayoutMetrics")
+  return (metrics.cssLayoutViewport ?? metrics.layoutViewport) as {clientWidth?: number; clientHeight?: number; pageX?: number; pageY?: number} | undefined
+}
 
 /** Used in the app's CDP connection and Electron's native guest dispatcher. */
 export async function executeCdpOperation(channel: PageChannel, raw: PageOperation, mark = false): Promise<Record<string, unknown>> {
@@ -29,16 +33,31 @@ export async function executeCdpOperation(channel: PageChannel, raw: PageOperati
     case "scroll-into-view": return channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId: operation.node })
     case "geometry": return channel.send("DOM.getContentQuads", { backendNodeId: operation.node })
     case "viewport": {
-      const metrics = await channel.send("Page.getLayoutMetrics")
-      const viewport = (metrics.cssLayoutViewport ?? metrics.layoutViewport) as {clientWidth?: number; clientHeight?: number} | undefined
+      const viewport = await layoutViewport(channel)
       return { ...optional("width",viewport?.clientWidth), ...optional("height",viewport?.clientHeight) }
     }
-    case "hit-test": { const result = await channel.send("DOM.getNodeForLocation", { x: operation.x, y: operation.y, includeUserAgentShadowDOM: false, ignorePointerEventsNone: false }); return optional("node",result.backendNodeId) }
+    case "hit-test": {
+      // DOM.getNodeForLocation takes document coordinates; the operation carries viewport ones.
+      const scroll = await layoutViewport(channel)
+      const result = await channel.send("DOM.getNodeForLocation", { x: operation.x + Math.floor(scroll?.pageX ?? 0), y: operation.y + Math.floor(scroll?.pageY ?? 0), includeUserAgentShadowDOM: false, ignorePointerEventsNone: false })
+      return optional("node",result.backendNodeId)
+    }
     case "pointer": case "wheel": return channel.send("Input.dispatchMouseEvent", operation.event as unknown as Record<string, unknown>)
     case "keyboard": return channel.send("Input.dispatchKeyEvent", operation.event as unknown as Record<string, unknown>)
     case "insert-text": return channel.send("Input.insertText", { text: operation.text })
     case "release-handles": return channel.send("Runtime.releaseObjectGroup", { objectGroup: OBJECT_GROUP })
     case "checkpoint": return {}
+    case "history": {
+      const result = await channel.send("Page.getNavigationHistory")
+      const entries = Array.isArray(result.entries) ? result.entries as Array<{ title?: unknown }> : []
+      const index = typeof result.currentIndex === "number" ? result.currentIndex : -1
+      const title = entries[index]?.title
+      return { title: typeof title === "string" ? title.slice(0, 2_048) : "", canGoBack: index > 0, canGoForward: index >= 0 && index < entries.length - 1 }
+    }
+    case "diagnostics":
+      if (!channel.diagnostics) throw new PageDriverUnsupportedError("cdp", "diagnostics")
+      return channel.diagnostics(operation.after)
+    case "response-body": return channel.send("Network.getResponseBody", { requestId: operation.request }, operation.session)
   }
 }
 export function cdpDriver(channel: PageChannel, checkpoint: () => Promise<void>, mark = false) {

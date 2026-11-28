@@ -243,10 +243,22 @@ pub async fn create(
     {
         return Err(invalid("Invalid worktree branch"));
     }
+    // Detach the mutation so an HTTP client disconnect mid-flight cannot leave a
+    // half-created detached checkout or skip rollback/announcement.
+    tokio::spawn(create_owned(app, id, branch.to_owned(), input.from_slug)).await.map_err(|_| native_error())?
+}
+
+async fn create_owned(
+    app: Shared,
+    id: String,
+    branch: String,
+    from_slug: Option<String>,
+) -> Result<(Status, Json<Value>), Error> {
+    let branch = branch.as_str();
     let w = app.workspace(&id)?;
     let endpoint =
         app.native.acquire(tokio::time::Instant::now() + Duration::from_secs(30)).await.map_err(|_| native_error())?;
-    let from_slug = input.from_slug.as_deref().unwrap_or("root");
+    let from_slug = from_slug.as_deref().unwrap_or("root");
     let catalogue = super::inventory::catalogue_at(&app, &w, true, Some(&endpoint), Duration::from_secs(12)).await?;
     let from = catalogue.get(from_slug)?;
     if !from.creatable_source() {
@@ -1347,6 +1359,213 @@ mod tests {
         clean(&target).await.unwrap();
         assert!(!marker.exists(), "clean() must never execute a submodule-local filter driver");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn create_completes_when_caller_disconnects_mid_flight() {
+        use axum::response::IntoResponse;
+        use std::sync::Arc;
+        use uuid::Uuid;
+
+        let _serial = crate::git::test_git_serial().await;
+        let dir = crate::shared::test_dir("linked-create-disconnect");
+        let main_dir = dir.join("main");
+        std::fs::create_dir_all(&main_dir).unwrap();
+
+        let run_git = |cwd: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git").arg("-C").arg(cwd).args(args).output().unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+
+        run_git(&main_dir, &["init", "-q", "-b", "main"]);
+        run_git(&main_dir, &["config", "user.name", "test"]);
+        run_git(&main_dir, &["config", "user.email", "test@example.com"]);
+        std::fs::write(main_dir.join("README.md"), "hello\n").unwrap();
+        run_git(&main_dir, &["add", "."]);
+        run_git(&main_dir, &["commit", "-q", "-m", "init"]);
+        let main_canon = dunce::canonicalize(&main_dir).unwrap();
+
+        struct CreateFixture {
+            root: PathBuf,
+            created: std::sync::Mutex<Option<PathBuf>>,
+            paused_once: std::sync::atomic::AtomicBool,
+            after_post_reached: Arc<tokio::sync::Notify>,
+            after_post_release: Arc<tokio::sync::Notify>,
+        }
+
+        let after_post_reached = Arc::new(tokio::sync::Notify::new());
+        let after_post_release = Arc::new(tokio::sync::Notify::new());
+        let fixture = Arc::new(CreateFixture {
+            root: main_canon.clone(),
+            created: std::sync::Mutex::new(None),
+            paused_once: std::sync::atomic::AtomicBool::new(false),
+            after_post_reached: after_post_reached.clone(),
+            after_post_release: after_post_release.clone(),
+        });
+
+        let fake_router = axum::Router::new().fallback(axum::routing::any({
+            let fixture = fixture.clone();
+            move |req: axum::extract::Request| {
+                let fixture = fixture.clone();
+                async move {
+                    let method = req.method().clone();
+                    let path = req.uri().path().to_owned();
+                    let query = req.uri().query().unwrap_or_default().to_owned();
+                    let body = axum::body::to_bytes(req.into_body(), 256 * 1024).await.unwrap_or_default();
+                    match (method, path.as_str()) {
+                        (Method::GET, "/api/location") => {
+                            let requested = reqwest::Url::parse(&format!("http://localhost/?{query}"))
+                                .ok()
+                                .and_then(|u| {
+                                    u.query_pairs()
+                                        .find(|(k, _)| k == "location[directory]")
+                                        .map(|(_, v)| v.into_owned())
+                                })
+                                .unwrap_or_else(|| fixture.root.to_string_lossy().into_owned());
+                            Json(json!({
+                                "directory": requested,
+                                "project": {
+                                    "id": "prj_create_disconnect",
+                                    "directory": fixture.root,
+                                    "canonical": fixture.root,
+                                }
+                            }))
+                            .into_response()
+                        }
+                        (Method::POST, "/api/worktree/refresh") => Status::NO_CONTENT.into_response(),
+                        (Method::GET, "/api/worktree") => {
+                            let created = fixture.created.lock().unwrap().clone();
+                            if created.is_some() && !fixture.paused_once.swap(true, std::sync::atomic::Ordering::SeqCst)
+                            {
+                                fixture.after_post_reached.notify_one();
+                                fixture.after_post_release.notified().await;
+                            }
+                            let mut items = vec![json!({"directory": fixture.root})];
+                            if let Some(dir) = created {
+                                items.push(json!({"directory": dir}));
+                            }
+                            Json(Value::Array(items)).into_response()
+                        }
+                        (Method::POST, "/api/worktree") => {
+                            let payload: Value = serde_json::from_slice(&body).unwrap();
+                            let rev = payload["branch"].as_str().unwrap();
+                            let parent = PathBuf::from(payload["directory"].as_str().unwrap());
+                            let name = payload["name"].as_str().unwrap();
+                            let checkout = parent.join(name);
+                            let out = crate::git::command(
+                                &fixture.root,
+                                &["worktree", "add", "--detach", checkout.to_str().unwrap(), rev],
+                            )
+                            .output()
+                            .await
+                            .unwrap();
+                            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+                            let checkout_canon = dunce::canonicalize(&checkout).unwrap();
+                            *fixture.created.lock().unwrap() = Some(checkout_canon.clone());
+                            Json(json!({"directory": checkout_canon})).into_response()
+                        }
+                        _ => Status::NOT_IMPLEMENTED.into_response(),
+                    }
+                }
+            }
+        }));
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let http = tokio::spawn(async move { axum::serve(listener, fake_router).await.unwrap() });
+
+        let auth = crate::auth::Auth::new(crate::auth::Settings {
+            username: "fixture".into(),
+            password: None,
+            file: None,
+            cookie: "fixture".into(),
+            token: false,
+            managed_local: false,
+            skip: true,
+            idle: Duration::from_secs(60),
+            absolute: Duration::from_secs(60),
+        })
+        .unwrap();
+        let (tx, _rx) = tokio::sync::mpsc::channel(4);
+        let settings = crate::settings::Settings::new(crate::settings::document::Location::resolve(
+            dir.join("config.yaml").to_str().unwrap(),
+        ));
+        let app = Arc::new(App::new(
+            auth,
+            0,
+            dir.clone(),
+            main_canon.clone(),
+            false,
+            settings,
+            Value::Null,
+            crate::opencode::Native::test_connection(addr),
+            PathBuf::new(),
+            None,
+            crate::files::watch::Watches::new(tx),
+            None,
+        ));
+        let ws_id = Uuid::new_v4();
+        let ws = Workspace {
+            id: ws_id,
+            request_id: None,
+            path: main_canon.clone(),
+            name: None,
+            status: "ready",
+            proxy_path: format!("/workspaces/{ws_id}/instance"),
+            binary_id: PathBuf::new(),
+            binary_label: String::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+            location: json!({"directory": main_canon, "project": {"id": "prj_create_disconnect", "directory": main_canon, "canonical": main_canon}}),
+            temporary: None,
+        };
+        app.inner.lock().unwrap().workspaces.push(ws);
+        let sub = app.events.subscribe();
+
+        let caller = tokio::spawn(create(
+            State(app.clone()),
+            Route(ws_id.to_string()),
+            Json(Create { slug: "feature-detached".into(), branch: None, from_slug: None }),
+        ));
+
+        tokio::time::timeout(Duration::from_secs(15), after_post_reached.notified())
+            .await
+            .expect("create should reach post-POST inventory read");
+        let checkout = fixture.created.lock().unwrap().clone().expect("POST /api/worktree must have run");
+        assert!(run_git(&checkout, &["branch", "--show-current"]).is_empty(), "checkout starts detached");
+
+        // Simulate an HTTP client disconnect mid-flight by dropping the handler future.
+        caller.abort();
+        let _ = caller.await;
+
+        after_post_release.notify_one();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        let mut announced = false;
+        while tokio::time::Instant::now() < deadline {
+            while let crate::events::Next::Frame(frame) = app.events.pop(&sub) {
+                if let Ok(event) = serde_json::from_str::<Value>(&frame)
+                    && event["type"] == "workspace.worktreesChanged"
+                    && event["workspaceId"] == ws_id.to_string()
+                {
+                    announced = true;
+                }
+            }
+            if announced {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(announced, "detached create must still finish and announce workspace.worktreesChanged");
+        assert_eq!(
+            run_git(&checkout, &["branch", "--show-current"]),
+            "feature-detached",
+            "detached create must finish switching the new worktree onto the requested branch"
+        );
+
+        http.abort();
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

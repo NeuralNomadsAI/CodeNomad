@@ -203,6 +203,78 @@ pub async fn run_with_stdin(dir: &Path, args: &[&str], stdin_bytes: &[u8], max: 
     .map_err(|_| bad("Git output unavailable or too large"))?;
     Ok(Output { code: status.code().unwrap_or(-1), bytes, err })
 }
+pub struct PrefixOutput {
+    pub code: i32,
+    pub bytes: Vec<u8>,
+    pub truncated: bool,
+}
+/// Runs a guarded read-only Git command and keeps up to `max` bytes of stdout.
+/// When stdout exceeds `max` bytes, the child is terminated cleanly and
+/// `truncated` is set to `true` rather than failing the request.
+pub async fn run_prefix(dir: &Path, args: &[&str], max: usize) -> Result<PrefixOutput, Error> {
+    use tokio::io::AsyncReadExt;
+    #[cfg(test)]
+    crate::worktrees::fence_test_trace::record("git semaphore", "waiting");
+    let _slot = SLOTS.acquire().await.unwrap();
+    #[cfg(test)]
+    let _trace = crate::worktrees::fence_test_trace::held("git semaphore");
+    let mut child = command(dir, args)
+        .spawn()
+        .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_git() } else { bad("Git could not start") })?;
+    let mut out = child.stdout.take().unwrap();
+    let mut err = child.stderr.take().unwrap();
+    let (bytes, truncated, code) = tokio::time::timeout(Duration::from_secs(15), async {
+        let mut out_buf = Vec::new();
+        let mut out_done = false;
+        let mut err_done = false;
+        let mut truncated = false;
+        let mut tmp_out = [0u8; 8192];
+        let mut tmp_err = [0u8; 4096];
+        while !out_done {
+            tokio::select! {
+                r = out.read(&mut tmp_out) => {
+                    let n = r?;
+                    if n == 0 {
+                        out_done = true;
+                    } else {
+                        let remaining = max.saturating_add(1).saturating_sub(out_buf.len());
+                        let take = n.min(remaining);
+                        out_buf.extend_from_slice(&tmp_out[..take]);
+                        if out_buf.len() > max {
+                            out_buf.truncate(max);
+                            truncated = true;
+                            out_done = true;
+                        }
+                    }
+                }
+                r = err.read(&mut tmp_err), if !err_done => {
+                    if !matches!(r, Ok(n) if n > 0) {
+                        err_done = true;
+                    }
+                }
+            }
+        }
+        drop(out);
+        if truncated {
+            let _ = child.start_kill();
+            drop(err);
+            let status = child.wait().await?;
+            Ok::<_, io::Error>((out_buf, true, status.code().unwrap_or(0)))
+        } else {
+            while !err_done {
+                if !matches!(err.read(&mut tmp_err).await, Ok(n) if n > 0) {
+                    err_done = true;
+                }
+            }
+            let status = child.wait().await?;
+            Ok((out_buf, false, status.code().unwrap_or(-1)))
+        }
+    })
+    .await
+    .map_err(|_| bad("Git operation timed out"))?
+    .map_err(|_| bad("Git output unavailable or too large"))?;
+    Ok(PrefixOutput { code, bytes, truncated })
+}
 pub async fn repo(app: &crate::App, id: &str, slug: &str) -> Result<Workspace, Error> {
     Ok(repo_target(app, id, slug).await?.0)
 }
@@ -344,6 +416,68 @@ async fn apply_paths_with(
     user_command::execute_with_stdin(cmd, stdin_bytes).await?.mutation()
 }
 
+fn collect_gitlinks(
+    text: &str,
+    allowed: &std::collections::HashSet<&str>,
+    out: &mut std::collections::HashSet<String>,
+) {
+    for record in text.split_terminator('\0') {
+        let Some((meta, path)) = record.split_once('\t') else { continue };
+        if meta.split_whitespace().next() == Some("160000") && allowed.contains(path) {
+            out.insert(path.to_owned());
+        }
+    }
+}
+
+/// Returns the subset of `candidates` tracked as Git submodules (mode `160000`).
+/// Staging only checks the index (`ls-files --stage`) so a directory removed from
+/// the index and turned into ordinary files cannot be staged recursively even if
+/// `HEAD` still holds a `160000` entry at that path. Unstaging (`include_head = true`)
+/// also checks `HEAD` (`ls-tree -d HEAD`) so `git restore --staged` can restore a
+/// removed submodule entry. Exact path matching keeps parent folders refused.
+async fn gitlink_paths(
+    dir: &Path,
+    candidates: &[String],
+    include_head: bool,
+) -> Result<std::collections::HashSet<String>, Error> {
+    let mut found = std::collections::HashSet::new();
+    for chunk in candidates.chunks(64) {
+        let allowed: std::collections::HashSet<&str> = chunk.iter().map(String::as_str).collect();
+        let mut index_args = Vec::with_capacity(chunk.len() + 4);
+        index_args.extend(["ls-files", "--stage", "-z", "--"]);
+        index_args.extend(chunk.iter().map(String::as_str));
+        let index_out = run_prefix(dir, &index_args, TWO_MIB).await?;
+        if !index_out.truncated && index_out.code != 0 {
+            return Err(bad("Git read failed"));
+        }
+        let mut index_bytes = index_out.bytes;
+        if index_out.truncated {
+            match index_bytes.iter().rposition(|&b| b == 0) {
+                Some(pos) => index_bytes.truncate(pos + 1),
+                None => index_bytes.clear(),
+            }
+        }
+        collect_gitlinks(&String::from_utf8_lossy(&index_bytes), &allowed, &mut found);
+
+        if !include_head {
+            continue;
+        }
+        let missing: Vec<&str> = chunk.iter().map(String::as_str).filter(|p| !found.contains(*p)).collect();
+        if missing.is_empty() {
+            continue;
+        }
+        let missing_set: std::collections::HashSet<&str> = missing.iter().copied().collect();
+        let mut head_args = Vec::with_capacity(missing.len() + 5);
+        head_args.extend(["ls-tree", "-d", "-z", "HEAD", "--"]);
+        head_args.extend(missing);
+        let head_out = run(dir, &head_args, TWO_MIB).await?;
+        if head_out.code == 0 {
+            collect_gitlinks(&head_out.text(), &missing_set, &mut found);
+        }
+    }
+    Ok(found)
+}
+
 async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage: bool) -> Result<Json<Value>, Error> {
     if items.is_empty() {
         return Err(bad("Invalid path count"));
@@ -351,18 +485,31 @@ async fn paths(app: Shared, id: String, slug: String, items: Vec<String>, stage:
     let (w, tree) = repo_target(&app, &id, &slug).await?;
     let admitted = crate::worktrees::fence::admit(&[crate::worktrees::fence::identity(tree.registered())])?;
     app.workspace(&id)?;
-    files::root(&w)?;
-    let mut seen = std::collections::HashSet::with_capacity(items.len());
-    let mut validated = Vec::with_capacity(items.len());
-    for p in items {
-        let p = files::relative(p.trim(), false)?;
-        crate::files::links::guard(&w.path, &p)?;
-        // A link is staged as a link (Git's own rule); only folders are refused.
-        if std::fs::symlink_metadata(crate::files::links::target(&w.path, &p)).is_ok_and(|m| m.is_dir()) {
-            return Err(bad("Staging requires individual files"));
+    let w_check = w.clone();
+    let (validated, dir_candidates) = tokio::task::spawn_blocking(move || -> Result<_, Error> {
+        files::root(&w_check)?;
+        let mut seen = std::collections::HashSet::with_capacity(items.len());
+        let mut validated = Vec::with_capacity(items.len());
+        let mut dir_candidates = Vec::new();
+        for p in items {
+            let p = files::relative(p.trim(), false)?;
+            crate::files::links::guard(&w_check.path, &p)?;
+            if seen.insert(p.clone()) {
+                // A link is staged as a link (Git's own rule); folders are refused unless tracked as a gitlink (160000).
+                if std::fs::symlink_metadata(crate::files::links::target(&w_check.path, &p)).is_ok_and(|m| m.is_dir()) {
+                    dir_candidates.push(p.clone());
+                }
+                validated.push(p);
+            }
         }
-        if seen.insert(p.clone()) {
-            validated.push(p);
+        Ok((validated, dir_candidates))
+    })
+    .await
+    .map_err(|_| bad("Selected path is unavailable"))??;
+    if !dir_candidates.is_empty() {
+        let gitlinks = gitlink_paths(&w.path, &dir_candidates, !stage).await?;
+        if dir_candidates.iter().any(|p| !gitlinks.contains(p)) {
+            return Err(bad("Staging requires individual files"));
         }
     }
     tokio::spawn(async move {
@@ -559,6 +706,13 @@ mod tests {
         }
     }
 
+    async fn response_json(resp: axum::response::Response) -> (axum::http::HeaderMap, Value) {
+        assert_eq!(resp.status(), Status::OK);
+        let headers = resp.headers().clone();
+        let bytes = axum::body::to_bytes(resp.into_body(), 2 * 1024 * 1024).await.unwrap();
+        (headers, serde_json::from_slice(&bytes).unwrap())
+    }
+
     fn raw_git(dir: &Path, args: &[&str]) -> Vec<u8> {
         let mut cmd = StdCommand::new("git");
         cmd.arg("-C").arg(dir).args(args);
@@ -666,14 +820,16 @@ mod tests {
                 &format!("sh -c 'touch \"{}\" && cat'", marker.to_string_lossy().replace('\\', "/")),
             ],
         );
-        let status_rows = status_read::status(
-            State(app.clone()),
-            Route((id_str.clone(), "root".into())),
-            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        let (_, status_rows) = response_json(
+            status_read::status(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+            )
+            .await
+            .unwrap(),
         )
-        .await
-        .unwrap()
-        .0;
+        .await;
         assert!(
             status_rows.as_array().unwrap().iter().any(|r| r["path"] == "asset.bin"),
             "status must include asset.bin: {status_rows}"
@@ -947,14 +1103,16 @@ mod tests {
         std::fs::write(clone_dir.join("file.txt"), "hello updated\n").unwrap();
 
         let (app, id_str, _guard) = build_git_fixture("m4-common", &clone_dir).await;
-        let status = status_read::status(
-            State(app.clone()),
-            Route((id_str.clone(), "root".into())),
-            axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+        let (_, status) = response_json(
+            status_read::status(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+            )
+            .await
+            .unwrap(),
         )
-        .await
-        .unwrap()
-        .0;
+        .await;
         assert!(
             status.as_array().unwrap().iter().any(|r| r["path"] == "file.txt" && r["unstagedStatus"] == "modified"),
             "status must report modified file.txt: {status}"
@@ -1155,5 +1313,256 @@ mod tests {
         );
         let staged_after = String::from_utf8(raw_git(&repo_dir, &["diff", "--cached", "--name-only"])).unwrap();
         assert!(staged_after.is_empty(), "all 320 modified files must be unstaged");
+    }
+
+    #[tokio::test]
+    async fn bounded_status_signals_entry_and_byte_truncation_without_failing() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m9-bounded-status");
+        let repo_dir = dir.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        raw_git(&repo_dir, &["init", "-q"]);
+        raw_git(&repo_dir, &["config", "user.name", "test"]);
+        raw_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo_dir.join("base.txt"), "v1\n").unwrap();
+        raw_git(&repo_dir, &["add", "base.txt"]);
+        raw_git(&repo_dir, &["commit", "-q", "-m", "initial"]);
+
+        std::fs::write(repo_dir.join("base.txt"), "v2\n").unwrap();
+        raw_git(&repo_dir, &["add", "base.txt"]);
+        for i in 0..8 {
+            std::fs::write(repo_dir.join(format!("extra_untracked_file_{i:02}.txt")), format!("line-{i}\n")).unwrap();
+        }
+        let (app, id_str, _guard) = build_git_fixture("m9-bounded", &repo_dir).await;
+
+        // 1. Below limits: full array, no truncation header.
+        let (headers_full, rows_full) = response_json(
+            status_read::status(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                axum::extract::Query(serde_json::from_value(json!({})).unwrap()),
+            )
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert!(headers_full.get(status_read::TRUNCATED_HEADER).is_none());
+        assert_eq!(rows_full.as_array().unwrap().len(), 9);
+
+        // 2. Entry cap exceeded: returns 200 with bounded array + truncation headers.
+        let (headers_entries, rows_entries) = response_json(
+            status_read::status_with_limits(app.clone(), id_str.clone(), "root".into(), false, TWO_MIB, 3)
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(headers_entries.get(status_read::TRUNCATED_HEADER).and_then(|v| v.to_str().ok()), Some("1"));
+        assert_eq!(headers_entries.get(status_read::LIMIT_HEADER).and_then(|v| v.to_str().ok()), Some("3"));
+        let arr_entries = rows_entries.as_array().unwrap();
+        assert_eq!(arr_entries.len(), 3);
+        assert!(
+            arr_entries.iter().any(|r| r["path"] == "base.txt" && r["stagedStatus"] == "modified"),
+            "staged entry must be preserved within entry cap: {rows_entries}"
+        );
+
+        // 3. Byte cap exceeded: returns 200 with complete NUL-bounded records + truncation header.
+        let (headers_bytes, rows_bytes) = response_json(
+            status_read::status_with_limits(
+                app.clone(),
+                id_str,
+                "root".into(),
+                false,
+                40,
+                status_read::MAX_STATUS_ENTRIES,
+            )
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(headers_bytes.get(status_read::TRUNCATED_HEADER).and_then(|v| v.to_str().ok()), Some("1"));
+        let arr_bytes = rows_bytes.as_array().unwrap();
+        assert!(!arr_bytes.is_empty(), "bounded byte prefix must still return complete entries");
+        assert!(
+            arr_bytes.iter().all(|r| r["path"].as_str().is_some_and(|p| p == "base.txt" || p.ends_with(".txt"))),
+            "no truncated half-filenames may be emitted: {rows_bytes}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stage_and_unstage_admit_gitlink_submodules_and_refuse_ordinary_directories() {
+        let _serial = test_git_serial().await;
+        let dir = crate::shared::test_dir("git-m10-gitlinks");
+        let repo_dir = dir.join("repo");
+        let sub_top = repo_dir.join("submod");
+        let sub_nested = repo_dir.join("vendor").join("submod");
+        let plain_dir = repo_dir.join("plain-dir");
+        std::fs::create_dir_all(&sub_top).unwrap();
+        std::fs::create_dir_all(&sub_nested).unwrap();
+        std::fs::create_dir_all(&plain_dir).unwrap();
+
+        let init_sub = |path: &Path, tag: &str| -> String {
+            raw_git(path, &["init", "-q"]);
+            raw_git(path, &["config", "user.name", "test"]);
+            raw_git(path, &["config", "user.email", "test@example.com"]);
+            std::fs::write(path.join("s.txt"), format!("{tag}-1\n")).unwrap();
+            raw_git(path, &["add", "s.txt"]);
+            raw_git(path, &["commit", "-q", "-m", "sub v1"]);
+            String::from_utf8(raw_git(path, &["rev-parse", "HEAD"])).unwrap().trim().to_owned()
+        };
+        let top_v1 = init_sub(&sub_top, "top");
+        let nested_v1 = init_sub(&sub_nested, "nested");
+
+        raw_git(&repo_dir, &["init", "-q"]);
+        raw_git(&repo_dir, &["config", "user.name", "test"]);
+        raw_git(&repo_dir, &["config", "user.email", "test@example.com"]);
+        std::fs::write(repo_dir.join("note.txt"), "v1\n").unwrap();
+        std::fs::write(plain_dir.join("child.txt"), "plain\n").unwrap();
+        raw_git(&repo_dir, &["add", "note.txt", "plain-dir/child.txt"]);
+        raw_git(&repo_dir, &["update-index", "--add", "--cacheinfo", &format!("160000,{top_v1},submod")]);
+        raw_git(&repo_dir, &["update-index", "--add", "--cacheinfo", &format!("160000,{nested_v1},vendor/submod")]);
+
+        let (app, id_str, _guard) = build_git_fixture("m10-gitlinks", &repo_dir).await;
+        let advance_sub = |path: &Path, tag: &str| -> String {
+            std::fs::write(path.join("s.txt"), format!("{tag}\n")).unwrap();
+            raw_git(path, &["add", "s.txt"]);
+            raw_git(path, &["commit", "-q", "-m", tag]);
+            String::from_utf8(raw_git(path, &["rev-parse", "HEAD"])).unwrap().trim().to_owned()
+        };
+        let index_oid = |rel: &str| -> String {
+            let line = String::from_utf8(raw_git(&repo_dir, &["ls-files", "--stage", "--", rel])).unwrap();
+            line.split_whitespace().nth(1).unwrap().to_owned()
+        };
+
+        // 1. Unborn HEAD: staging a tracked 160000 index gitlink updates its OID cleanly.
+        let top_v1 = advance_sub(&sub_top, "top-1b");
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["submod".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(index_oid("submod"), top_v1);
+
+        // Create initial commit so both gitlinks are in HEAD.
+        raw_git(&repo_dir, &["commit", "-q", "-m", "initial with gitlinks"]);
+
+        // Advance both submodules and modify note.txt.
+        let top_v2 = advance_sub(&sub_top, "top-2");
+        let nested_v2 = advance_sub(&sub_nested, "nested-2");
+        std::fs::write(repo_dir.join("note.txt"), "v2\n").unwrap();
+
+        // 2. Ordinary directory and parent folder of a nested gitlink remain refused without staging batch siblings.
+        for bad_dir in ["plain-dir", "vendor"] {
+            let err = stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["note.txt".into(), bad_dir.into()] }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.0, Status::BAD_REQUEST, "{bad_dir} must be refused");
+            assert_eq!(err.1.0["error"], "Staging requires individual files");
+        }
+        assert!(
+            raw_git(&repo_dir, &["diff", "--cached", "--name-only"]).is_empty(),
+            "refused batch must not stage sibling note.txt"
+        );
+        for git_path in [".git", "vendor/.git"] {
+            let err = stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec![git_path.into()] }),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.0, Status::BAD_REQUEST, "{git_path} must be refused");
+        }
+
+        // 3. Batch stage admitting top-level + nested 160000 gitlinks alongside a regular file.
+        assert_eq!(
+            stage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["submod".into(), "vendor/submod".into(), "note.txt".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(index_oid("submod"), top_v2);
+        assert_eq!(index_oid("vendor/submod"), nested_v2);
+
+        // 4. Batch unstage restores both gitlinks and note.txt to HEAD.
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["submod".into(), "vendor/submod".into(), "note.txt".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(index_oid("submod"), top_v1);
+        assert_eq!(index_oid("vendor/submod"), nested_v1);
+        assert!(raw_git(&repo_dir, &["diff", "--cached", "--name-only"]).is_empty());
+
+        // 5. Gitlink removed from index and turned into an ordinary directory (no `.git`) is refused
+        //    on `stage` even while `HEAD` still holds 160000, while `unstage` still restores the HEAD gitlink.
+        raw_git(&repo_dir, &["rm", "--cached", "-f", "--quiet", "--", "vendor/submod"]);
+        assert!(raw_git(&repo_dir, &["ls-files", "--stage", "--", "vendor/submod"]).is_empty());
+        std::fs::remove_dir_all(sub_nested.join(".git")).unwrap();
+        std::fs::write(sub_nested.join("ordinary.txt"), "plain-file\n").unwrap();
+        let converted_err = stage(
+            State(app.clone()),
+            Route((id_str.clone(), "root".into())),
+            Json(Paths { paths: vec!["note.txt".into(), "vendor/submod".into()] }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(converted_err.0, Status::BAD_REQUEST);
+        assert_eq!(converted_err.1.0["error"], "Staging requires individual files");
+        assert!(
+            raw_git(&repo_dir, &["ls-files", "--stage", "--", "vendor/submod"]).is_empty(),
+            "converted ordinary directory must not be recursively staged"
+        );
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str.clone(), "root".into())),
+                Json(Paths { paths: vec!["vendor/submod".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert_eq!(index_oid("vendor/submod"), nested_v1);
+
+        // 6. Newly added index-only gitlink (not in HEAD) is unstaged cleanly via `git restore --staged`.
+        let sub_extra = repo_dir.join("extra-sub");
+        std::fs::create_dir_all(&sub_extra).unwrap();
+        let extra_v1 = init_sub(&sub_extra, "extra");
+        raw_git(&repo_dir, &["update-index", "--add", "--cacheinfo", &format!("160000,{extra_v1},extra-sub")]);
+        assert_eq!(index_oid("extra-sub"), extra_v1);
+        assert_eq!(
+            unstage(
+                State(app.clone()),
+                Route((id_str, "root".into())),
+                Json(Paths { paths: vec!["extra-sub".into()] }),
+            )
+            .await
+            .unwrap()
+            .0["ok"],
+            true
+        );
+        assert!(raw_git(&repo_dir, &["ls-files", "--stage", "--", "extra-sub"]).is_empty());
     }
 }

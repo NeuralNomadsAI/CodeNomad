@@ -372,6 +372,7 @@ async fn send_route(
 
 #[tokio::test]
 async fn provider_accounts_get_and_put_enforce_ownership_policy_fence_and_redaction() {
+    let _git = crate::git::test_git_serial().await;
     let h = setup_harness(
         "openai",
         "openai",
@@ -828,6 +829,10 @@ async fn patch_owner_checked_aborts_before_rename_when_check_fails_after_sync() 
 
 #[tokio::test]
 async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_settings_lock() {
+    // `write_policy` invokes `worktrees::ownership::resolve` (spawning `git rev-parse` under the
+    // 2-slot global `git::SLOTS` semaphore). Serialize against other heavy Git tests so peak
+    // suite load never starves this test before it reaches the settings write lock.
+    let _git = crate::git::test_git_serial().await;
     let h = setup_harness(
         "openai",
         "openai",
@@ -852,7 +857,7 @@ async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_s
 
     let app_req = Arc::clone(&h.app);
     let dir_req = h.directory.clone();
-    let req_task = tokio::spawn(async move {
+    let mut req_task = tokio::spawn(async move {
         send_route(
             app_req,
             principal,
@@ -863,15 +868,23 @@ async fn put_provider_accounts_aborts_cleanly_when_cancelled_while_waiting_for_s
         .await
     });
 
-    // Wait deterministically until the PUT worker reaches patch_checked_committed, then cancel & release.
-    tokio::time::timeout(Duration::from_secs(5), enter_rx)
-        .await
-        .expect("PUT worker must reach settings.write lock")
-        .unwrap();
+    // Wait causally until the PUT worker reaches `patch_checked_committed`, failing immediately if
+    // `req_task` exits early and allowing headroom beyond `put_route`'s 15s deadline under heavy
+    // CPU/disk load without masking real deadlocks.
+    tokio::select! {
+        entered = tokio::time::timeout(Duration::from_secs(20), enter_rx) => {
+            entered.expect("PUT worker must reach settings.write lock").unwrap();
+        }
+        early = &mut req_task => {
+            let _ = release_tx.send(());
+            let _ = lock_task.await;
+            panic!("PUT request exited before reaching settings.write lock: {:?}", early);
+        }
+    }
     cancel.cancel();
     let _ = release_tx.send(());
     lock_task.await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), exit_rx)
+    tokio::time::timeout(Duration::from_secs(15), exit_rx)
         .await
         .expect("PUT worker must finish cleanly after release")
         .unwrap();

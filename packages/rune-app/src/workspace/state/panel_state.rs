@@ -211,7 +211,22 @@ pub(crate) fn mission_confirmation(s: &State) -> Option<El> {
     {
         return missions::briefing_confirmation(&ui.mission_briefing, briefing_act);
     }
+    if let Some(dialog) = missions::calendar_delete_confirmation(panel, confirm_calendar_delete) {
+        return Some(dialog);
+    }
     None
+}
+
+fn confirm_calendar_delete(s: &mut State, accept: bool, tx: &mut rune::Tx) {
+    if !crate::shell::right_panel_visible(s) || right_panel_tab(s) != RightPanelTab::Missions {
+        return;
+    }
+    if let Some(ui) = &mut s.workspace
+        && let Some(panel) = &mut ui.entries[ui.active].missions
+    {
+        panel.confirm_calendar_delete(accept);
+        tx.instant();
+    }
 }
 
 fn control(s: &mut State, source: &missions::Source, gesture: missions::Gesture) {

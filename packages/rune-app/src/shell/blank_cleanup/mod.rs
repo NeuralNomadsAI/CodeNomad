@@ -86,7 +86,8 @@ impl Host {
 }
 
 /// Returns `true` while a `POST /session-cleanup/:sessionId` deletion is already in flight
-/// on the server for `(project_id, session_id)`, so callers do not open a session mid-delete.
+/// on the server for `(project_id, session_id)` (manual or automatic), so callers do not
+/// open a session mid-delete.
 pub(crate) fn is_deleting_session(s: &State, project_id: &str, session_id: &str) -> bool {
     s.blank_cleanup.sweep.as_ref().is_some_and(|sweep| {
         sweep.project.id == project_id
@@ -94,31 +95,31 @@ pub(crate) fn is_deleting_session(s: &State, project_id: &str, session_id: &str)
                 .in_flight
                 .as_ref()
                 .is_some_and(|active| active.deleting && active.session_id == session_id)
-    })
+    }) || workspace::auto_cleanup_is_deleting_session(s, project_id, session_id)
 }
 
 /// Synchronously aborts any in-flight blank-cleanup preflight targeting `session_id`
 /// (and removes it from pending candidates) the moment the user selects or edits it.
 /// Once the server `POST` deletion has already been dispatched, keep waiting for its outcome.
 pub(crate) fn abort_for_session(s: &mut State, session_id: &str) {
-    let Some(sweep) = s.blank_cleanup.sweep.as_mut() else {
-        return;
-    };
-    sweep.candidates.retain(|id| id != session_id);
-    if let Some(active) = sweep.in_flight.as_mut()
-        && !active.deleting
-        && active.session_id == session_id
-    {
-        // Drop `cancel` to abort any in-flight HTTP preflight and atomically close `rx`
-        // before checking emptiness so no producer can race a 401 in after the check.
-        active.cancel = None;
-        active.rx.close();
-        active.aborted = true;
-        if active.rx.is_empty() {
-            sweep.in_flight = None;
+    if let Some(sweep) = s.blank_cleanup.sweep.as_mut() {
+        sweep.candidates.retain(|id| id != session_id);
+        if let Some(active) = sweep.in_flight.as_mut()
+            && !active.deleting
+            && active.session_id == session_id
+        {
+            // Drop `cancel` to abort any in-flight HTTP preflight and atomically close `rx`
+            // before checking emptiness so no producer can race a 401 in after the check.
+            active.cancel = None;
+            active.rx.close();
+            active.aborted = true;
+            if active.rx.is_empty() {
+                sweep.in_flight = None;
+            }
+            (s.wake)();
         }
-        (s.wake)();
     }
+    workspace::auto_cleanup_abort_for_session(s, session_id);
 }
 
 /// Synchronously aborts any dialog or sweep bound to `project_id` (for example right
@@ -138,6 +139,7 @@ pub(crate) fn abort_for_project(s: &mut State, project_id: &str) {
     {
         s.blank_cleanup.cancel();
     }
+    workspace::auto_cleanup_abort_for_project(s, project_id);
 }
 
 /// Synchronously aborts the current in-flight blank-cleanup request if its target
@@ -152,6 +154,7 @@ pub(crate) fn abort_if_protected(s: &mut State) {
     {
         abort_for_session(s, &session_id);
     }
+    workspace::auto_cleanup_abort_if_protected(s);
 }
 
 pub(crate) fn is_open(s: &State) -> bool {
@@ -489,8 +492,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if !active.deleting
         && workspace::session_cleanup_protected(s, &sweep.project.id, &active.session_id)
     {
-        // Cancel HTTP preflight and close `rx` atomically before reading any queued outcome so
-        // no producer can race a 401 in and a completed preflight never triggers POST.
+        // Drop `active.cancel` to abort the HTTP preflight, then close `rx` (only `rx.close()` is
+        // atomic with respect to the producer) before draining any already-queued outcome so no
+        // late 401 can race in and a completed preflight never triggers POST.
         active.cancel = None;
         active.rx.close();
         active.aborted = true;

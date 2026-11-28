@@ -81,6 +81,7 @@ export async function configureMissionPreparation(journal: MissionJournal, store
       expectedRevision: intent.expectedJournalRevision, createdAt: intent.createdAt,
       title: intent.configuration.title, objective: intent.configuration.objective, notes: intent.configuration.notes,
       template: intent.configuration.template, taskMode: intent.configuration.taskMode, profiles: intent.configuration.profiles,
+      ...(intent.configuration.coordinatorGoal ? { coordinatorGoal: true } : {}),
       coordinator: { sessionID: intent.coordinatorSessionID, title, location: original.location } }
     const saved = await journal.event(doc!.id, event.id)
     if (!saved) await journal.assertCanAppend(event)

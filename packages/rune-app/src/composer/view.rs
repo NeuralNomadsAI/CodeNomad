@@ -150,7 +150,7 @@ pub fn view(
             };
             let captured = item.clone();
             let remove = layout::button_tx(
-                t("attachmentChip.removeAriaLabel"),
+                t("sessionView.attachments.removeAriaLabel"),
                 false,
                 screen::action_tx(&scope, move |s, tx| {
                     if s.composer.draft.attachments.get(index) == Some(&captured) {

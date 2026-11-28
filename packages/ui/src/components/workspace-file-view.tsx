@@ -1,5 +1,6 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
 import { Save, WrapText, X } from "lucide-solid"
+import { previewImageType } from "../lib/preview-image-types"
 import { useI18n } from "../lib/i18n"
 import { withHotkey } from "../lib/hotkeys"
 import { useTheme } from "../lib/theme"
@@ -18,7 +19,6 @@ import { decodeWorkspaceText, useWorkspaceFileEditor, workspaceFileFingerprint }
 import { showConfirmDialog } from "../stores/alerts"
 
 const MonacoFileViewer = lazy(() => import("./file-viewer/monaco-file-viewer").then(module => ({ default: module.MonacoFileViewer })))
-const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", gif: "image/gif", svg: "image/svg+xml", ico: "image/x-icon", bmp: "image/bmp", avif: "image/avif" }
 // One light snapshot per live target; releasing a selection releases its view.
 const views = new WeakMap<FilePreviewTarget, { source: boolean; scrollTop: number }>()
 
@@ -43,7 +43,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
     const request = controller = new AbortController(), target = props.target
     const operation = captureBackendOperation(props.instanceId, request.signal)
     if (!operation.current()) return
-    if (!previewable() && !imageTypes[target.path.split(".").pop()!.toLowerCase()]) void loadMonaco().catch(() => {})
+    if (!previewable() && !previewImageType(target.path)) void loadMonaco().catch(() => {})
     setLoading(true)
     setError(null)
     try {
@@ -59,7 +59,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         }
         return
       }
-      const mime = imageTypes[target.path.split(".").pop()!.toLowerCase()]
+      const mime = previewImageType(target.path)
       if (mime && result.encoding === "base64") setContent({ image: `data:${mime};base64,${result.contents}` })
       else {
         try {
@@ -135,14 +135,14 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       </Show>
       <Show when={content()?.text !== undefined && (!previewable() || source())}>
         <Show when={editor.editable()}>
-          <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
+          <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => { setError(null); void editor.save() }}><Save size={16} /></button>
         </Show>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void explicitRefresh()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
-    <Show when={editor.conflict()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
+    <Show when={editor.conflict() && error() !== t("filesPanel.saveConflict")}><div class="p-3 text-error" role="alert">{t("filesPanel.draftConflict")}</div></Show>
     <Show when={editor.limited()}><div class="p-3 text-error" role="alert">{t("filesPanel.draftLimit")}</div></Show>
     <Show when={(recovering() || loading()) && !content()}><p class="p-3 text-secondary">{t("instanceInfo.loading")}</p></Show>
     <Show when={content()}>{value => <>
@@ -150,7 +150,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
       <Show when={value().binary}><div class="p-3 text-secondary">{t("filesPanel.binary")}</div></Show>
       <Show when={value().text !== undefined}>
         <Show when={previewable() && !source()} fallback={<div class="git-diff-content"><Suspense>
-          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} readOnly={!editor.editable()} onContentChange={editor.change} onSave={value => void editor.save(value)} />
+          <MonacoFileViewer scopeKey={`${props.instanceId}:${props.target.directory}:workspace-editor`} path={props.target.path} content={editor.text()} wordWrap={wrap() ? "on" : "off"} readOnly={!editor.editable()} onContentChange={editor.change} onSave={value => { setError(null); void editor.save(value) }} />
         </Suspense></div>}>
           <Show when={mermaid()} fallback={<div class="workspace-markdown" ref={element => {
             queueMicrotask(() => { if (element.isConnected) element.scrollTop = views.get(props.target)?.scrollTop ?? 0 })

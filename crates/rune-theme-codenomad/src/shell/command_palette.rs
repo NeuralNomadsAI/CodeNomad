@@ -7,6 +7,7 @@ use rune::{El, KeyEvent, ScrollSpec, Tx, col, icon, row, text};
 use std::rc::Rc;
 
 pub const TRIGGER: &str = "command-palette-toggle";
+pub const LIST: &str = "command-palette-list";
 
 pub fn trigger<S: 'static>(
     label: &'static str,
@@ -83,7 +84,7 @@ pub fn list(title: &str, viewport_height: f32, rows: impl IntoIterator<Item = El
     let available = (vh - top - 88.0).max(0.0);
     let max_height = available.min((vh * 0.6).min(420.0));
     col()
-        .key("command-palette-list")
+        .key(LIST)
         .role("listbox")
         .label(title)
         .full_width()
@@ -172,7 +173,6 @@ pub fn command_row<S: 'static>(
         .pad(Space::Sm)
         .separate(Space::Sm)
         .focus_selected(selected)
-        .reveal_selected(selected)
         .fill(if selected {
             t.color("menu-item-selected-bg")
         } else {

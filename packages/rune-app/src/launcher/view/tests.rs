@@ -145,3 +145,134 @@ fn product_root_enables_web_focus_for_launcher_controls() {
         "product root must enable shared web_focus so pressable buttons without focusable(true) take focus"
     );
 }
+
+#[test]
+fn launcher_address_and_password_fields_preserve_focus_editing_and_a11y() {
+    let mut s = launcher_state();
+    s.screen.launcher_mut().unwrap().address = rune::TextEdit::new("");
+    let mut rt = Runtime::new(s, crate::view, (960.0, 640.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+
+    let click_and_type = |rt: &mut Runtime<State>, key: &str, text: &str| {
+        let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing {key}"));
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.02);
+        rt.key(rune::KeyEvent {
+            key: rune::Key::Text(text.into()),
+            mods: rune::Mods::default(),
+        });
+        rt.frame(0.02);
+    };
+
+    click_and_type(&mut rt, "server-address", "https://demo.local:9898");
+    click_and_type(&mut rt, "server-password", "s3cr3t-launcher-pass");
+
+    let l = rt.state.screen.launcher().unwrap();
+    assert_eq!(l.address.text, "https://demo.local:9898");
+    assert_eq!(l.password.text, "s3cr3t-launcher-pass");
+
+    let elements = rt.elements();
+    let addr = elements
+        .iter()
+        .find(|n| n.key.as_deref() == Some("server-address"))
+        .unwrap();
+    let pass = elements
+        .iter()
+        .find(|n| n.key.as_deref() == Some("server-password"))
+        .unwrap();
+    assert_eq!(addr.role, "textbox");
+    assert_eq!(pass.role, "textbox");
+    assert!(
+        !elements
+            .iter()
+            .any(|n| n.text.as_deref() == Some("s3cr3t-launcher-pass")),
+        "secure launcher password must never leak into ElementInfo::text"
+    );
+    let a11y = rt.a11y_json();
+    assert!(a11y.contains("https://demo.local:9898"));
+    assert!(
+        !a11y.contains("s3cr3t-launcher-pass"),
+        "secure launcher password must never leak into a11y_json"
+    );
+}
+
+#[test]
+fn direct_recovery_fields_mount_inside_dialog_without_leaking_password() {
+    let mut s = crate::init();
+    s.phase = crate::Phase::Ready;
+    let backend = crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap();
+    crate::chat::authentication::expired(
+        &mut s,
+        codenomad_client::transport::Authentication {
+            backend,
+            confirmed: true,
+        },
+    );
+    let mut rt = Runtime::new(s, crate::view, (960.0, 640.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+
+    let elements = rt.elements();
+    let dialog = elements
+        .iter()
+        .find(|n| n.key.as_deref() == Some("direct-recovery-dialog"))
+        .unwrap();
+    let user = elements
+        .iter()
+        .find(|n| n.key.as_deref() == Some("direct-recovery-username"))
+        .unwrap();
+    let pass = elements
+        .iter()
+        .find(|n| n.key.as_deref() == Some("direct-recovery-password"))
+        .unwrap();
+    assert_eq!(dialog.role, "dialog");
+    let dialog_prefix = format!("{}/", dialog.path);
+    assert!(
+        user.path.starts_with(&dialog_prefix) && pass.path.starts_with(&dialog_prefix),
+        "username and password must be descendants of the recovery dialog"
+    );
+    let has_intervening_scope = |field_path: &str| {
+        elements.iter().any(|n| {
+            n.path.starts_with(&dialog_prefix)
+                && field_path.starts_with(&format!("{}/", n.path))
+                && matches!(n.role, "form" | "dialog" | "alertdialog")
+        })
+    };
+    assert!(
+        !has_intervening_scope(&user.path) && !has_intervening_scope(&pass.path),
+        "no intermediate form or dialog scope may split recovery username and password"
+    );
+
+    let (ux, uy) = rt.find("direct-recovery-username").unwrap();
+    rt.pointer_down(ux, uy);
+    rt.pointer_up(ux, uy);
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text("-admin".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+
+    let (px, py) = rt.find("direct-recovery-password").unwrap();
+    rt.pointer_down(px, py);
+    rt.pointer_up(px, py);
+    rt.frame(0.02);
+    rt.key(rune::KeyEvent {
+        key: rune::Key::Text("s3cr3t-recovery-pass".into()),
+        mods: rune::Mods::default(),
+    });
+    rt.frame(0.02);
+
+    assert_eq!(
+        rt.state.direct_authentication.username.text,
+        "codenomad-admin"
+    );
+    assert_eq!(
+        rt.state.direct_authentication.password.text,
+        "s3cr3t-recovery-pass"
+    );
+    assert!(
+        !rt.a11y_json().contains("s3cr3t-recovery-pass"),
+        "secure recovery password must never leak into a11y_json"
+    );
+}
