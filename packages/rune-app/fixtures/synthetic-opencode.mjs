@@ -69,6 +69,9 @@ export async function syntheticOpenCode({project,password,requests}) {
       }
       if(url.pathname==='/api/location')return json({data:{directory:project}})
       if(url.pathname==='/api/debug/location')return json([{directory:project}])
+      // The server reads the project's Git itself once the native worktree list names it.
+      if(url.pathname==='/api/worktree'&&req.method==='GET')return json([{directory:project}])
+      if(url.pathname==='/api/worktree/refresh')return empty()
       if(url.pathname==='/api/plugin')return json({location:{directory},data:[{id:'codenomad-session-pruning',state:{status:'active'}}]})
       if(url.pathname==='/api/session'&&req.method==='GET')return json({data:[...records.values()],cursor:{}})
       if(url.pathname==='/api/session'&&req.method==='POST'){
