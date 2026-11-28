@@ -389,18 +389,12 @@ pub fn narrow_nav<S: 'static>(
     label: &str,
     sections: impl IntoIterator<Item = (&'static str, &'static str, bool)>,
     touch: bool,
-    rtl: bool,
     select: impl Fn(&mut S, &'static str, &mut rune::Tx) + Clone + 'static,
 ) -> El {
     let dark = layout::dark();
     let t = tokens(dark);
     let kit = &*crate::kit(dark);
     let row_height = if touch { 44.0 } else { 36.0 };
-    let chevron_glyph = if rtl {
-        &crate::shell::icons::BACK
-    } else {
-        &crate::git_panel::CHEVRON_RIGHT
-    };
     let mut list = col()
         .key("settings-narrow-list")
         .role("list")
@@ -412,8 +406,9 @@ pub fn narrow_nav<S: 'static>(
         .separate(Space::Xxs);
     for (key, row_label, selected) in sections {
         let select = select.clone();
-        let chevron = rune::icon(chevron_glyph, 14.0)
+        let chevron = rune::icon(&crate::git_panel::CHEVRON_RIGHT, 14.0)
             .color(t.color("text-muted"))
+            .mirror_in_rtl()
             .a11y_hidden();
         list = list.child(
             SidebarRow::new(row_label)
@@ -444,6 +439,21 @@ pub fn narrow_frame(content: El, overlays: Vec<El>) -> El {
         .fill(t.color("surface-secondary"))
         .child(content)
         .children(overlays)
+}
+
+pub fn embedded_narrow_frame<S: 'static>(
+    title: &str,
+    content: El,
+    overlays: Vec<El>,
+    on_escape: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    narrow_frame(content, overlays)
+        .key("embedded-preferences")
+        .absolute(0.0, 0.0)
+        .role("dialog")
+        .label(title)
+        .modal_tx(true, on_escape)
+        .modal_click_outside(false)
 }
 
 pub fn narrow_list_screen(header: El, list: El) -> El {

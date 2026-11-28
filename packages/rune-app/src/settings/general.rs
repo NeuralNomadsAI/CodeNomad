@@ -155,6 +155,11 @@ impl Controls {
         self.draft.borrow().dirty
     }
 
+    #[cfg(test)]
+    pub(super) fn fixture_dirty(&mut self) {
+        self.draft.get_mut().dirty = true;
+    }
+
     pub(super) fn busy(&self, prefs: &Preferences) -> bool {
         prefs.palette_saving() || self.draft.borrow().awaiting_save.is_some()
     }

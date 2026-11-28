@@ -491,7 +491,6 @@ impl Catalog {
         changed
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn dismiss_modal(&mut self, tx: &mut rune::Tx) -> bool {
         self.manager.dismiss_modal(tx)
     }

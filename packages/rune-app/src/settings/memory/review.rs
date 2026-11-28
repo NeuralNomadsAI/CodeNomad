@@ -408,7 +408,6 @@ impl Review {
             })
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn cancel_cleanup_confirmation(&mut self) -> bool {
         self.tidy.take().is_some()
     }
