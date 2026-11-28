@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import {test} from 'node:test'
 import {mkdtemp, mkdir, readFile, writeFile, rm} from 'node:fs/promises'
 import path from 'node:path'
-import {buildInventory, defaultRoot, generate} from './component-inventory.mjs'
+import {buildInventory, canonicalPath, defaultRoot, generate, lockfileMismatches, sortPaths} from './component-inventory.mjs'
 
 async function fixture(run) {
   // All generated fixture files stay inside the owned worktree.
@@ -106,3 +106,94 @@ test('real Solid dismissal component has source props, translated accessible lab
   const alert = output.get('target/rune-inventory/components__alert-dialog.json')
   assert.ok(alert.testEvidence.some(item => item.file.endsWith('/alert-dialog.test.ts') && item.links.some(link => link.kind === 'browser-path-literal')))
 })
+
+test('cross-OS path sorting is identical for Windows and POSIX roots and produces code-point order in inventory', async () => {
+  const relative = [
+    'packages/ui/src/panel/a.css',
+    'packages/ui/src/panelA.css',
+    'packages/ui/src/panel2.css',
+    'packages/ui/src/panel-b.css',
+    'packages/ui/src/panel.css',
+    'packages/ui/src/panel_c.css',
+    'packages/ui/src/panela.css',
+  ]
+  const winRoot = 'D:\\CodeNomad'
+  const posixRoot = '/home/runner/work/CodeNomad/CodeNomad'
+  const winPaths = relative.map(item => `${winRoot}\\${item.replaceAll('/', '\\')}`)
+  const posixPaths = relative.map(item => `${posixRoot}/${item}`)
+  // Sanity check: raw OS-native .sort() diverges because '\\' (92) > '2'/'A' whereas '/' (47) < '2'/'A'.
+  const naiveWin = [...winPaths].sort().map(item => canonicalPath(item, winRoot))
+  const naivePosix = [...posixPaths].sort().map(item => canonicalPath(item, posixRoot))
+  assert.notDeepEqual(naiveWin, naivePosix)
+
+  const sortedWin = sortPaths(winPaths, winRoot).map(item => canonicalPath(item, winRoot))
+  const sortedPosix = sortPaths(posixPaths, posixRoot).map(item => canonicalPath(item, posixRoot))
+  const expected = [
+    'packages/ui/src/panel-b.css',
+    'packages/ui/src/panel.css',
+    'packages/ui/src/panel/a.css',
+    'packages/ui/src/panel2.css',
+    'packages/ui/src/panelA.css',
+    'packages/ui/src/panel_c.css',
+    'packages/ui/src/panela.css',
+  ]
+  assert.deepEqual(sortedWin, expected)
+  assert.deepEqual(sortedPosix, expected)
+
+  await fixture(async (root, put) => {
+    await put('packages/ui/src/styles/panel/a.css', '.shared { color: var(--panel-a); }\n:root { --panel-a: #111; }\n')
+    await put('packages/ui/src/styles/panel2.css', '.shared { color: var(--panel-2); }\n:root { --panel-2: #222; }\n')
+    await put('packages/ui/src/styles/panelA.css', '.shared { color: var(--panel-A); }\n:root { --panel-A: #333; }\n')
+    await put('packages/ui/src/styles/panel-b.css', '.shared { color: var(--panel-b); }\n:root { --panel-b: #444; }\n')
+    await put('packages/ui/src/components/panel/Item.tsx', `import {type Component} from 'solid-js'\nexport const PanelItem: Component = () => <div class="shared"/>\n`)
+    await put('packages/ui/src/components/panelA.tsx', `import {type Component} from 'solid-js'\nexport const PanelA: Component = () => <div class="shared"/>\n`)
+    const output = await buildInventory(root)
+    const index = output.get('dev-docs/rune-components.generated.json')
+    const panelHashes = Object.keys(index.inputHashes).filter(key => key.startsWith('packages/ui/src/styles/panel'))
+    assert.deepEqual(panelHashes, [
+      'packages/ui/src/styles/panel-b.css',
+      'packages/ui/src/styles/panel/a.css',
+      'packages/ui/src/styles/panel2.css',
+      'packages/ui/src/styles/panelA.css',
+    ])
+    const controlSheet = output.get('target/rune-inventory/components__control.json')
+    const sharedFiles = controlSheet.components[0].classes
+      .find(item => item.name === 'shared')
+      .definitions.map(def => def.file)
+      .filter(file => file.startsWith('packages/ui/src/styles/panel'))
+    assert.deepEqual(sharedFiles, [
+      'packages/ui/src/styles/panel-b.css',
+      'packages/ui/src/styles/panel/a.css',
+      'packages/ui/src/styles/panel2.css',
+      'packages/ui/src/styles/panelA.css',
+    ])
+    const panelModules = index.modules.map(item => item.source).filter(source => source.startsWith('packages/ui/src/components/panel'))
+    assert.deepEqual(panelModules, [
+      'packages/ui/src/components/panel/Item.tsx',
+      'packages/ui/src/components/panelA.tsx',
+    ])
+  })
+})
+
+test('generate refuses mismatched lockfile versions and reports drift on stale checks', async () => fixture(async (root, put) => {
+  await put('package-lock.json', JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      '': {name: 'fixture'},
+      'node_modules/@opencode/client': {version: '2.4.2'},
+      'node_modules/@codenomad/ui': {resolved: 'packages/ui', link: true},
+      'node_modules/@esbuild/linux-x64': {version: '0.25.0', optional: true},
+    },
+  }))
+  await put('node_modules/@opencode/client/package.json', JSON.stringify({name: '@opencode/client', version: '2.4.1'}))
+  assert.deepEqual(await lockfileMismatches(root), [{pkg: '@opencode/client', installed: '2.4.1', expected: '2.4.2'}])
+  await assert.rejects(generate({root}), /@opencode\/client: installed 2\.4\.1, lockfile 2\.4\.2/)
+
+  await put('dev-docs/rune-components.generated.json', '{}\n')
+  await assert.rejects(generate({root, check: true}), /stale; node_modules mismatches package-lock\.json \(@opencode\/client: installed 2\.4\.1, lockfile 2\.4\.2\)/)
+
+  await put('node_modules/@opencode/client/package.json', JSON.stringify({name: '@opencode/client', version: '2.4.2'}))
+  assert.deepEqual(await lockfileMismatches(root), [])
+  await generate({root})
+  await generate({root, check: true})
+}))
