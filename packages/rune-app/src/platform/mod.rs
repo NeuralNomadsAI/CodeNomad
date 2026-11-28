@@ -409,8 +409,11 @@ pub fn scene_is(name: &str) -> bool {
             == Some(name)
     }
 }
+/// Whether this machine's folder picker can name a folder of the server. A browser has none,
+/// and a phone's folders aren't the server's: there the launcher lists the server's own
+/// (`launcher/folders.rs`).
 pub fn folder_picker_available() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    cfg!(not(any(target_arch = "wasm32", target_os = "android")))
 }
 pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     let scope = s.input_scope.clone();

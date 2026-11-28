@@ -427,25 +427,57 @@ mod tests {
     }
     #[test]
     fn the_safe_area_keeps_the_application_inside_a_phones_insets() {
-        fn view(_: &(), cx: &mut rune::Cx<()>) -> El {
+        // What the body and the surface under it measure: the shell sizes its overlays by the
+        // first, and the second is what the system's bars sit on.
+        #[derive(Default)]
+        struct Measured {
+            body: [f32; 4],
+            surface: [f32; 4],
+        }
+        fn view(_: &Measured, cx: &mut rune::Cx<Measured>) -> El {
             render(cx, |cx| {
-                safe_area(cx, rune::el().key("body").w_full().h_full())
+                let body = rune::el()
+                    .key("body")
+                    .w_full()
+                    .h_full()
+                    .on_layout_tx(|s: &mut Measured, bounds, _| s.body = bounds);
+                safe_area(cx, body).on_layout_tx(|s: &mut Measured, bounds, _| s.surface = bounds)
             })
         }
-        let mut rt = rune::Runtime::new((), view, (200.0, 400.0), rune::Env::default());
-        rt.frame(0.0);
-        assert_eq!(
-            rt.find("body"),
-            Some((100.0, 200.0)),
-            "no insets: the whole window"
+        let window = [0.0, 0.0, 200.0, 400.0];
+        let mut rt = rune::Runtime::new(
+            Measured::default(),
+            view,
+            (200.0, 400.0),
+            rune::Env::default(),
         );
+        // A layout is reported on the frame after it.
+        let mut at = 0.0;
+        let mut settle = |rt: &mut rune::Runtime<Measured>| {
+            for _ in 0..3 {
+                rt.frame(at);
+                at += 16.0;
+            }
+        };
+        settle(&mut rt);
+        assert_eq!(rt.state.body, window, "no insets: the whole window");
         // A keyboard opening or a rotation changes them while the application runs.
         rt.set_safe_area([10.0, 4.0, 30.0, 6.0]);
-        rt.frame(16.0);
+        settle(&mut rt);
         assert_eq!(
-            rt.find("body"),
-            Some((101.0, 190.0)),
+            rt.state.body,
+            [6.0, 10.0, 190.0, 360.0],
             "inside top, right, bottom and left"
+        );
+        assert_eq!(
+            rt.state.surface, window,
+            "the surface still reaches the edges"
+        );
+        rt.set_safe_area([0.0; 4]);
+        settle(&mut rt);
+        assert_eq!(
+            rt.state.body, window,
+            "the keyboard closed: the whole window again"
         );
     }
     #[test]
