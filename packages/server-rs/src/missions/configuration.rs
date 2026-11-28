@@ -514,6 +514,108 @@ fn legacy(v: &Value) -> R<Value> {
     Ok(json!({"timing":timing,"condition":condition,"ends":{
         "maxLaunches":nullable_int("maxLaunches", 1)?,"afterMs":nullable_int("afterMs", 1)?,"at":nullable_int("at", 0)?}}))
 }
+pub(super) fn criteria_only(v: &Value) -> R<Value> {
+    criteria(v)
+}
+pub(super) struct SchedulePlan {
+    pub conditions: Vec<Value>,
+    pub fallback: bool,
+}
+pub(super) struct LaunchModel {
+    pub schedules: Vec<Value>,
+    pub plans: Vec<SchedulePlan>,
+    pub triggers: Vec<Value>,
+    pub events: Vec<Value>,
+    pub until: Option<u64>,
+    pub end_after_ms: Option<u64>,
+    pub max_launches: Option<u64>,
+}
+/// Full reading of both stored shapes (`missionLaunchModel` + `missionCriteriaStructure`).
+pub(super) fn launch_model_full(launch: &Value) -> LaunchModel {
+    if let Some(when) = launch["when"].as_array() {
+        let items: &[Value] = if when.len() == 1 && when[0]["kind"] == "now" { &[] } else { when };
+        let mut runs: Vec<(bool, Vec<usize>)> = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            let sched = is_schedule(item);
+            if runs.last().is_some_and(|(s, _)| *s == sched) {
+                runs.last_mut().unwrap().1.push(index);
+            } else {
+                runs.push((sched, vec![index]));
+            }
+        }
+        let mut trigger_role = vec![true; items.len()];
+        let mut plan_by_index: std::collections::HashMap<usize, (Vec<usize>, bool)> = std::collections::HashMap::new();
+        for (pos, (sched, indices)) in runs.iter().enumerate() {
+            if !*sched {
+                if pos > 0 {
+                    for &index in indices {
+                        trigger_role[index] = false;
+                    }
+                }
+                continue;
+            }
+            let next_indices = runs.get(pos + 1).map(|(_, idx)| idx.clone()).unwrap_or_default();
+            for &index in indices {
+                plan_by_index.insert(index, (next_indices.clone(), pos > 0));
+            }
+        }
+        let mut schedules = Vec::new();
+        let mut plans = Vec::new();
+        let mut events = Vec::new();
+        let mut triggers = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            if is_schedule(item) {
+                let (cond_idx, fallback) = plan_by_index.remove(&index).unwrap_or_default();
+                schedules.push(item.clone());
+                plans.push(SchedulePlan {
+                    conditions: cond_idx.into_iter().map(|i| items[i].clone()).collect(),
+                    fallback,
+                });
+            } else {
+                events.push(item.clone());
+                if trigger_role[index] {
+                    triggers.push(item.clone());
+                }
+            }
+        }
+        return LaunchModel { schedules, plans, triggers, events, until: None, end_after_ms: None, max_launches: None };
+    }
+    let timing = &launch["timing"];
+    let events = if launch["condition"].is_null() { vec![] } else { vec![launch["condition"].clone()] };
+    let schedules: Vec<Value> = match timing["kind"].as_str() {
+        Some("immediate") => vec![],
+        Some("multi") => timing["calendars"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|c| json!({"kind":"cron","expression":c["expression"],"zone":c["zone"]}))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => vec![timing.clone()],
+    };
+    let plans = schedules.iter().map(|_| SchedulePlan { conditions: events.clone(), fallback: false }).collect();
+    let triggers = if schedules.is_empty() { events.clone() } else { vec![] };
+    let repeats = matches!(timing["kind"].as_str(), Some("every" | "cron" | "multi"));
+    let ends = &launch["ends"];
+    let max_launches = if repeats {
+        ends["maxLaunches"].as_u64()
+    } else if timing["kind"] == "immediate" && events.is_empty() {
+        None
+    } else {
+        Some(1)
+    };
+    LaunchModel {
+        schedules,
+        plans,
+        triggers,
+        events,
+        until: ends["at"].as_u64(),
+        end_after_ms: ends["afterMs"].as_u64(),
+        max_launches,
+    }
+}
 pub(super) fn launch(v: &Value) -> R<Value> {
     criteria(v).or_else(|_| legacy(v))
 }
@@ -609,7 +711,7 @@ pub fn shape(input: &Value) -> R<Value> {
 }
 fn parse(input: &Value, refine: bool) -> R<Value> {
     let o = obj(input, &["title", "objective", "notes", "template", "profiles", "taskMode", "profileID", "executionHost",
-        "roots", "watchedConversationIDs", "coordinatorSessionID", "coordinatorSelectionAuthor", "launch"])?;
+        "roots", "watchedConversationIDs", "coordinatorSessionID", "coordinatorSelectionAuthor", "coordinatorGoal", "launch"])?;
     let mut out = Map::new();
     let title = js_trim(o.get("title").and_then(Value::as_str).ok_or(())?);
     if !(1..=60).contains(&zlen(title)) || title.contains(['\r', '\n']) {
@@ -680,6 +782,9 @@ fn parse(input: &Value, refine: bool) -> R<Value> {
     if let Some(a) = o.get("coordinatorSelectionAuthor") {
         let a = obj(a, &["coordinatorSessionID"])?;
         out.insert("coordinatorSelectionAuthor".into(), json!({"coordinatorSessionID":native_id(a.get("coordinatorSessionID"))?}));
+    }
+    if let Some(g) = o.get("coordinatorGoal") {
+        out.insert("coordinatorGoal".into(), json!(g.as_bool().ok_or(())?));
     }
     let launch = launch(o.get("launch").ok_or(())?)?;
     out.insert("launch".into(), launch.clone());

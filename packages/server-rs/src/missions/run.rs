@@ -109,6 +109,7 @@ pub struct Create {
     coordinator_session_id: Option<String>,
     profiles: Option<Value>,
     task_mode: Option<String>,
+    coordinator_goal: Option<bool>,
     #[serde(rename = "watchedConversationIDs")]
     watched_conversation_ids: Option<Vec<String>>,
 }
@@ -184,6 +185,9 @@ async fn create_once(
     if let Some(profiles) = profiles {
         input["profiles"] = profiles;
     }
+    if q.coordinator_goal == Some(true) {
+        input["coordinatorGoal"] = json!(true);
+    }
     if lifetime.is_cancelled() {
         return Err(unavailable());
     }
@@ -227,6 +231,92 @@ async fn create_once(
         attempt.confirm_permissions(app, &result["mission"], false).await?;
     }
     Ok(result)
+}
+
+/// Prepares an ordinary prepared Mission for a programmed calendar without
+/// registering an HTTP creation receipt, sharing `create_once`'s capability,
+/// attachment, fence, acknowledgement and permission confirmation checks.
+pub(super) async fn prepare_for_calendar(
+    app: &App,
+    base_scope: &Scope,
+    request_id: &str,
+    config: &Value,
+    coordinator_session_id: Option<&str>,
+    lifetime: &CancellationToken,
+) -> Result<String, Error> {
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
+    }
+    let template = config["template"].as_str().ok_or_else(creation_admission::invalid)?;
+    let objective = config["objective"].as_str().map(js_trim).ok_or_else(creation_admission::invalid)?;
+    let task_mode = config["taskMode"].as_str().unwrap_or("native");
+    let options = creation_admission::options(Some(task_mode), None, coordinator_session_id)?;
+    let profiles = creation_profiles(template, config.get("profiles").cloned())?;
+    let mut scope = base_scope.clone();
+    let mut input = json!({
+        "requestID": js_trim(request_id),
+        "objective": objective,
+        "template": template,
+        "taskMode": options.task_mode,
+        "prepared": true,
+        "expectedCoordinatorLocation": { "directory": scope.dir },
+    });
+    if let Some(title) = config.get("title").and_then(Value::as_str) {
+        input["title"] = json!(js_trim(title));
+    }
+    if let Some(notes) = config.get("notes").and_then(Value::as_str) {
+        input["notes"] = json!(notes);
+    }
+    if let Some(profiles) = profiles {
+        input["profiles"] = profiles;
+    }
+    if config.get("coordinatorGoal").and_then(Value::as_bool) == Some(true) {
+        input["coordinatorGoal"] = json!(true);
+    }
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
+    }
+    let (status, caps) = scope.call(app, "documentCapabilities", &json!({}), 10, 65536).await?;
+    if !status.is_success() || !document_capabilities(&caps["output"]) {
+        return Err(creation_unavailable("Unified Mission documents unavailable"));
+    }
+    if let Some(session) = &options.coordinator {
+        input["coordinatorSessionID"] = json!(session);
+        input["expectedCoordinatorLocation"] = scope.attach(app, session).await?;
+    } else if let Some(block) = crate::sessions::permission_mode::new_root(
+        app,
+        &scope.endpoint,
+        &scope.dir,
+        caps["output"]["rootPermissions"] == true,
+    )
+    .await
+    .map_err(|_| creation_unavailable("Mission root permissions unavailable"))?
+    {
+        input["permissions"] = block;
+    }
+    let _permit = scope.permit().ok_or_else(|| {
+        (
+            Status::CONFLICT,
+            Json(json!({"error":"Worktree deletion is in progress","code":"creation-worktree-deleting"})),
+        )
+    })?;
+    scope.refresh(app).await?;
+    if lifetime.is_cancelled() {
+        return Err(creation_admission::unavailable());
+    }
+    let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, js_trim(request_id)), 24));
+    let attempt = Attempt { scope, input, mission };
+    let result = attempt.create(app).await?;
+    if !attempt.acknowledgement(&result) || attempt.scope.refresh(app).await.is_err() {
+        return Err(creation_admission::uncertain());
+    }
+    if result["acknowledgement"] == "fresh" {
+        attempt.confirm_permissions(app, &result["mission"], false).await?;
+    }
+    result["mission"]["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(creation_admission::uncertain)
 }
 
 fn valid_text(value: &str, min: usize, max: usize) -> bool {

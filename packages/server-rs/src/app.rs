@@ -64,6 +64,7 @@ pub struct App {
     pub calendar_slot: tokio::sync::Mutex<()>,
     pub calendar_claims: missions::calendar::Claims,
     pub calendar_holds: missions::calendar::Holds,
+    pub calendar_taken_over: missions::calendars::TakenOver,
     pub sidecars: Lock<Vec<crate::sidecars::SideCar>>,
     pub usage: crate::usage::Usage,
     pub provider_usage: Arc<crate::provider_usage::State>,
@@ -179,6 +180,7 @@ impl App {
             calendar_slot: Default::default(),
             calendar_claims: Default::default(),
             calendar_holds: Default::default(),
+            calendar_taken_over: Default::default(),
         }
     }
     pub fn workspace(&self, id: &str) -> Result<Workspace, Error> {
