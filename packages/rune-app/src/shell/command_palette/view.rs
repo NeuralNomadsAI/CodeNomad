@@ -11,6 +11,9 @@ use crate::{
 use rune::El;
 use rune_theme_codenomad::{catalogue, field_kit, layout, shell::command_palette as theme};
 
+pub(super) const QUERY_INPUT_MODE: rune::InputMode = rune::InputMode::Search;
+pub(super) const QUERY_AUTOFILL: rune::Autofill = rune::Autofill::Off;
+
 pub(crate) fn trigger(s: &State, touch: bool) -> El {
     let label = t("instanceShell.commandPalette.openAriaLabel");
     let help = settings::with_shortcut_label(s, label, "open-command-palette");
@@ -39,6 +42,8 @@ pub(crate) fn overlay(s: &State) -> Option<El> {
     let active_descendant = selected.map(|index| item_key(items[index].id));
     let search_field = layout::hinted_field(&palette.query, t("commandPalette.searchPlaceholder"))
         .label(t("commandPalette.searchPlaceholder"))
+        .input_mode(QUERY_INPUT_MODE)
+        .autofill(QUERY_AUTOFILL)
         .active_descendant(active_descendant)
         .on_edit({
             let scope = scope.clone();
