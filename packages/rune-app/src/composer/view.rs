@@ -339,27 +339,30 @@ fn editor(
                 }
             })
     };
-    layout::composer_field_with_status(
-        input,
-        bounds,
-        s.draft.focused,
-        move |y, max| {
-            scroll.set((y, max));
-        },
-        caret_pins.inner,
-        caret_pins.stack,
-        s.composer.shell_mode,
-        shell_status,
+    crate::chat::reading::track_other_scroller_hover(
+        layout::composer_field_with_status(
+            input,
+            bounds,
+            s.draft.focused,
+            move |y, max| {
+                scroll.set((y, max));
+            },
+            caret_pins.inner,
+            caret_pins.stack,
+            s.composer.shell_mode,
+            shell_status,
+        )
+        .key("composer")
+        .drawn_rect_into(&s.tool_diff_preferences.composer_bounds)
+        .on_layout_tx(|s: &mut State, rect, tx| {
+            if !s.screen.is_launcher() {
+                crate::chat::ToolDiffPreferences::composer_field_layout(s, rect, tx);
+            } else {
+                tx.live_only();
+            }
+        }),
+        crate::chat::reading::HOVER_COMPOSER,
     )
-    .key("composer")
-    .drawn_rect_into(&s.tool_diff_preferences.composer_bounds)
-    .on_layout_tx(|s: &mut State, rect, tx| {
-        if !s.screen.is_launcher() {
-            crate::chat::ToolDiffPreferences::composer_field_layout(s, rect, tx);
-        } else {
-            tx.live_only();
-        }
-    })
 }
 
 pub fn overlays(s: &State, layer: &mut Vec<El>) {

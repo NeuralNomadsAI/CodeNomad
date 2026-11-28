@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "Déplacer le critère {number}",
   "missions.scheduling.error.author": "Saisissez un auteur valide.",
   "missions.scheduling.error.capability": "Programmation indisponible. Conservez le brouillon ou retirez les critères de lancement.",
+  "missions.scheduling.error.coordinatorProfile": "La conversation existante n’utilise pas l’agent, le modèle et la réflexion du coordinateur. Accordez-les, ou utilisez une nouvelle session.",
   "missions.scheduling.error.count": "Trop de critères : au plus huit horaires (sept si les événements sont vérifiés à part) et huit événements.",
   "missions.scheduling.error.cron": "Saisissez un cron natif valide avec une seule position de seconde par minute.",
   "missions.scheduling.error.days": "Choisissez au moins un jour de la semaine.",

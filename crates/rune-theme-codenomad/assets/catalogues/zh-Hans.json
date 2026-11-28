@@ -1559,6 +1559,7 @@
   "missions.scheduling.dragHandle": "移动条件 {number}",
   "missions.scheduling.error.author": "请输入有效的作者。",
   "missions.scheduling.error.capability": "计划不可用。请保留草稿或移除启动条件。",
+  "missions.scheduling.error.coordinatorProfile": "现有对话未使用协调者的代理、模型和思考。请使它们一致，或使用新会话。",
   "missions.scheduling.error.count": "条件过多：最多八个计划（单独检查事件时为七个）和八个事件。",
   "missions.scheduling.error.cron": "请输入有效的原生 cron 表达式，每分钟仅一个秒位置。",
   "missions.scheduling.error.days": "请至少选择一个星期几。",

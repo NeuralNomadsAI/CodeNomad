@@ -84,23 +84,26 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
     let mut body = col().full_width().separate(Space::Sm);
     let wrap = !s.transcript_display.toggled(&format!("{key}-wrap"));
     if let Some(code) = code {
-        body = body.child(markdown::tool_pane(
-            window(
-                s,
-                format!("{key}-execute-script"),
-                &[code],
-                limit,
-                |shown, units| {
-                    markdown::search_code(
-                        shown,
-                        "javascript",
-                        tool.status != "running" && units <= HIGHLIGHT_LIMIT,
-                        wrap,
-                        query,
-                    )
-                },
+        body = body.child(crate::chat::reading::inner_scroller(
+            markdown::tool_pane(
+                window(
+                    s,
+                    format!("{key}-execute-script"),
+                    &[code],
+                    limit,
+                    |shown, units| {
+                        markdown::search_code(
+                            shown,
+                            "javascript",
+                            tool.status != "running" && units <= HIGHLIGHT_LIMIT,
+                            wrap,
+                            query,
+                        )
+                    },
+                ),
+                false,
             ),
-            false,
+            !wrap,
         ));
     }
     if count == 0 {
@@ -162,23 +165,26 @@ pub(super) fn view(s: &State, key: &str, tool: &Tool, query: Option<Query<'_>>) 
         );
         if expanded && input.is_object() {
             row = row.child(if let Some(input) = rendered_input {
-                markdown::tool_pane(
-                    window(
-                        s,
-                        format!("{call}-input"),
-                        &[&input],
-                        TOOL_LIMIT,
-                        |shown, units| {
-                            markdown::search_code(
-                                shown,
-                                "json",
-                                tool.status != "running" && units <= HIGHLIGHT_LIMIT,
-                                wrap,
-                                query,
-                            )
-                        },
+                crate::chat::reading::inner_scroller(
+                    markdown::tool_pane(
+                        window(
+                            s,
+                            format!("{call}-input"),
+                            &[&input],
+                            TOOL_LIMIT,
+                            |shown, units| {
+                                markdown::search_code(
+                                    shown,
+                                    "json",
+                                    tool.status != "running" && units <= HIGHLIGHT_LIMIT,
+                                    wrap,
+                                    query,
+                                )
+                            },
+                        ),
+                        false,
                     ),
-                    false,
+                    !wrap,
                 )
             } else {
                 text(t("toolCall.output.tooLarge"))
