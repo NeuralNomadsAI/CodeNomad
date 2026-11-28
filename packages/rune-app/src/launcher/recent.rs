@@ -12,6 +12,7 @@ pub(crate) struct RecentEntry {
     pub display_path: String,
     pub open_tab_key: Option<String>,
     pub project_id: Option<String>,
+    pub open_elsewhere: bool,
     pub temporary: bool,
     pub last_accessed: Option<u64>,
 }
@@ -104,21 +105,124 @@ fn abbreviate_home(original: &str, after_users: &str, sep: char) -> String {
     }
 }
 
+fn strip_windows_extended_prefix(path: &str) -> Cow<'_, str> {
+    if let Some(rest) = path
+        .strip_prefix(r"\\?\")
+        .or_else(|| path.strip_prefix("//?/"))
+    {
+        if rest.len() >= 4
+            && rest[..3].eq_ignore_ascii_case("UNC")
+            && matches!(rest.as_bytes()[3], b'\\' | b'/')
+        {
+            return Cow::Owned(format!(r"\\{}", &rest[4..]));
+        }
+        let b = rest.as_bytes();
+        if b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' {
+            return Cow::Borrowed(rest);
+        }
+    }
+    Cow::Borrowed(path)
+}
+
+fn push_lexical_segments<'a>(
+    segments: impl Iterator<Item = &'a str>,
+    lowercase: bool,
+    out: &mut Vec<String>,
+) {
+    for part in segments {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            out.pop();
+            continue;
+        }
+        out.push(if lowercase {
+            part.to_lowercase()
+        } else {
+            part.to_owned()
+        });
+    }
+}
+
+/// Canonical lexical key for deduplicating recent project paths regardless of slash style,
+/// trailing separators, Windows extended prefixes, dot segments, or drive/case spelling.
+pub(crate) fn canonical_recent_path_key(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let stripped = strip_windows_extended_prefix(trimmed);
+    let s = stripped.as_ref();
+    let bytes = s.as_bytes();
+
+    // Windows drive path (e.g. "D:\CodeNomad", "d:/codenomad/", "D:")
+    if bytes.len() >= 2
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes.len() == 2 || matches!(bytes[2], b'\\' | b'/'))
+    {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = if bytes.len() > 2 { &s[3..] } else { "" };
+        let mut parts = Vec::new();
+        push_lexical_segments(rest.split(['/', '\\']), true, &mut parts);
+        return if parts.is_empty() {
+            format!("{drive}:/")
+        } else {
+            format!("{drive}:/{}", parts.join("/"))
+        };
+    }
+
+    // Windows UNC path (e.g. "\\Server\Share\Project")
+    if let Some(rest) = s.strip_prefix(r"\\") {
+        let mut raw_parts = rest.split(['/', '\\']).filter(|p| !p.is_empty());
+        if let (Some(server), Some(share)) = (raw_parts.next(), raw_parts.next()) {
+            let mut parts = Vec::new();
+            push_lexical_segments(raw_parts, true, &mut parts);
+            let head = format!("//{}/{}", server.to_lowercase(), share.to_lowercase());
+            return if parts.is_empty() {
+                head
+            } else {
+                format!("{head}/{}", parts.join("/"))
+            };
+        }
+    }
+
+    // POSIX absolute path (preserves case and literal backslashes, normalizes slashes and dot segments).
+    if let Some(after_slash) = s.strip_prefix('/') {
+        let double_slash_root = after_slash.starts_with('/') && !after_slash.starts_with("//");
+        let rest = if double_slash_root {
+            &after_slash[1..]
+        } else {
+            after_slash
+        };
+        let mut parts = Vec::new();
+        push_lexical_segments(rest.split('/'), false, &mut parts);
+        let prefix = if double_slash_root { "//" } else { "/" };
+        return if parts.is_empty() {
+            prefix.to_owned()
+        } else {
+            format!("{prefix}{}", parts.join("/"))
+        };
+    }
+
+    s.trim_end_matches(['/', '\\']).to_owned()
+}
+
+pub(crate) fn same_recent_path(left: &str, right: &str) -> bool {
+    if same_server_path(left, right) {
+        return true;
+    }
+    let a = canonical_recent_path_key(left);
+    let b = canonical_recent_path_key(right);
+    !a.is_empty() && a == b
+}
+
 fn path_hash(path: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
-    let is_windows = looks_like_windows_path(path);
-    let trimmed = path.trim().trim_end_matches(['/', '\\']);
-    for byte in trimmed.bytes() {
-        let normalized = if is_windows {
-            if byte == b'/' {
-                b'\\'
-            } else {
-                byte.to_ascii_lowercase()
-            }
-        } else {
-            byte
-        };
-        hash ^= u64::from(normalized);
+    let key = canonical_recent_path_key(path);
+    for byte in key.bytes() {
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
@@ -228,7 +332,7 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
         let local = l
             .custom_names
             .iter()
-            .find(|(p, _)| same_server_path(p, path))
+            .find(|(p, _)| same_recent_path(p, path))
             .map(|(_, name)| name.as_str());
         project_display_name(path, local.or(ws_name).or(saved_name))
     };
@@ -240,16 +344,17 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
                       open_tab_key: Option<String>,
                       project_id: Option<String>,
                       last_accessed: Option<u64>| {
-        if path.trim().is_empty()
+        let path = path.trim();
+        if path.is_empty()
             || l.removed_recents
                 .iter()
-                .any(|removed| same_server_path(removed, path))
+                .any(|removed| same_recent_path(removed, path))
         {
             return;
         }
         if let Some(existing) = entries
             .iter_mut()
-            .find(|entry| same_server_path(&entry.path, path))
+            .find(|entry| same_recent_path(&entry.path, path))
         {
             if existing.open_tab_key.is_none() {
                 existing.open_tab_key = open_tab_key;
@@ -257,9 +362,10 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
             if existing.project_id.is_none() {
                 existing.project_id = project_id;
             }
-            if existing.last_accessed.is_none() {
-                existing.last_accessed = last_accessed;
-            }
+            existing.last_accessed = match (existing.last_accessed, last_accessed) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
             if ws_name.is_some() || saved_name.is_some() {
                 existing.display_name = resolve_name(&existing.path, ws_name, saved_name);
             }
@@ -272,6 +378,7 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
             display_path: display_path(path),
             open_tab_key,
             project_id,
+            open_elsewhere: false,
             temporary,
             last_accessed,
         });
@@ -282,9 +389,9 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
         let open_tab = crate::workspace::open_tab_for_folder(s, path);
         let ws_name = workspace_recents
             .iter()
-            .find(|(f, _, _, _)| same_server_path(f, path))
+            .find(|(f, _, _, _)| same_recent_path(f, path))
             .and_then(|(_, name, _, _)| name.as_deref());
-        let project = l.projects.iter().find(|p| same_server_path(&p.path, path));
+        let project = l.projects.iter().find(|p| same_recent_path(&p.path, path));
         upsert(
             path,
             ws_name,
@@ -304,7 +411,7 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
         let project_id = l
             .projects
             .iter()
-            .find(|p| same_server_path(&p.path, folder))
+            .find(|p| same_recent_path(&p.path, folder))
             .map(|p| p.id.clone());
         upsert(
             folder,
@@ -315,6 +422,10 @@ pub(crate) fn collect_recent_entries(s: &State) -> Vec<RecentEntry> {
             project_id,
             None,
         );
+    }
+
+    for entry in &mut entries {
+        entry.open_elsewhere = entry.open_tab_key.is_none() && entry.project_id.is_some();
     }
 
     // Sort newest-accessed entries first; entries without a timestamp preserve insertion order.

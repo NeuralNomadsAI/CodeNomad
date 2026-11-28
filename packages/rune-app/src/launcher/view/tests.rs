@@ -937,7 +937,7 @@ fn home_view_fidelity_hero_card_headers_recents_alignment_and_version_pill() {
             let name = find_el("project-p-alpha-name");
             let meta = find_el("project-p-alpha-meta");
             let path = find_el("project-p-alpha-path");
-            assert!(path.truncate, "recent path must enable head truncation");
+            assert!(path.truncate, "recent path must enable end truncation");
             let expected_prefix = format!("{} ·", t("folderSelection.browseMenu.thisComputer"));
             let meta_prefix = format!("{}/", meta.path);
             assert!(
@@ -1255,4 +1255,90 @@ fn home_view_loads_meta_temporary_button_and_scrolls_20_recents_within_viewport(
             short_pill.rect
         );
     });
+}
+
+#[test]
+fn recent_entries_deduplicate_canonical_paths_and_flag_open_elsewhere() {
+    let mut state = connected_home_state();
+    if let Some(l) = state.screen.launcher_mut() {
+        l.projects.push(crate::catalog::Project {
+            id: "p-win".into(),
+            path: r"D:\CodeNomad".into(),
+            temporary: false,
+        });
+    }
+    crate::settings::fixture_state(
+        &mut state,
+        serde_json::json!({
+            "recentFolders": [
+                { "path": r"D:\CodeNomad", "lastAccessed": 1000 },
+                { "path": "d:/codenomad/", "lastAccessed": 5000, "projectName": "CodeNomad Main" },
+                { "path": r"\\?\D:\CodeNomad\.", "lastAccessed": 2000 },
+                { "path": r"D:\work\..\CodeNomad", "lastAccessed": 3000 },
+                { "path": "/Users/alice/work/alpha", "lastAccessed": 4000 },
+                { "path": "/Users/alice/work/./alpha/", "lastAccessed": 4500 },
+                { "path": "~/Documents/notes", "lastAccessed": 1500 },
+                { "path": "~/Documents/notes/", "lastAccessed": 2500 },
+            ]
+        }),
+    );
+
+    let entries = recent::collect_recent_entries(&state);
+    assert_eq!(
+        entries.len(),
+        3,
+        "canonical path variants must collapse into one entry each: {entries:?}"
+    );
+
+    let win = entries
+        .iter()
+        .find(|e| recent::same_recent_path(&e.path, r"D:\CodeNomad"))
+        .expect("deduplicated Windows entry");
+    assert_eq!(win.last_accessed, Some(5000));
+    assert_eq!(win.display_name, "CodeNomad Main");
+    assert!(
+        win.open_elsewhere,
+        "server project without an open tab in this window must be marked open_elsewhere"
+    );
+    assert_eq!(
+        recent::path_menu_key(r"D:\CodeNomad"),
+        recent::path_menu_key(r"\\?\d:/work/../CodeNomad/")
+    );
+
+    let alpha = entries
+        .iter()
+        .find(|e| recent::same_recent_path(&e.path, "/Users/alice/work/alpha"))
+        .expect("deduplicated POSIX entry");
+    assert_eq!(alpha.last_accessed, Some(4500));
+    assert!(
+        !alpha.open_elsewhere,
+        "project open as a tab in this window must show OPEN badge, not open_elsewhere"
+    );
+
+    let notes = entries
+        .iter()
+        .find(|e| e.path == "~/Documents/notes")
+        .expect("deduplicated tilde entry");
+    assert_eq!(notes.last_accessed, Some(2500));
+    assert!(!notes.open_elsewhere);
+
+    let mut rt = Runtime::new(state, crate::view, (1040.0, 720.0), Env::new(false, 1.0));
+    rt.frame(0.0);
+    rt.frame(0.02);
+    assert!(
+        rt.find("project-p-win-open-elsewhere").is_some(),
+        "open-elsewhere project must render its status dot"
+    );
+    assert!(
+        rt.find("project-p-alpha-open-elsewhere").is_none(),
+        "project open in this window must not render an open-elsewhere dot"
+    );
+
+    rt.update(|s, tx| launcher::remove_recent(s, "d:/codenomad/", tx));
+    assert!(
+        recent::collect_recent_entries(&rt.state)
+            .iter()
+            .all(|e| !recent::same_recent_path(&e.path, r"D:\CodeNomad")),
+        "removing a canonical variant must remove the deduplicated recent entry"
+    );
 }

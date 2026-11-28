@@ -1,6 +1,7 @@
 //! Theme primitives for the CodeNomad New tab / Home launcher view.
 pub mod clone_dialog;
 mod icons;
+pub mod recent_menu;
 pub use icons::{
     BRAND_LOGO, BRAND_LOGO_BACKING, DISCORD, FOLDER, GIT_BRANCH, GITHUB, HEART, LAPTOP, STAR, TRASH,
 };
@@ -21,6 +22,7 @@ const LOGO_SIZE: f32 = 64.0;
 const HERO_TITLE_SIZE: f32 = 28.0;
 const PANEL_MIN_HEIGHT: f32 = 256.0;
 const STACKED_RECENT_MIN_HEIGHT: f32 = 160.0;
+const OPEN_ELSEWHERE_DOT_SIZE: f32 = 6.0;
 
 pub fn is_stacked(viewport_width: f32) -> bool {
     viewport_width > 0.0 && viewport_width < MOBILE_BREAKPOINT
@@ -312,11 +314,9 @@ pub fn card(
     let t = tokens(dark());
     let pad_x = t.space(Space::Md).px();
     let pad_y = t.space(Space::Sm).px();
-    let title_style = TextStyle::new(
-        t.number("font-size-lg").px(),
-        t.number("font-weight-semibold").px(),
-    )
-    .lh(t.number("font-size-lg").px() * t.number("line-height-tight").px());
+    let title_size = t.number("font-size-base").px();
+    let title_style = TextStyle::new(title_size, t.number("font-weight-semibold").px())
+        .lh(title_size * t.number("line-height-tight").px());
     let mut title_block = col().shrink().min_w(0.0).separate(Space::Xxs).child(
         text(title)
             .key(format!("{key}-title"))
@@ -514,6 +514,7 @@ pub fn recent_row<S: 'static>(
     display_path: &str,
     relative_time: Option<&str>,
     open_badge: Option<El>,
+    open_elsewhere: Option<&str>,
     menu_trigger: El,
     a11y_label: &str,
     disabled: bool,
@@ -523,6 +524,8 @@ pub fn recent_row<S: 'static>(
     let icon_size = t.length(Length::Icon).px();
     let pad_x = t.space(Space::Md).px();
     let pad_y = t.space(Space::Sm).px();
+    let mut name_style = t.text(TextRole::Label);
+    name_style.weight = t.number("font-weight-semibold").px();
     let small_size = t.number("font-size-xs").px();
     let mono_small = TextStyle::new(small_size, t.number("font-weight-regular").px())
         .lh(small_size * t.number("line-height-normal").px())
@@ -541,7 +544,7 @@ pub fn recent_row<S: 'static>(
         .child(
             text(display_name)
                 .key(format!("{primary_key}-name"))
-                .text_role(TextRole::Label)
+                .font(name_style)
                 .color(if disabled {
                     t.color("text-muted")
                 } else {
@@ -574,7 +577,7 @@ pub fn recent_row<S: 'static>(
             .font(mono_small)
             .color(t.color("text-muted"))
             .literal_direction()
-            .truncate_head()
+            .truncate()
             .grow(1.0)
             .shrink()
             .min_w(0.0),
@@ -604,11 +607,14 @@ pub fn recent_row<S: 'static>(
         .py(pad_y)
         .role("button")
         .label(a11y_label)
-        .help(a11y_label)
+        .help(open_elsewhere.unwrap_or(a11y_label))
         .disabled(disabled)
         .key(primary_key.to_owned())
         .child(title_line)
         .child(path_line);
+    if let Some(elsewhere) = open_elsewhere {
+        primary = primary.description(elsewhere);
+    }
     if !disabled {
         let action = Rc::new(on_open);
         let on_press = action.clone();
@@ -631,6 +637,16 @@ pub fn recent_row<S: 'static>(
     }
     if let Some(badge) = open_badge {
         line = line.child(badge);
+    }
+    if open_elsewhere.is_some() {
+        line = line.child(
+            rune::el()
+                .key(format!("{primary_key}-open-elsewhere"))
+                .size(OPEN_ELSEWHERE_DOT_SIZE, OPEN_ELSEWHERE_DOT_SIZE)
+                .radius(OPEN_ELSEWHERE_DOT_SIZE * 0.5)
+                .fill(t.color("status-ready-fg"))
+                .a11y_hidden(),
+        );
     }
     line.child(menu_trigger)
 }

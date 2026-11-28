@@ -9,7 +9,8 @@ use crate::{
 };
 use rune::{El, Tx, col, text};
 use rune_theme_codenomad::{
-    Space, action_menu, field_kit, git_panel, launcher as theme,
+    Space, field_kit, git_panel,
+    launcher::{self as theme, recent_menu},
     layout::{self, Layout, literal_field},
     shell::icons,
 };
@@ -39,7 +40,7 @@ fn build_recent_menu(s: &State, entry: &recent::RecentEntry, disabled: bool) -> 
     let rename_tab_key = entry.open_tab_key.clone();
     let rename_seed = entry.display_name.clone();
     let rename_return = trigger_key.clone();
-    let mut rename_item = action_menu::Item::new(
+    let mut rename_item = recent_menu::Item::new(
         "rename",
         t("folderSelection.recent.rename"),
         screen::action_tx(&scope, move |s: &mut State, tx: &mut Tx| {
@@ -67,7 +68,7 @@ fn build_recent_menu(s: &State, entry: &recent::RecentEntry, disabled: bool) -> 
     rename_item.disabled = disabled;
 
     let remove_path = entry.path.clone();
-    let mut remove_item = action_menu::Item::new(
+    let mut remove_item = recent_menu::Item::new(
         "remove",
         t("folderSelection.recent.remove"),
         screen::action_tx(&scope, move |s: &mut State, tx: &mut Tx| {
@@ -77,7 +78,7 @@ fn build_recent_menu(s: &State, entry: &recent::RecentEntry, disabled: bool) -> 
     remove_item.icon = Some(Rc::new(|| theme::menu_icon(&theme::TRASH)));
     remove_item.disabled = disabled;
 
-    let mut menu = action_menu::Menu::new(
+    let mut menu = recent_menu::Menu::new(
         &key,
         &label,
         vec![Rc::new(rename_item), Rc::new(remove_item)],
@@ -95,7 +96,7 @@ fn build_recent_menu(s: &State, entry: &recent::RecentEntry, disabled: bool) -> 
             }
         }
     }));
-    action_menu::view(
+    recent_menu::view(
         &l.recent_menu,
         launcher::recent_menu_state,
         Rc::new(menu),
@@ -357,6 +358,9 @@ pub fn view(s: &State) -> El {
                     }),
                 )
             });
+            let open_elsewhere = entry
+                .open_elsewhere
+                .then(|| t("folderSelection.recent.openElsewhere"));
             let (trigger, _popover) = build_recent_menu(s, entry, l.pending || waiting);
             let open_path = entry.path.clone();
             let open_tab = entry.open_tab_key.clone();
@@ -368,6 +372,7 @@ pub fn view(s: &State) -> El {
                 &entry.display_path,
                 rel.as_deref(),
                 open_badge,
+                open_elsewhere,
                 trigger,
                 &a11y_label,
                 l.pending || waiting,

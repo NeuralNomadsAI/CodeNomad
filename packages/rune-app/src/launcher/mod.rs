@@ -105,7 +105,7 @@ pub struct Launcher {
     recent_save_job: Option<(u64, Receiver<codenomad_client::settings::PatchOutcome>)>,
     pending_recent_save: Option<Vec<serde_json::Value>>,
     last_patched_recents: Option<Vec<serde_json::Value>>,
-    pub(crate) recent_menu: rune_theme_codenomad::action_menu::State<State>,
+    pub(crate) recent_menu: rune_theme_codenomad::launcher::recent_menu::State<State>,
     pub(crate) open_recent_menu: Option<String>,
     pub(crate) catalogue_watch: Option<codenomad_client::stream::CatalogueWatch>,
     pub(crate) catalogue_generation: u64,
@@ -476,7 +476,7 @@ pub(crate) fn session_loaded(s: &State) -> bool {
 
 pub(crate) fn recent_menu_state(
     s: &mut State,
-) -> Option<&mut rune_theme_codenomad::action_menu::State<State>> {
+) -> Option<&mut rune_theme_codenomad::launcher::recent_menu::State<State>> {
     s.screen.launcher_mut().map(|l| &mut l.recent_menu)
 }
 
@@ -489,7 +489,7 @@ pub(crate) fn recent_menu_open(s: &State) -> bool {
 pub(crate) fn dismiss_recent_menu(s: &mut State, tx: &mut Tx) {
     let open = s.screen.launcher().and_then(|l| l.open_recent_menu.clone());
     if let Some(key) = open {
-        rune_theme_codenomad::action_menu::clear(s, recent_menu_state, &key, tx);
+        rune_theme_codenomad::launcher::recent_menu::clear(s, recent_menu_state, &key, tx);
         if let Some(l) = s.screen.launcher_mut() {
             l.open_recent_menu = None;
         }
@@ -546,7 +546,7 @@ pub(crate) fn persist_recent_name(s: &mut State, folder: &str, custom_name: Opti
     }
     if let Some(l) = s.screen.launcher_mut() {
         l.custom_names
-            .retain(|(path, _)| !codenomad_client::same_server_path(path, folder));
+            .retain(|(path, _)| !recent::same_recent_path(path, folder));
         if let Some(name) = trimmed {
             l.custom_names.push((folder.to_owned(), name.to_owned()));
         }
@@ -557,7 +557,7 @@ pub(crate) fn persist_recent_name(s: &mut State, folder: &str, custom_name: Opti
             if row
                 .get("path")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|path| codenomad_client::same_server_path(path, folder))
+                .is_some_and(|path| recent::same_recent_path(path, folder))
                 && let Some(obj) = row.as_object_mut()
             {
                 match trimmed {
@@ -595,11 +595,11 @@ pub(crate) fn remove_recent(s: &mut State, folder: &str, tx: &mut Tx) {
     dismiss_recent_menu(s, tx);
     if let Some(l) = s.screen.launcher_mut() {
         l.custom_names
-            .retain(|(path, _)| !codenomad_client::same_server_path(path, folder));
+            .retain(|(path, _)| !recent::same_recent_path(path, folder));
         if !l
             .removed_recents
             .iter()
-            .any(|path| codenomad_client::same_server_path(path, folder))
+            .any(|path| recent::same_recent_path(path, folder))
         {
             l.removed_recents.push(folder.to_owned());
         }
@@ -610,7 +610,7 @@ pub(crate) fn remove_recent(s: &mut State, folder: &str, tx: &mut Tx) {
         rows.retain(|row| {
             !row.get("path")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|path| codenomad_client::same_server_path(path, folder))
+                .is_some_and(|path| recent::same_recent_path(path, folder))
         });
         if rows.len() != before {
             queue_recent_folders_patch(s, rows);
@@ -627,7 +627,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     if menu_unavailable && recent_menu_open(s) {
         dismiss_recent_menu(s, tx);
     }
-    let menu_changed = rune_theme_codenomad::action_menu::poll(s, recent_menu_state, tx);
+    let menu_changed = rune_theme_codenomad::launcher::recent_menu::poll(s, recent_menu_state, tx);
     let save_outcome = s.screen.launcher_mut().and_then(|l| {
         let (generation, rx) = l.recent_save_job.as_ref()?;
         let outcome = rx.try_recv().ok()?;
