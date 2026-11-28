@@ -12,13 +12,6 @@ import { SettingsInfoTip } from "./settings/settings-info-tip"
 import { openSettingsConfigFile } from "../stores/settings-screen"
 import { missionPassageRequests } from "./mission-passage-requests"
 import { createMissionDisclosure } from "./mission-disclosure"
-import { backendOf } from "../lib/backend-client"
-import { generateUUID } from "../lib/client-identity"
-import { convertMissionSchedule, convertibleMissionSchedule } from "../stores/mission-schedule-conversion"
-import type { useMissionCalendars } from "../stores/mission-calendars"
-
-// Schedules this window already tried to move to programmed Missions: one attempt per configuration, so an edit tries again.
-const conversions = new Set<string>()
 
 export function createMissionScheduleList(props: { instanceId: string; projectID?: string; directory: string;
   active: () => boolean; enabled: () => boolean; refresh: number; selected?: string; detailId: string;
@@ -26,9 +19,7 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
   tracking?: JSX.Element; passage?: { reading: boolean; onToggle(): void }; onPassage?: (id: string | undefined) => void;
   overview?: { reading: boolean; onToggle(): void };
   onNoPassage?: (id: string) => void;
-  selectedRequests?: { passageID: string; count: number }
-  /** Programmed Missions take over the schedules they can carry; `onConverted` follows each one moved. */
-  calendars?: Pick<ReturnType<typeof useMissionCalendars>, "available" | "act">; onConverted?: (id: string) => void }) {
+  selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const list = useMissionSchedules({ instanceId: () => props.instanceId, projectID: () => props.projectID,
@@ -48,22 +39,6 @@ export function createMissionScheduleList(props: { instanceId: string; projectID
     if (doc && !doc.pendingPassage && list.fresh(doc.id) && !list.loading() && !list.error() && !list.selectionError())
       props.onNoPassage?.(doc.id)
     props.onPassage?.(doc?.pendingPassage ? props.selected : undefined)
-  })
-  createEffect(() => {
-    const calendars = props.calendars
-    if (!calendars?.available() || !props.active() || !props.enabled() || list.error() || list.loading()) return
-    const instanceId = props.instanceId, directory = props.directory
-    for (const doc of schedules()) {
-      const key = JSON.stringify([instanceId, directory, doc.id, doc.configuration])
-      if (conversions.has(key) || !list.fresh(doc.id) || !convertibleMissionSchedule(doc)) continue
-      conversions.add(key)
-      void convertMissionSchedule(doc, {
-        save: (calendar, configuration) => calendars.act(calendar, { configuration, paused: true }),
-        remove: async () => { await backendOf(instanceId).api.controlMissionSchedule(instanceId, doc.id, { action: "delete", requestID: generateUUID(),
-          expectedRevision: doc.revision, directory, deleteManagedSessions: false }) },
-        resume: calendar => calendars.act(calendar, { action: "resume" }),
-      }).then(() => { props.onConverted?.(doc.id); setRevision(value => value + 1) }, () => undefined)
-    }
   })
   const date = (value: number | null, zone?: string) => value === null ? t("missions.scheduleList.none")
     : new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short", ...(zone ? { timeZone: zone } : {}) }).format(value)

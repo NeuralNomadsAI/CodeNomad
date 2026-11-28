@@ -7,6 +7,8 @@ import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import { missionProgramInput } from "../../missions/program-tool"
+import { legacyScheduleKey } from "../../missions/legacy-schedules"
+import { missionTombstoneSchema } from "../../missions/mission-document"
 
 const directory = "C:/private-fixture/worktree", projectID = "private-project"
 
@@ -33,15 +35,16 @@ async function fixture() {
       create: async (input: any) => { const value = { id: `aut_${++next}`, tz: "UTC", status: "active", runCount: 0, ...input }; automations.push(value); return value },
       pause: async ({ automationID }: any) => { row(automationID).status = "paused" },
       resume: async ({ automationID }: any) => { row(automationID).status = "active" },
-      delete: async ({ automationID }: any) => { automations.splice(automations.indexOf(row(automationID)), 1) },
+      delete: async ({ automationID }: any) => { if (!row(automationID)) throw new Error("Automation not found"); automations.splice(automations.indexOf(row(automationID)), 1) },
     } },
     rpc: () => new Proxy({}, { get: (_, method) => async (input: any) => method === "documentCapabilities" ? { version: 1, automaticStart: true, rootPermissions: true }
       : handlers[method](input, { error: (type: string, message: string, data: any) => { throw Object.assign(new Error(message), { type, data }) } }) }),
   }
   const workspace = { id: "workspace" }, base = { directory }
+  const connection = { client, assertCurrent() {} }
   const manager: any = {
     get: () => workspace, list: () => [workspace], getServiceLocation: () => base, getServiceWslDistro: () => undefined,
-    getSharedServiceClient: async () => client, getSharedServiceConnection: async () => ({ client, assertCurrent() {} }),
+    getSharedServiceClient: async () => client, getSharedServiceConnection: async () => connection,
     ownsLocation: async (_id: string, location: any) => location.directory === directory,
     getServiceDirectoryForPath: async (_id: string, path: string) => path === directory ? directory : undefined,
     getWorktreeIdentityForPath: async (_id: string, path: string) => path === directory ? "C:/private-fixture/physical" : undefined,
@@ -69,7 +72,16 @@ async function fixture() {
   sessions.set("ses_agent", { id: "ses_agent", projectID, location: { directory } })
   const agent = (program: object, sessionID = "ses_agent") => controlAgentMissionSchedule({ workspaceManager: manager, worktreeDeletionFence: fence,
     settings: { getProfileScope: () => ({ key: "profile" }) } } as never, sessionID, { kind: "schedule", input: { program } }, new AbortController().signal) as Promise<any>
-  return { automations, sessions, call, mission, rpc, agent, close: async () => { await app.close(); await dispose() } }
+  // A schedule the recurring engine left in the plugin's storage, with the native Automation that woke it.
+  const legacy = (id: string, extra: Record<string, unknown> = {}, launch: unknown = configuration().launch) => {
+    automations.push({ id: `aut_old_${id}`, sessionID: `ses_cn_schedule_${id}`, name: `cm_${id}`, status: "active", runCount: 3, tz: "UTC" })
+    storage.set(legacyScheduleKey({ id: projectID, canonical: directory }, id), { id, projectID, projectCanonical: directory, revision: 7, timeGeneration: 1, state: "running", blocked: null, calendars: [{ scheduleID: `aut_old_${id}`, sessionID: `ses_cn_schedule_${id}` }],
+      configuration: { ...configuration("Old instructions"), launch, title: `Old ${id}`, roots: [{ mode: "directory-only", directory }], profileID: "profile", executionHost: "local" }, ...extra })
+  }
+  const stored = (id: string) => storage.get(legacyScheduleKey({ id: projectID, canonical: directory }, id))
+  // Deleted the way the recurring engine deletes: what still reads its storage keeps reading it.
+  const retired = (id: string) => { const left = stored(id); return "deletedAt" in left && missionTombstoneSchema.safeParse(left).success }
+  return { automations, sessions, call, mission, rpc, agent, legacy, stored, retired, missions: async () => (await rpc.list({})).missions as Array<{ id: string; title?: string; runState?: string }>, close: async () => { await app.close(); await dispose() } }
 }
 const profile = { agent: "fixture", model: { providerID: "provider", id: "model" } }
 const configuration = (objective = "Review", when: unknown[] = [{ kind: "cron", expression: "0 9 * * *", zone: "UTC" }]) => ({
@@ -148,5 +160,47 @@ test("an agent saves, lists, pauses and deletes a programmed Mission of its conv
     await assert.rejects(f.agent({ action: "list" }, "ses_unknown"), "a conversation outside the project controls nothing")
     for (const invalid of [{ action: "list", id: "cal_agent" }, { action: "save", id: "cal_agent" }, { action: "pause" }, { action: "pause", id: "cal_agent", paused: true }, { action: "save", id: "a b", configuration: configuration() }])
       assert.equal(missionProgramInput.safeParse(invalid).success, false, JSON.stringify(invalid).slice(0, 60))
+  } finally { await f.close() }
+})
+
+test("the schedules the recurring engine left become programmed Missions, running or paused as they were", async () => {
+  const f = await fixture()
+  try {
+    f.legacy("msn_running", {}); f.legacy("msn_held", { blocked: "failed" }); f.legacy("msn_paused", { state: "paused" })
+    f.legacy("msn_busy", { pending: { id: "psg_under_way" } })
+    // The conversation one of them named no longer exists: its first launch opens another.
+    const named = f.stored("msn_running"); named.configuration.coordinatorSessionID = "ses_deleted"
+    const { calendars } = (await f.call("GET")).body
+    assert.deepEqual(calendars.map((item: any) => [item.id, item.title, item.paused, item.mission.objective, item.mission.coordinatorSessionID]).sort(),
+      [["msn_held", "Old msn_held", true, "Old instructions", undefined], ["msn_paused", "Old msn_paused", true, "Old instructions", undefined],
+        ["msn_running", "Old msn_running", false, "Old instructions", undefined]])
+    assert.deepEqual(["msn_running", "msn_held", "msn_paused"].map(f.retired), [true, true, true], "the schedules are deleted")
+    const old = () => f.automations.map(item => String(item.id)).filter(id => id.startsWith("aut_old_"))
+    assert.deepEqual(old(), ["aut_old_msn_busy"], "their own Automations are gone")
+    assert.equal((await f.mission(calendars[0].missionID)).runState, "prepared")
+    assert.equal(f.retired("msn_busy"), false, "a schedule whose passage is under way waits for its end")
+    const count = f.automations.length
+    await f.call("GET")
+    assert.equal(f.automations.length, count, "taken over once")
+    delete f.stored("msn_busy").pending
+    assert.equal((await f.call("GET")).body.calendars.length, 4)
+    assert.deepEqual([f.retired("msn_busy"), old()], [true, []])
+  } finally { await f.close() }
+})
+
+test("a schedule whose launch criteria do not carry over becomes an ordinary prepared Mission; one already programmed is only removed", async () => {
+  const f = await fixture()
+  try {
+    f.legacy("msn_other", {}, { when: [{ kind: "mission-completed", missionID: "msn_source" }] })
+    await f.call("PUT", "/msn_done", { configuration: configuration("Already programmed") })
+    assert.equal(f.retired("msn_other"), true, "whatever the operation")
+    f.legacy("msn_done", { state: "stopped" })
+    const before = f.automations.filter(item => item.action?.args?.calendar === "msn_done").map(item => item.id)
+    const { calendars } = (await f.call("GET")).body
+    assert.deepEqual(calendars.map((item: any) => [item.id, item.mission.objective]), [["msn_done", "Already programmed"]])
+    assert.deepEqual(f.automations.filter(item => item.action?.args?.calendar === "msn_done").map(item => item.id), before, "its programmed Mission is untouched")
+    assert.deepEqual([f.retired("msn_other"), f.retired("msn_done")], [true, true])
+    const titles = (await f.missions()).map(item => [item.title, item.runState])
+    assert.ok(titles.some(([title, state]) => title === "Old msn_other" && state === "prepared"), JSON.stringify(titles))
   } finally { await f.close() }
 })
