@@ -137,7 +137,7 @@ Le drapeau indique l’état de la Mission ; son chevron porte l’attention de 
 | Symbole pause orange | En pause : rien ne continue ni ne se lance tant que vous ne reprenez pas. |
 | Triangle d’avertissement orange | Interrompue, avec une action pour continuer. |
 | Vert | Une Mission, tâche ou exécution programmée réussie attend votre consultation dans cette fenêtre. |
-| Symbole pause d’accent avec un petit trait neutre statique dessous | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
+| Sablier d’accent | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
 | Icône d’accent seule | Mission préparée ou tâche qui n’a pas commencé. |
 | Neutre | Fin consultée, programmation arrêtée ou **État non confirmé** ; lisez le texte d’état. |
 

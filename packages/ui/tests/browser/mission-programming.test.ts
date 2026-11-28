@@ -104,7 +104,7 @@ test("a programmed Mission is one ordinary row that shows and controls its progr
     state.missions = [{ ...mission("C", "Daily review"), status: "completed" } as MissionMap, mission("B", "Other work")]
     state.calendars = [programming("C")]
     await missionRefresh(page).click()
-    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark[data-mark="waiting"] .lucide-pause').waitFor()
+    await page.locator('.mission-row[data-mission-key="mission:C"] .mission-row-mark[data-mark="waiting"] .lucide-hourglass').waitFor()
     assert.match(await missionEntryStatus(page, "Daily review"), /^Waiting for scheduled run · Every day/)
     state.missions = [mission("C", "Daily review"), mission("B", "Other work")]
     await missionRefresh(page).click()
