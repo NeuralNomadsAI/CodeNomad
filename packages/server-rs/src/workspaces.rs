@@ -87,6 +87,21 @@ pub(crate) fn request_id_valid(key: &str) -> bool {
     !key.is_empty() && key.chars().count() <= 128
 }
 
+fn authorize_workspace_dir(
+    root: &std::path::Path,
+    scope: &std::path::Path,
+    unrestricted: bool,
+    input: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let candidate = root.join(input);
+    // `--unrestricted-root`: any local folder, absolute or relative to the root (audit M2 still applies).
+    let candidate = match unrestricted {
+        true => std::path::PathBuf::from(crate::files::browse::normalize(&candidate.to_string_lossy())),
+        false => candidate,
+    };
+    paths::resolve_under(scope, &candidate).filter(|path| path.is_dir())
+}
+
 async fn create(
     State(app): State<Shared>,
     Extension(principal): Extension<auth::Principal>,
@@ -118,17 +133,7 @@ async fn create(
     } else {
         None
     };
-    let candidate = app.root.join(input.path);
-    // `--unrestricted-root`: any local folder, absolute or relative to the root (audit M2 still applies).
-    let candidate = match app.unrestricted {
-        true => std::path::PathBuf::from(crate::files::browse::normalize(&candidate.to_string_lossy())),
-        false => candidate,
-    };
-    if !paths::under(&app.scope, &candidate) {
-        return bad_request("Workspace directory is not authorized".into());
-    }
-    let authorized = |path: &std::path::PathBuf| path.starts_with(&app.scope) && path.is_dir();
-    let Some(path) = dunce::canonicalize(candidate).ok().filter(authorized) else {
+    let Some(path) = authorize_workspace_dir(&app.root, &app.scope, app.unrestricted, &input.path) else {
         return bad_request("Workspace directory is not authorized".into());
     };
     if crate::worktrees::fence::is_deleting_root(&crate::worktrees::fence::identity(&path)) {
@@ -291,6 +296,73 @@ mod tests {
         assert!(claim(&"x".repeat(128)).is_ok());
         assert!(claim(&"x".repeat(129)).is_err());
         assert!(claim("\u{feff} \t\u{feff}").is_err());
+    }
+
+    fn make_dir_link(link: &std::path::Path, target: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let out = std::process::Command::new("cmd")
+                .creation_flags(0x0800_0000)
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+
+    #[test]
+    fn authorize_workspace_dir_admits_canonical_alias_and_blocks_scope_escapes() {
+        let base = dunce::canonicalize(crate::shared::test_dir("workspace-scope-alias")).unwrap();
+        let scope = base.join("private").join("root");
+        let project = scope.join("project");
+        let outside = base.join("outside");
+        let alias = base.join("var-root");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        make_dir_link(&alias, &scope);
+
+        // Aliased path pointing to an existing directory inside canonical scope is admitted and canonicalized.
+        assert_eq!(
+            authorize_workspace_dir(&scope, &scope, false, &alias.join("project")).as_deref(),
+            Some(project.as_path())
+        );
+        assert_eq!(
+            authorize_workspace_dir(&scope, &scope, false, std::path::Path::new("project")).as_deref(),
+            Some(project.as_path())
+        );
+
+        // Link inside scope pointing outside scope is rejected.
+        let escape = scope.join("escape");
+        make_dir_link(&escape, &outside);
+        assert_eq!(authorize_workspace_dir(&scope, &scope, false, &escape), None);
+        assert_eq!(authorize_workspace_dir(&scope, &scope, false, &outside), None);
+
+        // Missing folder, regular file, and lexical `..` traversal are rejected in restricted mode.
+        let file = scope.join("file.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(authorize_workspace_dir(&scope, &scope, false, &scope.join("missing")), None);
+        assert_eq!(authorize_workspace_dir(&scope, &scope, false, &file), None);
+        assert_eq!(
+            authorize_workspace_dir(&scope, &scope, false, &project.join("..").join("..").join("outside")),
+            None
+        );
+
+        // Unrestricted mode admits valid local folders outside `root` and still rejects non-directories.
+        let empty_scope = std::path::Path::new("");
+        assert_eq!(authorize_workspace_dir(&scope, empty_scope, true, &outside).as_deref(), Some(outside.as_path()));
+        assert_eq!(authorize_workspace_dir(&scope, empty_scope, true, &file), None);
+
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_dir(&escape);
+            let _ = std::fs::remove_dir(&alias);
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 

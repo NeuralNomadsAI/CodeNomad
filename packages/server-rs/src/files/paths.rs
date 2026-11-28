@@ -74,6 +74,51 @@ pub fn canonical(root: &Path, path: impl AsRef<Path>) -> Option<PathBuf> {
     if !under(root, path) { None } else { dunce::canonicalize(path).ok() }
 }
 
+/// Resolves a [`local_absolute`] `path` to its canonical physical location, or to the
+/// canonical nearest existing directory ancestor joined with its remaining missing normal
+/// components, then verifies confinement under `root`.
+///
+/// Refuses non-local/UNC/device/`..`/NUL/ADS paths without any filesystem call (audit M2),
+/// dangling symlinks, non-directory ancestors, and any target that resolves outside `root`.
+pub fn resolve_under(root: &Path, path: impl AsRef<Path>) -> Option<PathBuf> {
+    let path = path.as_ref();
+    let text = path.to_str()?;
+    if !local_absolute(text) {
+        return None;
+    }
+    let resolved = canonical_or_ancestor(path)?;
+    under(root, &resolved).then_some(resolved)
+}
+
+fn canonical_or_ancestor(path: &Path) -> Option<PathBuf> {
+    if let Ok(real) = dunce::canonicalize(path) {
+        return Some(real);
+    }
+    let mut current = path.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(&current) {
+            // An existing entry (e.g. a dangling symlink, symlink loop, or unreadable node)
+            // failed `canonicalize`: never treat it as a missing suffix.
+            Ok(_) => return None,
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => return None,
+            Err(_) => {}
+        }
+        missing.push(current.file_name()?.to_owned());
+        current = current.parent()?.to_path_buf();
+        if let Ok(real) = dunce::canonicalize(&current) {
+            if !real.is_dir() {
+                return None;
+            }
+            let mut resolved = real;
+            for part in missing.into_iter().rev() {
+                resolved.push(part);
+            }
+            return Some(resolved);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +176,73 @@ mod tests {
         assert!(under(anywhere, &dir) && !under(anywhere, Path::new("relative")));
         #[cfg(windows)]
         assert!(!under(anywhere, Path::new(r"\\host\share\x")) && !under(anywhere, Path::new(r"C:\a\..\b")));
+    }
+
+    fn make_dir_link(link: &Path, target: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let out = std::process::Command::new("cmd")
+                .creation_flags(0x0800_0000)
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+
+    #[test]
+    fn resolve_under_admits_alias_into_scope_and_rejects_escapes() {
+        let base = dunce::canonicalize(crate::shared::test_dir("paths-resolve-under")).unwrap();
+        let scope = base.join("private").join("root");
+        let inside = scope.join("project");
+        let outside = base.join("outside");
+        let alias = base.join("var-alias");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        make_dir_link(&alias, &scope);
+
+        // Alias outside scope pointing to canonical scope (like macOS /var -> /private/var) is admitted.
+        assert_eq!(resolve_under(&scope, alias.join("project")).as_deref(), Some(inside.as_path()));
+        // Missing child under an aliased existing directory resolves under canonical scope.
+        assert_eq!(
+            resolve_under(&scope, alias.join("project").join("future").join("nested")),
+            Some(inside.join("future").join("nested"))
+        );
+
+        // Symlink/junction inside scope pointing outside scope is refused, direct and with missing suffix.
+        let escape = scope.join("escape-link");
+        make_dir_link(&escape, &outside);
+        assert_eq!(resolve_under(&scope, &escape), None);
+        assert_eq!(resolve_under(&scope, escape.join("child")), None);
+
+        // Regular file ancestor cannot host a missing child path.
+        let file = inside.join("plain.txt");
+        std::fs::write(&file, "data").unwrap();
+        assert_eq!(resolve_under(&scope, file.join("child")), None);
+
+        // Direct outside path and lexical parent traversal are refused.
+        assert_eq!(resolve_under(&scope, &outside), None);
+        assert_eq!(resolve_under(&scope, inside.join("..").join("..").join("outside")), None);
+
+        // Dangling link inside scope is refused rather than treated as missing.
+        #[cfg(unix)]
+        {
+            let dangling = scope.join("dangling");
+            std::os::unix::fs::symlink(outside.join("absent"), &dangling).unwrap();
+            assert_eq!(resolve_under(&scope, &dangling), None);
+            assert_eq!(resolve_under(&scope, dangling.join("child")), None);
+        }
+
+        #[cfg(windows)]
+        {
+            let _ = std::fs::remove_dir(&escape);
+            let _ = std::fs::remove_dir(&alias);
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
