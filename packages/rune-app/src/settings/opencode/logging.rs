@@ -1,6 +1,6 @@
 use super::super::{Preferences, preferences::server::LEVELS};
 use crate::strings::t;
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{
     Space,
     layout::{self, Layout},
@@ -82,7 +82,7 @@ impl Logging {
                 .child(chrome::setting_row(title, trigger))
                 .children(prefs.log_level_failed().map(|error| {
                     layout::action_row()
-                        .child(text(t(error)).role("alert").wrap())
+                        .child(chrome::palette::save_error(t(error)))
                         .child(layout::button(
                             t("sessionList.loadError.retry"),
                             !prefs.can_retry() || pending,

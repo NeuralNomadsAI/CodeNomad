@@ -1,7 +1,7 @@
 use super::{Preferences, t};
 use rune::{El, TextEdit, col, text};
 use rune_theme_codenomad::{
-    Space, field_kit,
+    Space, TextRole, field_kit,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -116,37 +116,39 @@ impl Editor {
             let value = t("envEditor.fields.value.placeholder");
             let save = shared.clone();
             let remove = shared.clone();
-            body = body.children(
-                values
-                    .into_iter()
-                    .flat_map(|vars| vars.keys())
-                    .filter(|key| valid_name(key))
-                    .map(|key| {
-                        let label = key.clone();
-                        let key = key.clone();
-                        let shared = shared.clone();
-                        layout::button(&label, !ready, move |s| {
-                            let editor = edit(s);
-                            let prefs = shared.borrow();
-                            let Some(doc) = prefs
-                                .environment_document()
-                                .filter(|_| editor.ready(&prefs))
-                            else {
-                                return;
-                            };
-                            let Some(value) = doc["environmentVariables"][&key].as_str() else {
-                                return;
-                            };
-                            let masked = super::super::preferences::env_var_is_masked(doc, &key);
-                            editor.reset_fields();
-                            editor.name = TextEdit::new(&key);
-                            editor.value = TextEdit::new(value);
-                            editor.unmasked = !masked;
-                            editor.reveal = !masked;
-                            editor.selected = Some(key.clone());
-                        })
-                    }),
-            );
+            let existing_buttons: Vec<El> = values
+                .into_iter()
+                .flat_map(|vars| vars.keys())
+                .filter(|key| valid_name(key))
+                .map(|key| {
+                    let label = key.clone();
+                    let key = key.clone();
+                    let shared = shared.clone();
+                    layout::button(&label, !ready, move |s| {
+                        let editor = edit(s);
+                        let prefs = shared.borrow();
+                        let Some(doc) = prefs
+                            .environment_document()
+                            .filter(|_| editor.ready(&prefs))
+                        else {
+                            return;
+                        };
+                        let Some(value) = doc["environmentVariables"][&key].as_str() else {
+                            return;
+                        };
+                        let masked = super::super::preferences::env_var_is_masked(doc, &key);
+                        editor.reset_fields();
+                        editor.name = TextEdit::new(&key);
+                        editor.value = TextEdit::new(value);
+                        editor.unmasked = !masked;
+                        editor.reveal = !masked;
+                        editor.selected = Some(key.clone());
+                    })
+                })
+                .collect();
+            if !existing_buttons.is_empty() {
+                body = body.child(layout::action_row().children(existing_buttons));
+            }
             let field = layout::field(&self.value)
                 .label(value)
                 .secure()
@@ -154,6 +156,7 @@ impl Editor {
                 .revealed(self.reveal)
                 .disabled(!ready)
                 .on_edit(move |s| &mut edit(s).value);
+            let mask_title = t("advancedSettings.environmentVariables.maskValue");
             body = body
                 .child(
                     layout::hinted_field(&self.name, name)
@@ -168,31 +171,22 @@ impl Editor {
                         .build(&field_kit(layout::dark()))
                         .key("environment-value"),
                 )
+                .child(chrome::setting_row(
+                    mask_title,
+                    chrome::setting_switch(
+                        mask_title,
+                        !self.unmasked,
+                        !ready || !prefs.supports_atomic_settings_patches(),
+                        move |s| {
+                            let editor = edit(s);
+                            editor.unmasked = !editor.unmasked;
+                            editor.mask_changed = true;
+                        },
+                    ),
+                ))
                 .child(
                     layout::action_row()
-                        .child(layout::button(
-                            t(if self.reveal {
-                                "envEditor.fields.secure.disabled"
-                            } else {
-                                "envEditor.fields.secure.enabled"
-                            }),
-                            !ready,
-                            move |s| {
-                                let editor = edit(s);
-                                editor.reveal = !editor.reveal;
-                            },
-                        ))
-                        .child(chrome::setting_switch(
-                            t("advancedSettings.environmentVariables.maskValue"),
-                            !self.unmasked,
-                            !ready || !prefs.supports_atomic_settings_patches(),
-                            move |s| {
-                                let editor = edit(s);
-                                editor.unmasked = !editor.unmasked;
-                                editor.mask_changed = true;
-                            },
-                        ))
-                        .child(layout::button(
+                        .child(chrome::primary_action(
                             t(if self.selected.is_some() {
                                 "settings.configFiles.actions.save"
                             } else {
@@ -206,6 +200,18 @@ impl Editor {
                                 || !valid_name(self.name.text.trim())
                                 || self.value.text.len() > 64 * 1024,
                             move |s| edit(s).save(&mut save.borrow_mut(), false),
+                        ))
+                        .child(layout::button(
+                            t(if self.reveal {
+                                "envEditor.fields.secure.disabled"
+                            } else {
+                                "envEditor.fields.secure.enabled"
+                            }),
+                            !ready,
+                            move |s| {
+                                let editor = edit(s);
+                                editor.reveal = !editor.reveal;
+                            },
                         ))
                         .children(self.selected.is_some().then(|| {
                             layout::button(
@@ -222,15 +228,23 @@ impl Editor {
                 );
             if prefs.environment_failed() {
                 let shared = shared.clone();
-                body = body
-                    .child(text(t("settings.preferenceSaveFailed")).role("alert"))
-                    .child(layout::button(
-                        t("sessionList.loadError.retry"),
-                        false,
-                        move |_: &mut S| shared.borrow_mut().refresh_environment(),
-                    ));
+                body = body.child(
+                    layout::action_row()
+                        .child(chrome::palette::save_error(t(
+                            "settings.preferenceSaveFailed",
+                        )))
+                        .child(layout::button(
+                            t("sessionList.loadError.retry"),
+                            false,
+                            move |_: &mut S| shared.borrow_mut().refresh_environment(),
+                        )),
+                );
             } else if document.is_none() {
-                body = body.child(text(t("rune.loading")).role("status"));
+                body = body.child(
+                    text(t("rune.loading"))
+                        .text_role(TextRole::Small)
+                        .role("status"),
+                );
             }
         }
         chrome::card(

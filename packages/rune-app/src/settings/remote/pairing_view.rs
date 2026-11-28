@@ -1,9 +1,10 @@
 use super::{Pairing, Preferences, Remote};
 use crate::strings::t;
-use rune::{El, col, text};
+use rune::{El, col, el, text};
 use rune_theme_codenomad::{
     Space, TextRole,
     layout::{self, Layout},
+    settings as chrome,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -104,26 +105,41 @@ pub(super) fn view<S: 'static>(
                 .text_role(TextRole::Title)
                 .role("heading"),
         )
-        .child(text(t("remoteControl.pairing.description")).wrap())
-        .child(text(&pairing.url).wrap().literal_direction())
-        .child(layout::button_tx(label, busy, move |s, tx| {
-            let Some(state) = access(s) else {
-                return;
-            };
-            let prefs = shared.borrow();
-            if let Some(active) = state.pairing.as_ref()
-                && prefs.can_retry()
-                && state.owner.as_ref() == prefs.backend.as_ref().map(|backend| &backend.client_id)
-                && !active.pairing.remaining().is_zero()
-            {
-                let url = active.pairing.url.clone();
-                state.copy.write(&url, &prefs, tx);
-            }
-        }))
-        .child(text(&expires).wrap())
+        .child(
+            text(t("remoteControl.pairing.description"))
+                .text_role(TextRole::Small)
+                .wrap(),
+        )
+        .child(
+            el().full_width().inset_surface().pad(Space::Sm).child(
+                text(&pairing.url)
+                    .text_role(TextRole::Mono)
+                    .wrap()
+                    .literal_direction()
+                    .selectable(true),
+            ),
+        )
+        .child(
+            layout::action_row().child(layout::button_tx(label, busy, move |s, tx| {
+                let Some(state) = access(s) else {
+                    return;
+                };
+                let prefs = shared.borrow();
+                if let Some(active) = state.pairing.as_ref()
+                    && prefs.can_retry()
+                    && state.owner.as_ref()
+                        == prefs.backend.as_ref().map(|backend| &backend.client_id)
+                    && !active.pairing.remaining().is_zero()
+                {
+                    let url = active.pairing.url.clone();
+                    state.copy.write(&url, &prefs, tx);
+                }
+            })),
+        )
+        .child(text(&expires).text_role(TextRole::Small).wrap())
         .children(
             copy.failed(&pairing.url)
-                .then(|| text(t("messageSection.quote.copyFailed")).role("alert")),
+                .then(|| chrome::palette::save_error(t("messageSection.quote.copyFailed"))),
         )
 }
 

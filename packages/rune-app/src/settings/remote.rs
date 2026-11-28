@@ -995,7 +995,11 @@ impl Remote {
                         .key("remote-control-refresh"),
                     ),
             )
-            .child(text(t("remoteControl.description")).wrap());
+            .child(
+                text(t("remoteControl.description"))
+                    .text_role(TextRole::Small)
+                    .wrap(),
+            );
 
         let mut devices_card = None;
         if let Some((status, devices)) = self.snapshot.as_ref().filter(|_| available) {
@@ -1017,26 +1021,47 @@ impl Remote {
                 )
                 .key("remote-control-disabled-info")
             });
-            let subtitle = if !status.manageable {
-                t("remoteControl.status.hostOnly")
+            let (subtitle, subtitle_is_url) = if !status.manageable {
+                (t("remoteControl.status.hostOnly"), false)
             } else if let Some(url) = status.remote_url.as_deref() {
-                url
+                (url, true)
             } else {
-                t("remoteControl.status.localOnly")
+                (t("remoteControl.status.localOnly"), false)
             };
-            rc = rc
-                .child(
-                    layout::action_row()
-                        .child(text(t(state_key)).role("status").wrap())
-                        .children(disabled_info),
-                )
-                .child(text(subtitle).wrap().literal_direction());
+            rc = rc.child(
+                col()
+                    .key("remote-control-status-card")
+                    .full_width()
+                    .inset_surface()
+                    .pad(Space::Sm)
+                    .separate(Space::Xs)
+                    .child(
+                        layout::action_row()
+                            .child(
+                                text(t(state_key))
+                                    .text_role(TextRole::Button)
+                                    .role("status")
+                                    .wrap(),
+                            )
+                            .children(disabled_info),
+                    )
+                    .child(
+                        text(subtitle)
+                            .text_role(if subtitle_is_url {
+                                TextRole::Mono
+                            } else {
+                                TextRole::Small
+                            })
+                            .wrap()
+                            .literal_direction(),
+                    ),
+            );
             if let Some(err) = status
                 .error
                 .as_deref()
                 .filter(|_| status.state == TunnelState::Error)
             {
-                rc = rc.child(text(err).role("alert").wrap());
+                rc = rc.child(chrome::palette::save_error(err));
             }
 
             if status.manageable && !status.disabled_by_administrator {
@@ -1127,7 +1152,11 @@ impl Remote {
                     .separate(Space::Sm)
                     .child(heading("remoteControl.devices.title"));
                 if devices.is_empty() {
-                    list = list.child(text(t("remoteControl.devices.empty")).wrap());
+                    list = list.child(
+                        text(t("remoteControl.devices.empty"))
+                            .text_role(TextRole::Small)
+                            .wrap(),
+                    );
                 }
                 for device in devices {
                     let origin = device.origin.as_ref().map_or_else(
@@ -1147,6 +1176,8 @@ impl Remote {
                     list = list.child(
                         col()
                             .full_width()
+                            .inset_surface()
+                            .pad(Space::Sm)
                             .separate(Space::Xs)
                             .child(chrome::setting_row(
                                 &device.name,
@@ -1157,9 +1188,10 @@ impl Remote {
                                     ))
                                     .key(&format!("remote-device-revoke-{}", device.id)),
                             ))
-                            .child(text(&origin).wrap())
+                            .child(text(&origin).text_role(TextRole::Small).wrap())
                             .child(
                                 text(&detail)
+                                    .text_role(TextRole::Small)
                                     .role(if uncertain { "status" } else { "text" })
                                     .wrap(),
                             ),
@@ -1170,7 +1202,7 @@ impl Remote {
         }
         if available {
             if let Some(err) = &self.error {
-                rc = rc.child(text(err.as_str()).role("alert").wrap());
+                rc = rc.child(chrome::palette::save_error(err.as_str()));
             }
         } else if host_ready
             && (!prefs.can_retry()
@@ -1180,7 +1212,7 @@ impl Remote {
                     .as_ref()
                     .is_some_and(|b| !super::ServerOwner::backend_verified(b)))
         {
-            rc = rc.child(text(t("rune.connect_error")).role("alert").wrap());
+            rc = rc.child(chrome::palette::save_error(t("rune.connect_error")));
         }
 
         // REMOTE_CONTROL.md: Remote Control comes first; Direct/LAN access sits below in one
