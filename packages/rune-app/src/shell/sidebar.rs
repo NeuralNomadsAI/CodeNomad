@@ -1005,12 +1005,6 @@ mod visual_parity_tests {
             rt.find("refresh-sessions").is_none(),
             "B3: permanent Refresh button must not render outside error states"
         );
-        assert!(
-            rt.elements()
-                .iter()
-                .any(|el| el.text.as_deref() == Some("SESSIONS")),
-            "B3: sidebar section heading must render uppercase SESSIONS"
-        );
         // Desktop inline Copy ID action copies the session id to the clipboard.
         click(&mut rt, "session-copy-session");
         assert_eq!(

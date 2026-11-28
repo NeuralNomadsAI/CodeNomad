@@ -525,10 +525,21 @@ fn session_menu_state(
     s.screen.launcher_mut().map(|l| &mut l.session_menu)
 }
 
+fn has_known_session(l: &Launcher, id: &str) -> bool {
+    l.sessions.iter().any(|r| r.id == id)
+        || l.linked.rows.iter().any(|r| r.id == id)
+        || l.search_results.rows.iter().any(|r| r.id == id)
+}
+
 fn poll_session_menu(s: &mut State, tx: &mut Tx) -> bool {
     let focused_row = tx
         .focused()
         .and_then(|key| parse_session_row_focus(key).map(|(id, _)| id))
+        .filter(|id| {
+            s.screen
+                .launcher()
+                .is_some_and(|l| has_known_session(l, id))
+        })
         .map(str::to_owned);
     let mut changed = false;
     if let Some(l) = s.screen.launcher_mut()
@@ -546,10 +557,10 @@ fn poll_session_menu(s: &mut State, tx: &mut Tx) -> bool {
         let keep = s.shell.visible(0)
             && compact
             && s.screen.launcher().is_some_and(|l| {
-                l.project.is_some()
-                    && (l.sessions.iter().any(|r| r.id == id)
-                        || l.linked.rows.iter().any(|r| r.id == id)
-                        || l.search_results.rows.iter().any(|r| r.id == id))
+                l.connection.is_some()
+                    && !l.authentication_required
+                    && l.project.is_some()
+                    && has_known_session(l, &id)
             });
         if !keep {
             rune_theme_codenomad::action_menu::clear(

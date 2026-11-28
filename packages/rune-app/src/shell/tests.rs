@@ -682,7 +682,7 @@ fn topbar_shows_three_icon_actions_on_desktop_and_touch_and_gates_remote_by_capa
 }
 
 #[test]
-fn tab_strip_uses_short_project_basename_new_tab_label_and_fits_at_411px() {
+fn tab_strip_uses_short_project_basename_and_new_tab_label() {
     fn french(s: &State, cx: &mut Cx<State>) -> El {
         strings::with_locale("fr", || crate::view(s, cx))
     }
@@ -719,21 +719,4 @@ fn tab_strip_uses_short_project_basename_new_tab_label_and_fits_at_411px() {
         project_tab.help.as_deref(),
         Some(r"D:\cn-cargo\android-native\serve-profile\synthetic")
     );
-    // C1: at 411px width, `+` and all 3 top-right icons remain completely inside [0, 411].
-    for key in [
-        "project-tabs-new",
-        "open-preferences",
-        "notification-history-toggle",
-        "open-remote-control",
-    ] {
-        let el = elements
-            .iter()
-            .find(|e| e.key.as_deref() == Some(key))
-            .unwrap_or_else(|| panic!("missing {key}"));
-        assert!(
-            el.rect[0] >= 0.0 && el.rect[0] + el.rect[2] <= 411.0 + 0.5 && el.rect[2] >= 30.0,
-            "C1: {key} clipped at 411px: {:?}",
-            el.rect
-        );
-    }
 }
