@@ -92,8 +92,8 @@ const ROUTING_BYTES: usize = 32 << 20;
 const ROUTING_TIMEOUT: Duration = Duration::from_secs(60);
 /// A session's directory from its last located event or native read (TS `sessionLocations`).
 const LOCATION_TTL: Duration = Duration::from_secs(2);
-/// A PTY/shell/form entity's location from its last located event or `info.cwd` (TS `ptyLocations`/`shellLocations`/`formLocations`).
-const ENTITY_LOCATION_TTL: Duration = Duration::from_secs(60);
+/// Bound for PTY/shell/form location caches (no TTL, matching TS `ptyLocations`/`shellLocations`/`formLocations`:
+/// entries live until their terminal event, reconnect reset, or LRU eviction at the cap).
 const ENTITY_LOCATION_LIMIT: usize = 1024;
 /// Per-workspace resync pulse backoff when routing fails (TS `ROUTING_RESYNC_{MIN,MAX}_MS`).
 const ROUTING_RESYNC_MIN: Duration = Duration::from_secs(1);
@@ -191,23 +191,18 @@ struct ResyncState {
 #[derive(Default)]
 struct EntityLocations {
     order: VecDeque<String>,
-    entries: HashMap<String, (Instant, CachedLocation)>,
+    entries: HashMap<String, CachedLocation>,
 }
 
 impl EntityLocations {
-    fn get(&mut self, id: &str, now: Instant) -> Option<CachedLocation> {
-        match self.entries.get(id) {
-            Some((until, loc)) if *until > now => Some(loc.clone()),
-            Some(_) => {
-                self.remove(id);
-                None
-            }
-            None => None,
-        }
+    fn get(&self, id: &str) -> Option<CachedLocation> {
+        self.entries.get(id).cloned()
     }
 
-    fn insert(&mut self, id: &str, loc: CachedLocation, now: Instant) {
-        if !self.entries.contains_key(id) {
+    fn insert(&mut self, id: &str, loc: CachedLocation) {
+        if self.entries.contains_key(id) {
+            self.order.retain(|k| k != id);
+        } else {
             while self.entries.len() >= ENTITY_LOCATION_LIMIT {
                 if let Some(oldest) = self.order.pop_front() {
                     self.entries.remove(&oldest);
@@ -215,9 +210,9 @@ impl EntityLocations {
                     break;
                 }
             }
-            self.order.push_back(id.to_owned());
         }
-        self.entries.insert(id.to_owned(), (now + ENTITY_LOCATION_TTL, loc));
+        self.order.push_back(id.to_owned());
+        self.entries.insert(id.to_owned(), loc);
     }
 
     fn remove(&mut self, id: &str) {
@@ -420,11 +415,11 @@ impl Routes {
             caches.sessions.remove(sid);
         }
         let resolved = located
-            .or_else(|| pty.and_then(|id| caches.pty.get(id, now)))
+            .or_else(|| pty.and_then(|id| caches.pty.get(id)))
             .or_else(|| pty_info_location(kind, data))
-            .or_else(|| shell.and_then(|id| caches.shell.get(id, now)))
+            .or_else(|| shell.and_then(|id| caches.shell.get(id)))
             .or_else(|| shell_info_location(kind, data))
-            .or_else(|| form.and_then(|id| caches.form.get(id, now)))
+            .or_else(|| form.and_then(|id| caches.form.get(id)))
             .or_else(|| {
                 session.filter(|_| !matches!(kind, "session.moved" | "session.deleted")).and_then(|sid| {
                     caches.sessions.get(sid).filter(|(until, _)| *until > now).map(|(_, loc)| loc.clone())
@@ -440,21 +435,21 @@ impl Routes {
                 if kind == "pty.deleted" {
                     caches.pty.remove(id);
                 } else {
-                    caches.pty.insert(id, loc.clone(), now);
+                    caches.pty.insert(id, loc.clone());
                 }
             }
             if let Some(id) = shell {
                 if kind == "shell.deleted" {
                     caches.shell.remove(id);
                 } else {
-                    caches.shell.insert(id, loc.clone(), now);
+                    caches.shell.insert(id, loc.clone());
                 }
             }
             if let Some(id) = form {
                 if matches!(kind, "form.cancelled" | "form.replied") {
                     caches.form.remove(id);
                 } else {
-                    caches.form.insert(id, loc.clone(), now);
+                    caches.form.insert(id, loc.clone());
                 }
             }
         }
@@ -472,7 +467,7 @@ impl Routes {
             if matches!(kind, "form.cancelled" | "form.replied") {
                 guard.1.form.remove(form);
             } else {
-                guard.1.form.insert(form, loc, Instant::now());
+                guard.1.form.insert(form, loc);
             }
         }
     }
@@ -1471,15 +1466,18 @@ mod tests {
         );
         assert_eq!(lane(&json!({"type":"form.replied","data":{"id":"frm-1"}})), "form:frm-1");
 
-        // Reconnect resets all entity caches and FIFO bound caps entries at 1024.
+        // Reconnect resets all entity caches; cap at 1024 without TTL and refresh order on re-insert.
         let mut bounded = EntityLocations::default();
-        let now = Instant::now();
-        for i in 0..=ENTITY_LOCATION_LIMIT {
-            bounded.insert(&format!("sh-{i}"), CachedLocation::Directory("/repo".into()), now);
+        for i in 0..ENTITY_LOCATION_LIMIT {
+            bounded.insert(&format!("sh-{i}"), CachedLocation::Directory("/repo".into()));
         }
+        // Re-inserting sh-0 refreshes its position so sh-1 is evicted first when the cap overflows.
+        bounded.insert("sh-0", CachedLocation::Directory("/repo/refreshed".into()));
+        bounded.insert(&format!("sh-{ENTITY_LOCATION_LIMIT}"), CachedLocation::Directory("/repo".into()));
         assert_eq!(bounded.entries.len(), ENTITY_LOCATION_LIMIT);
-        assert_eq!(bounded.get("sh-0", now), None);
-        assert_eq!(bounded.get(&format!("sh-{ENTITY_LOCATION_LIMIT}"), now), dir("/repo"));
+        assert_eq!(bounded.get("sh-0"), dir("/repo/refreshed"));
+        assert_eq!(bounded.get("sh-1"), None);
+        assert_eq!(bounded.get(&format!("sh-{ENTITY_LOCATION_LIMIT}")), dir("/repo"));
 
         assert_eq!(
             routes.location(

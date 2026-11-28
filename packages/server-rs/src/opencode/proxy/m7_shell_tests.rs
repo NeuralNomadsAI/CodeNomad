@@ -412,7 +412,17 @@ async fn m7_mcp_toggles_and_plugin_actions_enforce_ownership_validation_and_fenc
     assert_eq!(calls[4].path, "/api/plugin/update");
     assert_eq!(calls[4].content_type.as_deref(), Some("application/json"));
     assert_eq!(serde_json::from_slice::<Value>(&calls[4].body).unwrap(), json!({"targets": ["fixture@latest"]}));
-    assert!(calls[4].query.as_deref().is_some_and(|q| !q.is_empty()), "body location must promote to query");
+    let promoted: Vec<(String, String)> =
+        reqwest::Url::parse(&format!("http://localhost/?{}", calls[4].query.as_deref().unwrap_or("")))
+            .unwrap()
+            .query_pairs()
+            .into_owned()
+            .collect();
+    assert_eq!(
+        promoted,
+        vec![("location[directory]".to_owned(), h.linked.to_string_lossy().into_owned())],
+        "body location must promote exact linked directory to query"
+    );
     assert_eq!(calls[5].path, "/api/plugin/check");
     assert!(calls[5].dir_header.is_some(), "x-codenomad-location must forward x-opencode-directory");
 
@@ -880,8 +890,27 @@ async fn remote_control_admits_m7_and_session_shell_for_paired_devices_and_refus
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         let base = format!("http://{addr}");
 
-        // Unpaired browser call to /shell is rejected with 401 + x-codenomad-before-dispatch: 1.
+        // Unpaired browser calls to M7 routes and /shell are rejected with 401; /shell carries before-dispatch header.
         if !is_server {
+            let unauth_mcp = client
+                .post(format!("{base}/workspaces/{}/instance/api/experimental/mcp/srv/connect", h.ws_id))
+                .header(header::HOST, host)
+                .header(header::ORIGIN, origin)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(unauth_mcp.status(), Status::UNAUTHORIZED);
+
+            let unauth_plug = client
+                .post(format!("{base}/workspaces/{}/instance/api/plugin/check", h.ws_id))
+                .header(header::HOST, host)
+                .header(header::ORIGIN, origin)
+                .json(&json!({"target": "pkg@1"}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(unauth_plug.status(), Status::UNAUTHORIZED);
+
             let unauth = client
                 .post(format!("{base}/workspaces/{}/instance/api/session/ses_shell_owned/shell", h.ws_id))
                 .header(header::HOST, host)
