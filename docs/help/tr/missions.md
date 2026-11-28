@@ -96,7 +96,7 @@ Baştaki tetikleyiciler 15 dakikada bir kontrol edilir. İlk Başlat referansı 
 
 ### Sayaçlar ve geçmiş {#scheduling-limits}
 
-**Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur. Konuşma, koordinatörün aracısını, modelini ve düşünmesini kullanmalıdır: aksi halde kaydetme reddedilir ve bunların değiştiğini gören bir başlatma başka bir oturum kullanır.
+**Koordinatör oturumu** her geçiş için varsayılan olarak **Yeni oturum** kullanır. Zamanlama veya olay varsa **Mevcut oturum** ile bu projenin aynı yürütme Location’ındaki kök konuşması seçilir. Her geçiş, konuşma geçmişini, başlığı ve izinleri koruyarak yapılandırılmış ajan ve modelle orada sürer. Görev kontrolleri mevcut işleri de etkiler. Her geçişin sonucu ve günlüğü geçmişte ayrı tutulur. Her başlatmada konuşma, koordinatörün aracısına, modeline ve düşünmesine geçirilir.
 
 Bir ajandan zamanlamayı kendi geçerli kök konuşmasıyla hazırlamasını isteyebilirsiniz. Geçişler, konuşma boşta kalana kadar bekler.
 

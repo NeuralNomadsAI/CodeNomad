@@ -5,7 +5,10 @@ use crate::{
 };
 use codenomad_client::provider_usage::{Consumption, Usage, Window};
 use rune::{El, text};
-use rune_theme_codenomad::{TextRole, layout::Layout, provider_usage as chrome, usage::numbers};
+use rune_theme_codenomad::{
+    TextRole, git_panel, layout::Layout, provider_usage as chrome, settings as theme_settings,
+    shell, usage::numbers,
+};
 
 pub(super) fn usage(usage: &Usage, s: &State) -> El {
     let balance = settings::show_provider_usage_credit_balance(s);
@@ -25,36 +28,51 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
             )
         );
         return chrome::card(
-            [text(message).role("status").wrap()]
-                .into_iter()
-                .chain(link.map(|(caption, url)| chrome::external_link(t(caption), url)))
-                .chain(configure.then(|| {
-                    rune_theme_codenomad::layout::button(
-                        t("providerUsage.console.settings"),
-                        false,
-                        screen::action(&s.input_scope, settings::open_providers),
-                    )
-                })),
-        );
+            [theme_settings::stats::caption(message)
+                .role("status")
+                .key("status-usage-unavailable")]
+            .into_iter()
+            .chain(link.map(|(caption, url)| chrome::external_link(t(caption), url)))
+            .chain(configure.then(|| {
+                rune_theme_codenomad::layout::button(
+                    t("providerUsage.console.settings"),
+                    false,
+                    screen::action(&s.input_scope, settings::open_providers),
+                )
+            })),
+        )
+        .key("status-usage-card");
     }
     if !usage.supported
         || !usage.configured
         || !usage.ok
         || usage.console.is_none() && windows().next().is_none()
     {
-        return chrome::card([text(t(if !usage.supported {
-            "providerUsage.unsupported"
-        } else if !usage.configured {
-            "providerUsage.notConfigured"
-        } else {
-            "providerUsage.unavailable"
-        }))
-        .role("status")
-        .wrap()]);
+        return git_panel::note(
+            t(if !usage.supported {
+                "providerUsage.unsupported"
+            } else if !usage.configured {
+                "providerUsage.notConfigured"
+            } else {
+                "providerUsage.unavailable"
+            }),
+            "status",
+        )
+        .key("status-usage-empty");
     }
     let mut rows = Vec::new();
     if let Some(console) = &usage.console {
-        rows.push(text(t("providerUsage.console.requests")).role("heading"));
+        let requests_label = t("providerUsage.console.requests");
+        let requests_info = theme_settings::info_tip(
+            requests_label,
+            t("providerUsage.console.info"),
+            s.status_usage.console_info_open,
+            screen::action(&s.input_scope, |s| {
+                s.status_usage.console_info_open = !s.status_usage.console_info_open;
+            }),
+        )
+        .key("status-usage-console-info");
+        rows.push(shell::service_heading_row(requests_label, [requests_info]));
         for (range, label) in [
             ("24h", "providerUsage.console.today"),
             ("7d", "providerUsage.console.sevenDays"),
@@ -69,36 +87,41 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
                 ));
             }
         }
-        rows.push(text(t("providerUsage.console.models")).role("heading"));
+        rows.push(shell::panel_title(t("providerUsage.console.models")).role("heading"));
         if console.models.is_empty() {
-            rows.push(text(t("providerUsage.console.noRequests")).wrap());
+            rows.push(
+                theme_settings::stats::caption(t("providerUsage.console.noRequests"))
+                    .role("status"),
+            );
         }
         for model in &console.models {
-            rows.push(chrome::reading(
-                &format!("{} · {}", model.model, model.provider),
-                numbers::exact(locale(), model.requests),
-                None,
-                None,
-            ));
+            let label = format!("{} · {}", model.model, model.provider);
+            let count = numbers::exact(locale(), model.requests);
+            let tip = format!("{label} — {count}");
+            rows.push(chrome::reading(&label, count, None, None).help(tip));
         }
         if console.budgets.status == "unavailable" || !console.budgets.items.is_empty() {
-            rows.push(text(t("providerUsage.console.budgets")).role("heading"));
+            rows.push(shell::panel_title(t("providerUsage.console.budgets")).role("heading"));
             if console.budgets.status != "available" {
-                rows.push(text(t("providerUsage.console.budgetsUnavailable")).wrap());
+                rows.push(
+                    theme_settings::stats::caption(t("providerUsage.console.budgetsUnavailable"))
+                        .role("status"),
+                );
             } else {
                 for budget in &console.budgets.items {
-                    rows.push(chrome::reading(
-                        &budget.name,
-                        ratio(money(budget.spent_usd), Some(money(budget.limit_usd))),
-                        reset(Some(budget.reset_at)),
-                        None,
-                    ));
+                    let amount = ratio(money(budget.spent_usd), Some(money(budget.limit_usd)));
+                    let resets = reset(Some(budget.reset_at));
+                    let tip = reading_help(&budget.name, &amount, resets.as_deref());
+                    rows.push(chrome::reading(&budget.name, amount, resets, None).help(tip));
                 }
             }
         }
     }
     for (key, window) in windows() {
         let label = window_label(key);
+        let displayed = value(usage, window);
+        let resets = reset(window.reset_at);
+        let tip = reading_help(&label, &displayed, resets.as_deref());
         let meter = window.used_percent.map(|percent| {
             (
                 t("providerUsage.progressLabel").replace("{window}", &label),
@@ -106,7 +129,9 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
             )
         });
         rows.push(
-            chrome::reading(&label, value(usage, window), reset(window.reset_at), meter).key(key),
+            chrome::reading(&label, displayed, resets, meter)
+                .help(tip)
+                .key(key),
         );
     }
     let mut name = usage.provider_name.clone();
@@ -119,8 +144,21 @@ pub(super) fn usage(usage: &Usage, s: &State) -> El {
             t(&format!("providerUsage.copilotPlans.{plan}"))
         );
     }
-    rows.push(text(name).wrap_anywhere().text_role(TextRole::Button));
-    chrome::card(rows)
+    rows.push(
+        text(&name)
+            .wrap_anywhere()
+            .text_role(TextRole::Button)
+            .help(&name)
+            .key("status-usage-provider"),
+    );
+    chrome::card(rows).key("status-usage-card")
+}
+
+fn reading_help(label: &str, value: &str, reset: Option<&str>) -> String {
+    match reset {
+        Some(reset) => format!("{label}: {value} · {reset}"),
+        None => format!("{label}: {value}"),
+    }
 }
 
 fn money(amount: f64) -> String {

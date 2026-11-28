@@ -8,9 +8,9 @@ use codenomad_client::{
         mcp::{self, McpSnapshot, McpState},
     },
 };
-use rune::{El, col, text};
+use rune::{El, col};
 use rune_theme_codenomad::{
-    Space,
+    Space, git_panel,
     layout::{self, Layout},
     settings, shell,
 };
@@ -413,51 +413,44 @@ impl McpPanel {
     }
 }
 
+fn failed_banner(s: &State, panel: &McpPanel) -> El {
+    layout::action_row()
+        .child(settings::palette::save_error(t("integrations.line.failed")).key("mcp-load-error"))
+        .child(
+            layout::button(
+                t("settings.providers.refresh"),
+                panel.read.is_some() || !panel.online || panel.any_toggle_active(),
+                screen::action(&s.input_scope, |s| {
+                    s.status_services.mcp.request_refresh();
+                }),
+            )
+            .key("mcp-refresh"),
+        )
+}
+
 pub(super) fn view(s: &State) -> Option<El> {
     let panel = &s.status_services.mcp;
     panel.backend.as_ref()?;
     let mut body = col().full_width().separate(Space::Xs);
     if panel.expanded {
         if panel.snapshot.is_none() && !panel.unsupported && !panel.failed {
-            body = body.child(text(t("instanceServiceStatus.mcp.loading")).role("status"));
+            body = body.child(
+                git_panel::note(t("instanceServiceStatus.mcp.loading"), "status").key("mcp-status"),
+            );
         } else if panel.unsupported
             || panel
                 .snapshot
                 .as_ref()
                 .is_some_and(|snap| snap.servers.is_empty())
         {
-            body = body.child(text(t("instanceServiceStatus.mcp.empty")).role("status"));
-        } else if panel.failed && panel.snapshot.is_none() {
             body = body.child(
-                layout::action_row()
-                    .child(text(t("integrations.line.failed")).role("alert"))
-                    .child(
-                        layout::button(
-                            t("settings.providers.refresh"),
-                            panel.read.is_some() || !panel.online || panel.any_toggle_active(),
-                            screen::action(&s.input_scope, |s| {
-                                s.status_services.mcp.request_refresh();
-                            }),
-                        )
-                        .key("mcp-refresh"),
-                    ),
+                git_panel::note(t("instanceServiceStatus.mcp.empty"), "status").key("mcp-status"),
             );
+        } else if panel.failed && panel.snapshot.is_none() {
+            body = body.child(failed_banner(s, panel));
         }
         if panel.failed && panel.snapshot.is_some() {
-            body = body.child(
-                layout::action_row()
-                    .child(text(t("integrations.line.failed")).wrap().role("alert"))
-                    .child(
-                        layout::button(
-                            t("settings.providers.refresh"),
-                            panel.read.is_some() || !panel.online || panel.any_toggle_active(),
-                            screen::action(&s.input_scope, |s| {
-                                s.status_services.mcp.request_refresh();
-                            }),
-                        )
-                        .key("mcp-refresh"),
-                    ),
-            );
+            body = body.child(failed_banner(s, panel));
         }
         if let Some(snap) = &panel.snapshot {
             for server in &snap.servers {
@@ -481,9 +474,21 @@ pub(super) fn view(s: &State) -> Option<El> {
                 let next_connect = !running;
                 let aria =
                     t("instanceServiceStatus.mcp.toggleAriaLabel").replace("{name}", &server.name);
+                let row_help = match &server.status {
+                    McpState::Error(Some(err)) => format!("{}\n{err}", server.name),
+                    McpState::Error(None) => format!(
+                        "{}\n{}",
+                        server.name,
+                        t("instanceServiceStatus.plugins.runtime.failed")
+                    ),
+                    _ => server.name.clone(),
+                };
                 let mut item = col()
                     .full_width()
+                    .inset_surface()
+                    .pad(Space::Sm)
                     .separate(Space::Xs)
+                    .help(&row_help)
                     .child(shell::service_row(
                         Some(shell::status_dot(dot)),
                         &server.name,
@@ -506,14 +511,17 @@ pub(super) fn view(s: &State) -> Option<El> {
                     let message = err
                         .as_deref()
                         .unwrap_or_else(|| t("instanceServiceStatus.plugins.runtime.failed"));
-                    item = item.child(text(message).wrap().role("alert"));
+                    item = item.child(
+                        settings::palette::save_error(message)
+                            .key(format!("mcp-error-{}", server.name)),
+                    );
                 }
                 body = body.child(item.key(format!("mcp-row-{}", server.name)));
             }
         }
         if let Some(name) = &panel.action_error {
             let msg = t("settings.pluginPackages.error").replace("{target}", name);
-            body = body.child(text(&msg).wrap().role("alert"));
+            body = body.child(settings::palette::save_error(&msg).key("mcp-action-error"));
         }
     }
     Some(

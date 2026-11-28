@@ -12,6 +12,8 @@ use rune_theme_codenomad::{
     settings as chrome,
 };
 
+pub(super) const RENAME_AUTOFILL: rune::Autofill = rune::Autofill::Off;
+
 pub(super) fn card<S: 'static>(
     catalog: &Catalog,
     provider: &ListedProvider,
@@ -218,6 +220,7 @@ fn accounts_controls<S: 'static>(
             !busy && draft.dirty && !trimmed.is_empty() && trimmed.chars().take(257).count() <= 256;
         let input = layout::literal_field(&draft.text)
             .label(t("settings.accounts.label"))
+            .autofill(RENAME_AUTOFILL)
             .disabled(busy)
             .on_edit(move |s: &mut S| access(s).manager.rename_text_mut(&prov_edit, &cred_edit))
             .on_submit(move |s: &mut S, _| {

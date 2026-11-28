@@ -4,14 +4,16 @@ import path from 'node:path'
 const require = createRequire(import.meta.url)
 export const ts = require('typescript')
 export const slash = value => value.replaceAll('\\', '/')
-export const ordered = values => [...new Set(values)].sort()
+export const compareStrings = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+export const relativePath = (root, file) => slash(path.relative(root, file))
+export const ordered = values => [...new Set(values)].sort(compareStrings)
 export function walk(node, visit) {
   visit(node)
   ts.forEachChild(node, child => walk(child, visit))
 }
 export function reference(root, node) {
   const source = node.getSourceFile()
-  return {file: slash(path.relative(root, source.fileName)), line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1}
+  return {file: relativePath(root, source.fileName), line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1}
 }
 export function unalias(checker, symbol) {
   const seen = new Set()
@@ -54,8 +56,8 @@ export function properties(checker, component, root) {
     fields: checker.getPropertiesOfType(type).map(property => ({
       name: property.getName(), optional: Boolean(property.flags & ts.SymbolFlags.Optional),
       type: checker.typeToString(checker.getTypeOfSymbolAtLocation(property, component.node), component.node, flags),
-      declarations: (property.declarations ?? []).filter(node => !node.getSourceFile().fileName.includes('node_modules')).map(node => reference(root, node)),
-    })).sort((a, b) => a.name.localeCompare(b.name, 'en')),
+      declarations: (property.declarations ?? []).filter(node => !slash(node.getSourceFile().fileName).split('/').includes('node_modules')).map(node => reference(root, node)),
+    })).sort((a, b) => compareStrings(a.name, b.name)),
     uncertainties: type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown) ? ['Props resolve to any/unknown; dependency or contextual typing requires review.'] : [],
   }
 }

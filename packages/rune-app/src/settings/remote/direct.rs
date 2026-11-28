@@ -591,7 +591,11 @@ impl DirectAccess {
         let body = col()
             .full_width()
             .separate(Space::Md)
-            .child(text(t("remoteAccess.direct.help")).wrap())
+            .child(
+                text(t("remoteAccess.direct.help"))
+                    .text_role(TextRole::Small)
+                    .wrap(),
+            )
             .child(self.listening_card(shared, available, access))
             .child(self.password_card(shared, available, access, edit))
             .child(self.addresses_card(shared, available, access));
@@ -697,7 +701,9 @@ impl DirectAccess {
 
         if locked && let Some(host) = self.meta.as_ref().and_then(|m| m.host.as_deref()) {
             card = card.child(
-                text(t("remoteAccess.toggle.caption.locked").replace("{host}", host)).wrap(),
+                text(t("remoteAccess.toggle.caption.locked").replace("{host}", host))
+                    .text_role(TextRole::Small)
+                    .wrap(),
             );
         }
         if let Some(target) = self.confirm_mode {
@@ -710,6 +716,8 @@ impl DirectAccess {
             card = card.child(
                 col()
                     .full_width()
+                    .inset_surface()
+                    .pad(Space::Sm)
                     .separate(Space::Xs)
                     .key("remote-listening-confirm")
                     .child(
@@ -717,7 +725,11 @@ impl DirectAccess {
                             .text_role(TextRole::Title)
                             .role("heading"),
                     )
-                    .child(text(t("remoteAccess.listeningMode.restartConfirm.message")).wrap())
+                    .child(
+                        text(t("remoteAccess.listeningMode.restartConfirm.message"))
+                            .text_role(TextRole::Small)
+                            .wrap(),
+                    )
                     .child(
                         layout::action_row()
                             .child(
@@ -760,12 +772,13 @@ impl DirectAccess {
         if self.restart_notice {
             card = card.child(
                 text(t("remoteAccess.restart.errorManual"))
+                    .text_role(TextRole::Small)
                     .role("status")
                     .wrap(),
             );
         }
         if let Some(err) = &self.mode_error {
-            card = card.child(text(err.as_str()).role("alert").wrap());
+            card = card.child(chrome::palette::save_error(err.as_str()));
         }
         chrome::card(card)
     }
@@ -785,7 +798,11 @@ impl DirectAccess {
                     .text_role(TextRole::Title)
                     .role("heading"),
             )
-            .child(text(t("remoteAccess.sections.serverPassword.help")).wrap());
+            .child(
+                text(t("remoteAccess.sections.serverPassword.help"))
+                    .text_role(TextRole::Small)
+                    .wrap(),
+            );
 
         let Some(auth) = self.auth.as_ref().filter(|a| a.authenticated) else {
             let message = self
@@ -794,11 +811,12 @@ impl DirectAccess {
                 .map(ErrorText::as_str)
                 .unwrap_or_else(|| t("remoteAccess.authStatus.unavailable"));
             return chrome::card(
-                card.child(text(message).wrap()).children(
-                    self.password_error
-                        .as_ref()
-                        .map(|err| text(err.as_str()).role("alert").wrap()),
-                ),
+                card.child(text(message).text_role(TextRole::Small).wrap())
+                    .children(
+                        self.password_error
+                            .as_ref()
+                            .map(|err| chrome::palette::save_error(err.as_str())),
+                    ),
             );
         };
 
@@ -812,8 +830,12 @@ impl DirectAccess {
         let mutating = self.mutating(&shared.borrow());
         let local_request = self.meta.as_ref().is_some_and(|m| m.local_request);
         card = card
-            .child(text(t("remoteAccess.username").replace("{username}", username)).wrap())
-            .child(text(t(status_key)).wrap());
+            .child(
+                text(t("remoteAccess.username").replace("{username}", username))
+                    .text_role(TextRole::Small)
+                    .wrap(),
+            )
+            .child(text(t(status_key)).text_role(TextRole::Small).wrap());
 
         if local_request {
             let toggle_label = t(if self.password_form_open {
@@ -875,14 +897,14 @@ impl DirectAccess {
                 .key("remote-password-confirm");
 
             card = card
-                .child(text(new_label))
+                .child(text(new_label).text_role(TextRole::Label))
                 .child(password_input)
-                .child(text(confirm_label))
+                .child(text(confirm_label).text_role(TextRole::Label))
                 .child(confirm_input)
                 .children(
                     self.password_error
                         .as_ref()
-                        .map(|err| text(err.as_str()).role("alert").wrap()),
+                        .map(|err| chrome::palette::save_error(err.as_str())),
                 )
                 .child(
                     chrome::primary_action(
@@ -924,12 +946,13 @@ impl DirectAccess {
         );
 
         if let Some(err) = &self.meta_error {
-            return chrome::card(card.child(text(err.as_str()).role("alert").wrap()));
+            return chrome::card(card.child(chrome::palette::save_error(err.as_str())));
         }
         if !self.meta_verified {
             return chrome::card(
                 card.child(
                     text(t("remoteAccess.addresses.loading"))
+                        .text_role(TextRole::Small)
                         .role("status")
                         .wrap(),
                 ),
@@ -947,7 +970,13 @@ impl DirectAccess {
         };
 
         if local_url.is_none() && recommended.is_none() {
-            return chrome::card(card.child(text(t("remoteAccess.addresses.none")).wrap()));
+            return chrome::card(
+                card.child(
+                    text(t("remoteAccess.addresses.none"))
+                        .text_role(TextRole::Small)
+                        .wrap(),
+                ),
+            );
         }
 
         if let Some(url) = local_url {
@@ -985,7 +1014,9 @@ impl DirectAccess {
             }
         }
         if self.open_failed {
-            card = card.child(text(t("settings.info.actions.failed")).role("alert").wrap());
+            card = card.child(chrome::palette::save_error(t(
+                "settings.info.actions.failed",
+            )));
         }
         chrome::card(card)
     }
@@ -1029,9 +1060,16 @@ impl DirectAccess {
         });
         col()
             .full_width()
+            .inset_surface()
+            .pad(Space::Sm)
             .separate(Space::Xs)
-            .child(text(url).wrap().literal_direction())
-            .child(text(subtitle).wrap())
+            .child(
+                text(url)
+                    .text_role(TextRole::Mono)
+                    .wrap()
+                    .literal_direction(),
+            )
+            .child(text(subtitle).text_role(TextRole::Small).wrap())
             .child(
                 layout::action_row()
                     .child(
@@ -1080,7 +1118,7 @@ impl DirectAccess {
             .children(
                 self.address_copy
                     .failed(url)
-                    .then(|| text(t("messageSection.quote.copyFailed")).role("alert")),
+                    .then(|| chrome::palette::save_error(t("messageSection.quote.copyFailed"))),
             )
     }
 

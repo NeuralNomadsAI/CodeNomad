@@ -320,11 +320,11 @@ test("inspect start freezes resolved choices and replays them after preference f
   assert.deepEqual([...f.storage.values], before)
 })
 
-test("resolved coordinator mismatches and identical preferred Compare models fail before persistence or prepare", async () => {
+test("a caller on another agent than the preferred coordinator still starts; identical preferred Compare models fail before persistence or prepare", async () => {
   const preferences = [{ template: "all", profiles: { coordinator: { agent: "lead" } } }]
   const f = fixture({ transport: { resolveCreationDefaults: async (_sessionID, input) => resolveMissionCreationDefaults({ ...input, preferences }) } })
-  await assert.rejects(f.control.inspect(coordinator, { start: { objective: "Mismatch", template: "custom" } }, "mismatch"), /Missions preferences.*profiles\.coordinator.*\{\}/)
-  assert.equal(f.storage.values.size, 0)
+  await f.control.inspect(coordinator, { start: { objective: "Mismatch", template: "custom" } }, "mismatch")
+  assert.equal((await f.control.snapshot()).missions[0].coordinatorSessionId, coordinator)
   const model = { providerID: "p", id: "same" }
   const compare = fixture({ transport: {
     resolveCreationDefaults: async (_sessionID, input) => resolveMissionCreationDefaults({ ...input, preferences: [

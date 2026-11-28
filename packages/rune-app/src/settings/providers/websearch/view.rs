@@ -11,6 +11,8 @@ use rune_theme_codenomad::{
 };
 use std::{cell::RefCell, rc::Rc};
 
+pub(in crate::settings::providers) const API_KEY_AUTOFILL: rune::Autofill = rune::Autofill::Off;
+
 pub(in crate::settings::providers) fn view<S: 'static>(
     state_rc: &Rc<RefCell<WebSearch>>,
     available: bool,
@@ -29,13 +31,30 @@ pub(in crate::settings::providers) fn view<S: 'static>(
 
     if expanded {
         if !available {
-            body = body.child(text(t("settings.providers.empty.noInstance")).role("status"));
+            body = body.child(
+                text(t("settings.providers.empty.noInstance"))
+                    .wrap()
+                    .text_role(TextRole::Small)
+                    .role("status"),
+            );
         } else {
             if state.error {
                 body = body.child(text(t("settings.websearch.error")).wrap().role("alert"));
             }
             if state.snapshot.is_none() && busy {
-                body = body.child(text(t("settings.providers.loading")).role("status"));
+                body = body.child(
+                    col()
+                        .full_width()
+                        .pad(Space::Sm)
+                        .inset_surface()
+                        .role("status")
+                        .key("websearch-loading")
+                        .child(
+                            text(t("settings.providers.loading"))
+                                .wrap()
+                                .text_role(TextRole::Small),
+                        ),
+                );
             }
 
             body = body.child(connections_bar(
@@ -224,6 +243,7 @@ fn connect_panel<S: 'static>(
     let input = layout::hinted_field(key_ref, t("settings.providers.apiKey.placeholder"))
         .label(t("settings.providers.apiKey.label"))
         .secure()
+        .autofill(API_KEY_AUTOFILL)
         .disabled(locked)
         .on_edit(edit_key)
         .on_submit(move |s: &mut S, _| {
@@ -250,12 +270,17 @@ fn connect_panel<S: 'static>(
                         .key("websearch-connect-close"),
                     ),
             )
-            .child(text(t("settings.providers.apiKey.label")))
             .child(
-                input
-                    .build(&field_kit(layout::dark()))
-                    .literal_direction()
-                    .key("websearch-api-key"),
+                col()
+                    .full_width()
+                    .separate(Space::Xs)
+                    .child(text(t("settings.providers.apiKey.label")).text_role(TextRole::Label))
+                    .child(
+                        input
+                            .build(&field_kit(layout::dark()))
+                            .literal_direction()
+                            .key("websearch-api-key"),
+                    ),
             )
             .child(
                 chrome::primary_action(
@@ -287,8 +312,12 @@ fn configured_list<S: 'static>(
         .collect();
 
     if snapshot.catalog_available && configured.is_empty() {
-        return list
-            .child(text(t("settings.providers.empty.noConfiguredProviders")).role("status"));
+        return list.child(
+            text(t("settings.providers.empty.noConfiguredProviders"))
+                .wrap()
+                .text_role(TextRole::Small)
+                .role("status"),
+        );
     }
 
     let disconnect_label = t("settings.providers.actions.disconnect");
@@ -330,7 +359,7 @@ fn configured_list<S: 'static>(
                     .role("heading")
                     .wrap_anywhere(),
             )
-            .child(text(&summary).wrap());
+            .child(text(&summary).wrap().text_role(TextRole::Small));
         if has_credentials {
             card = card.child(actions);
         }

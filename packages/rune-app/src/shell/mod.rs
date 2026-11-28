@@ -1,5 +1,7 @@
 pub(crate) mod blank_cleanup;
 pub(crate) mod command_palette;
+pub(crate) mod directory_browser;
+pub(crate) mod new_instance_launcher;
 pub(crate) mod notifications;
 mod panels;
 pub(crate) mod render;
@@ -60,7 +62,11 @@ pub fn view(
     }
     if let Some(ui) = &s.workspace {
         root = root.child(
-            workspace::strip(s, touch, skip_tab).on_background_press_tx(Panels::dismiss_outside),
+            workspace::strip(s, touch, skip_tab)
+                .on_background_press_tx(Panels::dismiss_outside)
+                .on_secondary_press(|s: &mut State, point, tx| {
+                    new_instance_launcher::handle_strip_secondary_press(s, point.x, point.y, tx);
+                }),
         );
         let primary = workspace::status(s);
         let secondary = workspace::file_draft_status(s).filter(|&draft| primary != Some(draft));
@@ -157,10 +163,12 @@ pub fn sync(s: &mut State) {
 pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
     let overlay = crate::git::panel_overlay_open(s);
     let wake = s.wake.clone();
-    let (changed, dismissed) = s.shell.poll(&wake, overlay, tx);
+    let (mut changed, dismissed) = s.shell.poll(&wake, overlay, tx);
     if dismissed == Some(1) {
         crate::git::dismiss_panel_overlays(s, tx);
     }
+    changed |= directory_browser::poll(s, tx);
+    changed |= new_instance_launcher::poll(s, tx);
     changed
 }
 
@@ -218,6 +226,8 @@ pub fn keys(s: &mut State, event: &rune::KeyEvent, tx: &mut Tx) -> bool {
     use rune::{Key, Mods};
     if blank_cleanup::handle_key(s, event, tx)
         || temporary::handle_key(s, event, tx)
+        || directory_browser::handle_key(s, event, tx)
+        || new_instance_launcher::handle_key(s, event, tx)
         || tab_rename::handle_key(s, event, tx)
         || command_palette::handle_key(s, event, tx)
     {

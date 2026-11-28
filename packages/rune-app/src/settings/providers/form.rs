@@ -13,6 +13,106 @@ use rune_theme_codenomad::{
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct StringFieldSemantics {
+    pub input_mode: rune::InputMode,
+    pub autofill: rune::Autofill,
+    pub secure: bool,
+}
+
+pub(super) const CUSTOM_VALUES_AUTOFILL: rune::Autofill = rune::Autofill::Off;
+
+pub(super) fn string_field_semantics(
+    key: &str,
+    format: Option<&str>,
+    placeholder: Option<&str>,
+) -> StringFieldSemantics {
+    let normalized_format = format.map(|f| f.trim().to_ascii_lowercase());
+    match normalized_format.as_deref() {
+        Some("uri" | "url") => {
+            return StringFieldSemantics {
+                input_mode: rune::InputMode::Url,
+                autofill: rune::Autofill::Off,
+                secure: false,
+            };
+        }
+        Some("email") => {
+            return StringFieldSemantics {
+                input_mode: rune::InputMode::Email,
+                autofill: rune::Autofill::Email,
+                secure: false,
+            };
+        }
+        Some("tel") => {
+            return StringFieldSemantics {
+                input_mode: rune::InputMode::Tel,
+                autofill: rune::Autofill::Off,
+                secure: false,
+            };
+        }
+        Some("search") => {
+            return StringFieldSemantics {
+                input_mode: rune::InputMode::Search,
+                autofill: rune::Autofill::Off,
+                secure: false,
+            };
+        }
+        Some("password" | "secret") => {
+            return StringFieldSemantics {
+                input_mode: rune::InputMode::Text,
+                autofill: rune::Autofill::Off,
+                secure: true,
+            };
+        }
+        _ => {}
+    }
+
+    let placeholder_is_url = placeholder.is_some_and(|hint| {
+        let lower = hint.trim().to_ascii_lowercase();
+        lower.starts_with("http://") || lower.starts_with("https://")
+    });
+    let key_lower = key.trim().to_ascii_lowercase();
+    let key_is_url = matches!(
+        key_lower.as_str(),
+        "url"
+            | "uri"
+            | "baseurl"
+            | "base_url"
+            | "base-url"
+            | "endpoint"
+            | "endpointurl"
+            | "endpoint_url"
+            | "endpoint-url"
+            | "apiurl"
+            | "api_url"
+            | "api-url"
+    ) || key_lower.ends_with("_url")
+        || key_lower.ends_with("-url")
+        || key_lower.ends_with("_uri")
+        || key_lower.ends_with("-uri");
+
+    StringFieldSemantics {
+        input_mode: if placeholder_is_url || key_is_url {
+            rune::InputMode::Url
+        } else {
+            rune::InputMode::Text
+        },
+        autofill: rune::Autofill::Off,
+        secure: false,
+    }
+}
+
+pub(super) fn number_field_semantics(integer: bool) -> (rune::InputMode, rune::Autofill) {
+    (
+        if integer {
+            rune::InputMode::Numeric
+        } else {
+            rune::InputMode::Decimal
+        },
+        rune::Autofill::Off,
+    )
+}
+
 pub(super) fn view<S: 'static>(
     catalog: &Catalog,
     fields: &[FormField],
@@ -124,14 +224,26 @@ pub(super) fn view<S: 'static>(
                 }
                 stack = stack.child(block);
             }
-            FormFieldKind::String { placeholder, .. } => {
+            FormFieldKind::String {
+                placeholder,
+                format,
+                ..
+            } => {
                 let edit_model = catalog.manager.form_text_edit(&field.key);
                 let hint = placeholder.as_deref().unwrap_or("");
+                let semantics =
+                    string_field_semantics(&field.key, format.as_deref(), placeholder.as_deref());
                 let fk = field_key.clone();
-                let input = layout::hinted_field(edit_model, hint)
+                let mut builder = layout::hinted_field(edit_model, hint)
                     .label(&field.title)
+                    .input_mode(semantics.input_mode)
+                    .autofill(semantics.autofill)
                     .disabled(disabled)
-                    .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
+                    .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk));
+                if semantics.secure {
+                    builder = builder.secure();
+                }
+                let input = builder
                     .build(&field_kit(layout::dark()))
                     .literal_direction()
                     .key(format!("provider-form-text-{}", field.key));
@@ -145,11 +257,14 @@ pub(super) fn view<S: 'static>(
                 }
                 stack = stack.child(block);
             }
-            FormFieldKind::Number { .. } => {
+            FormFieldKind::Number { integer, .. } => {
                 let edit_model = catalog.manager.form_text_edit(&field.key);
+                let (input_mode, autofill) = number_field_semantics(*integer);
                 let fk = field_key.clone();
                 let input = layout::literal_field(edit_model)
                     .label(&field.title)
+                    .input_mode(input_mode)
+                    .autofill(autofill)
                     .disabled(disabled)
                     .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
                     .build(&field_kit(layout::dark()))
@@ -211,6 +326,7 @@ pub(super) fn view<S: 'static>(
                         t("settings.providers.prompt.customValuesPlaceholder"),
                     )
                     .label(&field.title)
+                    .autofill(CUSTOM_VALUES_AUTOFILL)
                     .disabled(disabled)
                     .on_edit(move |s: &mut S| access(s).manager.form_text_edit_mut(&fk))
                     .build(&field_kit(layout::dark()))

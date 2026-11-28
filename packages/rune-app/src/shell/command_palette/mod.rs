@@ -233,6 +233,18 @@ pub(super) fn execute_by_id(s: &mut State, id: &'static str, tx: &mut Tx) -> boo
         if !super::blank_cleanup::open_confirm(s, return_target, tx) {
             restore_focus(target, tx);
         }
+    } else if item.id == "browse-directories"
+        || (item.id == "browse-folder" && !crate::platform::folder_picker_available())
+    {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::directory_browser::open_with_return_focus(s, None, return_target, tx) {
+            restore_focus(target, tx);
+        }
+    } else if item.id == "recent-tabs" {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::new_instance_launcher::open_with_return_focus(s, return_target, tx) {
+            restore_focus(target, tx);
+        }
     } else if item.id == "close-instance" {
         let return_target = target.clone();
         restore_focus(target, tx);
@@ -266,6 +278,18 @@ fn execute_selected(s: &mut State, tx: &mut Tx) -> bool {
     } else if id == "cleanup-blank-sessions" {
         let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
         if !super::blank_cleanup::open_confirm(s, return_target, tx) {
+            restore_focus(target, tx);
+        }
+    } else if id == "browse-directories"
+        || (id == "browse-folder" && !crate::platform::folder_picker_available())
+    {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::directory_browser::open_with_return_focus(s, None, return_target, tx) {
+            restore_focus(target, tx);
+        }
+    } else if id == "recent-tabs" {
+        let return_target = Some(target.clone().unwrap_or_else(|| theme::TRIGGER.to_owned()));
+        if !super::new_instance_launcher::open_with_return_focus(s, return_target, tx) {
             restore_focus(target, tx);
         }
     } else if id == "close-instance" {

@@ -369,7 +369,7 @@ export function MissionEditor(props: {
           if (current()) props.onSaved(undefined, undefined, saved.calendars.find(item => item.id === calendarID)?.missionID)
         } else await schedule.save(payload, requestId)
       } catch (error) {
-        const refusal = error instanceof HttpResponseError && { "calendar-unsupported": "unsupported", "calendar-coordinator-profile": "coordinatorProfile" }[error.code ?? ""]
+        const refusal = error instanceof HttpResponseError && { "calendar-unsupported": "unsupported" }[error.code ?? ""]
         if (current()) setError(t(refusal ? `missions.scheduling.error.${refusal}` : "missions.control.mutation.error"))
       } finally { setPending(false) }
       return

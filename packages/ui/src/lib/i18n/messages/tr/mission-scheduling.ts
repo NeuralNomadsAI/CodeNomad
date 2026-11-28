@@ -182,7 +182,6 @@ export const missionSchedulingMessages = {
   "missions.scheduling.error.empty": "Bu takvimde gelecekte zaman yok.",
   "missions.scheduling.error.capability": "Zamanlama kullanılamıyor. Taslağı koruyun veya başlatma ölçütlerini kaldırın.",
   "missions.scheduling.error.unsupported": "Bu başlatma ölçütleri zamanlanamaz.",
-  "missions.scheduling.error.coordinatorProfile": "Mevcut konuşma, koordinatörün aracısını, modelini ve düşünmesini kullanmıyor. Bunları eşleştirin veya yeni bir oturum kullanın.",
   "missions.scheduleList.activationRefused.layer.project": "Proje yapılandırması",
   "missions.scheduleList.activationRefused.layer.global": "Genel yapılandırma",
   "missions.scheduleList.activationRefused.layer.inherited": "Devralınan yapılandırma",
