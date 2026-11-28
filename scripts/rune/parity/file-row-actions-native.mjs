@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {parseArgs} from 'node:util'
-import {privateEnvironment} from '../../../packages/rune-app/private-profile.mjs'
+import {privateEnvironment} from '../../../packages/rune-app/fixtures/private-profile.mjs'
 const root=fileURLToPath(new URL('../../../',import.meta.url)),out=path.join(root,'target/rune-parity/file-row-actions-native')
 const {values}=parseArgs({options:{binary:{type:'string'}}})
 assert(values.binary&&path.isAbsolute(values.binary),'--binary requires an absolute offscreen gallery')
