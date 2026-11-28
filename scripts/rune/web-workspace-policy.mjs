@@ -226,7 +226,7 @@ export function workspacePolicy({origin,project,assets=new Set(),androidPrompt,m
        if(method==='POST'&&owned[2]==='creation/release')return claim(body)&&owners.get(owned[1])===body.requestId
        if(method==='DELETE'&&!owned[2])return !forbidRelease
        if(allowOwned)return allowOwned({method,path:owned[2]??'',body,query,native:false})
-      if(method==='GET'&&owned[2]==='worktrees')return true
+      if(method==='GET'&&['worktrees','pending-requests'].includes(owned[2]))return true
       if(method==='GET'&&/^sessions\/(ses_existing|ses_another|ses_linked|ses_linked_next)\/permission-(?:mode|receipts)$/.test(owned[2]))return true
       if(method==='POST'&&['session-history/window','session-history/outline'].includes(owned[2]))return ['ses_existing','ses_another','ses_linked','ses_linked_next'].includes(body?.sessionID)
       if(method==='POST'&&owned[2]==='session-history/outlinePreview')return body?.sessionID==='ses_existing'
