@@ -62,11 +62,8 @@ export function boundedInspection(inspection: MissionInspection, taskOffset?: nu
   if (size(inspection) <= MISSION_INSPECT_OUTPUT_LIMIT) return inspection
   if (!mission) {
     const value: Owner = { ...inspection }, result = () => ({ ...value, note: VIEW_NOTE })
-    const document = inspection.schedule?.document
     const slots: Slot[] = value.catalog === undefined ? [] : [{ owner: value, key: "catalog", selector: CATALOG, tier: 0 }]
-    if (document) for (const key of ["schedule", "selection"]) if (value[key] !== undefined)
-      slots.push({ owner: value, key, selector: { kind: "inspection", field: key }, tier: 0 })
-    if (!fit(result, slots, document ?? undefined)) throw outOfBounds()
+    if (!fit(result, slots)) throw outOfBounds()
     return checked(result())
   }
   const total = mission.tasks.length, offset = Math.min(taskOffset ?? 0, total)
@@ -156,12 +153,6 @@ export function boundedMissionList(missions: ReadonlyArray<Owner & { missionID: 
  * `MISSION_TASK_VIEW_FIELDS` and the catalog are the plugin's. */
 export function inspectionContentValue(inspection: MissionInspection, read: MissionInspectContent): unknown {
   const mission = inspection.mission
-  const document = inspection.schedule?.document
-  if (!mission && document && read.kind === "inspection" && ["schedule", "selection"].includes(read.field)) {
-    if (read.revision !== document.revision) throw new Error("Mission changed since this page: read it again from its first page")
-    if (!Object.prototype.hasOwnProperty.call(inspection, read.field)) throw contentUnavailable()
-    return (inspection as unknown as Owner)[read.field]
-  }
   if (!mission || read.kind === "catalog" || read.kind === "receipt" || read.kind === "configuration") throw contentUnavailable()
   if (read.revision !== mission.revision) throw new Error("Mission changed since this page: read it again from its first page")
   if (read.kind !== "inspection") return missionContentValue(mission, read)

@@ -64,7 +64,6 @@ async function fixture(t: TestContext) {
   let configEntries = config
   let dispatched: (() => void) | undefined
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
     session: {
       environment: async () => {},
       get: async ({ sessionID }: { sessionID: string }) => {
