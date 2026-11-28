@@ -12,6 +12,7 @@ fn marker(i: usize, kind: MarkerKind) -> Marker {
         continued: false,
         omitted_before: false,
         tool: None,
+        pending: false,
     }
 }
 

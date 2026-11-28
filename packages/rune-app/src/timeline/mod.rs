@@ -9,6 +9,8 @@ pub(crate) mod search;
 #[cfg(test)]
 pub(crate) mod tests;
 mod view;
+#[cfg(test)]
+mod visual_tests;
 pub(crate) use navigation::{
     admit, cancel_jump, failed, input_precedes_admission, poll_reveal, restore_search,
 };
@@ -41,6 +43,7 @@ struct Marker {
     continued: bool,
     omitted_before: bool,
     tool: Option<String>,
+    pending: bool,
 }
 
 impl From<timeline::Marker<'_>> for Marker {
@@ -53,6 +56,7 @@ impl From<timeline::Marker<'_>> for Marker {
             continued: m.continued,
             omitted_before: m.omitted_before,
             tool: m.tool_name.map(str::to_owned),
+            pending: false,
         }
     }
 }
@@ -139,6 +143,7 @@ impl Timeline {
                 continued: false,
                 omitted_before: false,
                 tool: None,
+                pending: false,
             });
             marker_id
         });
