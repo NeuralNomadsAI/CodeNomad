@@ -1,4 +1,5 @@
 import type { BrowserWindow, WebContents } from "electron"
+import { randomUUID } from "node:crypto"
 import type { ClientStateNavigationController } from "./client-state-navigation"
 import type { WindowStateTracker } from "./window-state"
 
@@ -17,6 +18,7 @@ export interface LocalWindowRecord {
    * an MRU or launch target, and closes once its connections settle.
    */
   connectOnly?: boolean
+  automationInstance?: string
 }
 
 interface PendingFolder { path: string; attempts: number }
@@ -38,6 +40,7 @@ const MAX_FOLDER_ATTEMPTS = 3
 export class LocalWindowRegistry {
   private readonly records = new Map<string, LocalWindowRecord>()
   private readonly webContentsIds = new Map<number, string>()
+  private readonly incarnations = new WeakMap<BrowserWindow, string>()
   private mru: string[] = []
 
   constructor(private readonly setActiveWindow: (id: string) => void | Promise<void>) {}
@@ -48,6 +51,7 @@ export class LocalWindowRegistry {
     if (!record.connectOnly && this.userWindowCount() >= MAX_LOCAL_WINDOWS) throw new RangeError("Too many local windows")
     record.id = id
     this.records.set(id, record)
+    this.incarnations.set(record.window, record.automationInstance ?? randomUUID())
     this.webContentsIds.set(record.window.webContents.id, id)
     if (!record.connectOnly) this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
   }
@@ -99,6 +103,25 @@ export class LocalWindowRegistry {
       if (record && !record.window.isDestroyed()) return record
     }
     return undefined
+  }
+
+  automationWindows(focused: BrowserWindow | null): Array<{ windowId: string; windowInstance: string; focused: boolean }> {
+    return this.readyWindows(focused).map(({ id, window }) => ({
+      windowId: id, windowInstance: this.incarnations.get(window)!, focused: window === focused,
+    }))
+  }
+
+  browserOpenCandidates(focused: BrowserWindow | null): WebContents[] {
+    return this.readyWindows(focused).map(({ window }) => window.webContents)
+  }
+
+  private readyWindows(focused: BrowserWindow | null): LocalWindowRecord[] {
+    return this.mru.flatMap(id => {
+      const record = this.get(id)
+      if (!record || record.loading || !record.backendUrl
+        || record.window.isDestroyed() || record.window.webContents.isDestroyed()) return []
+      return [record]
+    }).sort((left, right) => Number(right.window === focused) - Number(left.window === focused))
   }
 
   focusMru(): LocalWindowRecord | undefined {

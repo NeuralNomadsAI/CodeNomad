@@ -70,6 +70,62 @@ jobs:
       actions_artifacts_name_prefix: pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}-
       set_versions: false
 
+  performance-guard:
+    name: Renderer performance guard
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .perf-base
+          persist-credentials: false
+          sparse-checkout: scripts/perf/perf-budgets.json
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node --test scripts/perf/budget-report.test.mjs scripts/perf/seed.test.mjs
+      - run: npm run build --workspace @neuralnomads/codenomad
+      - name: Install Chromium and the pinned benchmark tools
+        run: |
+          npx --workspace @codenomad/ui playwright install --with-deps chromium
+          npm install --prefix scripts/perf/tools --ignore-scripts --no-audit --no-fund \
+            @lydell/node-pty@1.2.0-beta.18 @xterm/headless@6.0.0 @opencode/cli-linux-x64@2.4.2
+      - run: node --test scripts/perf/page-probe.test.mjs
+      - name: Measure renderer work and latency against the TUI
+        run: |
+          node scripts/perf/bench.mjs "$PWD/scripts/perf/tools/node_modules/@opencode/cli-linux-x64/bin/opencode"
+      - name: Check budgets
+        run: |
+          results=(scripts/perf/run/perf-*/results)
+          test "${#results[@]}" = 1
+          node scripts/perf/perf-check.mjs "${results[0]}" --calibrate > "${results[0]}/budget-candidate.json"
+          base=.perf-base/scripts/perf/perf-budgets.json
+          args=()
+          if test -f "$base"; then args=(--base "$base"); fi
+          node scripts/perf/perf-check.mjs "${results[0]}" --summary "$GITHUB_STEP_SUMMARY" "${args[@]}"
+      - name: Upload performance evidence
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: renderer-performance
+          path: |
+            scripts/perf/run/perf-*/results/*.json
+            scripts/perf/run/perf-*/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   tests-session-pruning-native:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
@@ -218,7 +274,7 @@ jobs:
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           # Shipped Missions bundle: loading, model-visible tools through the
-          # ordinary prompt loop, journal RPC and recurrence capability.
+          # ordinary prompt loop and journal RPC.
           node scripts/test-missions-native-contract.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-missions-native-family-control.mjs $cli
@@ -229,14 +285,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Parallel siblings, a recursive grandchild and coordinator readout.
           node scripts/test-missions-native-trajectory.mjs $cli
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Context IDs must resolve native schedule metadata; the retained product
-          # bundle must admit cold scheduled passages with the backend closed.
-          node scripts/test-native-schedule-context.mjs $cli
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $scheduleParent = node -p "require('node:path').join(require('node:os').tmpdir(), 'opencode')"
-          $scheduleScratch = Join-Path $scheduleParent "schedule-wakes-$([guid]::NewGuid().ToString('N'))"
-          node --import tsx scripts/test-native-mission-schedule-product.mjs $cli $scheduleScratch --parent-ready --kinds=at,in
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
             # Missions Preferences' Location subagent-depth editor against the
@@ -282,12 +330,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Recurring schedule journeys (~6.5 min) qualify the latest stable
-          # only; the contract fixture qualifies the recurrence graph on both.
-          if ('${{ matrix.runtime }}' -eq 'latest') {
-            node scripts/test-recurring-simple-native.mjs $cli ABCD
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          }
 
       - name: Upload isolated schedule product failure diagnostics
         if: ${{ failure() && env.NATIVE_SCHEDULE_PRODUCT_FIXTURE != '' }}
@@ -300,17 +342,6 @@ jobs:
             ${{ env.NATIVE_SCHEDULE_PRODUCT_FIXTURE }}/**/failure-sql.json
           if-no-files-found: ignore
           retention-days: 7
-      - name: Upload isolated schedule foundation failure diagnostics
-        if: ${{ failure() && env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE != '' }}
-        uses: actions/upload-artifact@v7.0.2
-        with:
-          name: schedule-foundation-failure-${{ matrix.runtime }}
-          path: |
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/receipt.json
-            ${{ env.NATIVE_SCHEDULE_FOUNDATION_FIXTURE }}/failure-diagnostic.json
-          if-no-files-found: ignore
-          retention-days: 7
-
       - name: Upload isolated runtime contract failure diagnostics
         if: ${{ failure() && env.RUNTIME_CONTRACT_FIXTURES != '' }}
         uses: actions/upload-artifact@v7.0.2
@@ -359,6 +390,7 @@ jobs:
             libgtk-3-dev \
             libglib2.0-dev \
             libwebkit2gtk-4.1-dev \
+            libgstreamer-plugins-base1.0-dev \
             libsoup-3.0-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev
@@ -393,7 +425,7 @@ jobs:
         run: npm run build:memory --workspace @neuralnomads/codenomad
 
       - name: Test desktop packaging invariants
-        run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
+        run: node --test scripts/desktop-server-resources.test.cjs scripts/precompress-ui.test.mjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs packages/tauri-app/scripts/patch-bundle-type.test.mjs packages/tauri-app/scripts/vendored-patches.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
         run: node --test scripts/native-fixture-diagnostics.test.mjs scripts/native-pruning-ready.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/dependabot-policy.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/windows-signing.test.cjs .github/scripts/zip-entry.test.cjs .github/scripts/release-pr-notes.test.cjs .github/scripts/download-cache.test.cjs
@@ -413,6 +445,7 @@ jobs:
         run: >-
           node --import tsx --test --test-force-exit
           packages/ui/src/components/browser-frame-security.test.ts
+          packages/ui/src/lib/remote-preview-address.test.ts
           packages/ui/src/components/panel-extensions/work-items-channel.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
@@ -445,6 +478,14 @@ jobs:
           packages/ui/src/lib/height-delta.test.ts
           packages/ui/src/lib/scroll-gesture-routing.test.ts
           packages/ui/src/lib/client-identity.test.ts
+          packages/ui/src/lib/backend-identity.test.ts
+          packages/ui/src/lib/backend-client.test.ts
+          packages/ui/src/lib/backend-meta-contract.test.ts
+          packages/ui/src/lib/passive-image.test.ts
+          packages/ui/src/lib/backend-usage-routing.test.ts
+          packages/ui/src/lib/backend-transport.test.ts
+          packages/ui/src/lib/backend-route-joining.test.ts
+          packages/ui/src/lib/local-route-joining.test.ts
           packages/ui/src/lib/filesystem-events.test.ts
           packages/ui/src/lib/global-cache.test.ts
           packages/ui/src/lib/monaco/model-cache.test.ts
@@ -481,7 +522,9 @@ jobs:
           packages/ui/src/stores/restore-workspace-commit-gates.test.ts
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state-partitions.test.ts
+          packages/ui/src/stores/client-state-delta.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/session-catalog-persistence.test.ts
           packages/ui/src/stores/compaction-notice.test.ts
           packages/ui/src/stores/form-settlements.test.ts
           packages/ui/src/stores/instance-invalidation.test.ts
@@ -489,10 +532,12 @@ jobs:
           packages/ui/src/stores/plugin-controls-demand.test.ts
           packages/ui/src/stores/plugin-controls-events.test.ts
           packages/ui/src/stores/plugin-sources.test.ts
+          packages/ui/src/lib/backend-plugin-routing.test.ts
           packages/ui/src/stores/integrations-store.test.ts
           packages/ui/src/stores/integration-bindings-store.test.ts
           packages/ui/src/lib/integration-rows.test.ts
           packages/ui/src/lib/integrations-api.test.ts
+          packages/ui/src/lib/backend-integration-routing.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts
@@ -515,6 +560,7 @@ jobs:
           packages/ui/src/stores/session-deletion-reconciliation.test.ts
           packages/ui/src/components/instance/shell/right-panel/useGitChanges.test.ts
           packages/ui/src/stores/tab-view-state.test.ts
+          packages/ui/src/stores/tab-view-state-local.test.ts
           packages/ui/src/stores/mission-view-state-migration.test.ts
           packages/ui/src/lib/browser-history.test.ts
           packages/ui/src/lib/keyboard-offset.test.ts
@@ -525,6 +571,11 @@ jobs:
       - name: Test Missions UI units
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/lib/backend-missions-routing.test.ts
+          packages/ui/src/lib/mission-coordinator-routing.test.ts
+          packages/ui/src/components/mission-backend-consumers.test.ts
+          packages/ui/src/stores/mission-backend-routing.test.ts
+          packages/ui/src/stores/mission-store-ownership.test.ts
           packages/ui/src/components/mission-attention.test.ts
           packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/mission-task-pages.test.ts
@@ -540,6 +591,7 @@ jobs:
           packages/ui/src/components/mission-native-execution.test.ts
           packages/ui/src/components/mission-picker-model.test.ts
           packages/ui/src/components/mission-profile-controls-data.test.ts
+          packages/ui/src/components/catalog-refresh.test.ts
           packages/ui/src/components/mission-profile-summary-data.test.ts
           packages/ui/src/components/mission-progress-model.test.ts
           packages/ui/src/components/mission-reader-locales.test.ts
@@ -550,13 +602,13 @@ jobs:
           packages/ui/src/lib/mission-cleanup.test.ts
           packages/ui/src/lib/mission-defaults.test.ts
           packages/ui/src/lib/mission-display.test.ts
+          packages/ui/src/lib/mission-held-reread.test.ts
           packages/ui/src/lib/mission-lifecycle-request.test.ts
           packages/ui/src/lib/mission-markdown-pages.test.ts
           packages/ui/src/lib/mission-model-library.test.ts
           packages/ui/src/lib/mission-mutation-locales.test.ts
           packages/ui/src/lib/mission-mutation.test.ts
           packages/ui/src/lib/mission-preferences-document.test.ts
-          packages/ui/src/lib/mission-recurrence-control.test.ts
           packages/ui/src/lib/mission-view-fence.test.ts
           packages/ui/src/lib/native-mission-preferences.test.ts
           packages/ui/src/lib/storage-owner-read-fence.test.ts
@@ -571,6 +623,13 @@ jobs:
       - name: Test restore ownership integration
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
+          packages/ui/src/stores/backend-preview-routing.test.ts
+          packages/ui/src/stores/backend-preferences.test.ts
+          packages/ui/src/stores/recent-projects.test.ts
+          packages/ui/src/stores/backend-registry.test.ts
+          packages/ui/tests/backend-relay-authority.test.ts
+          packages/ui/src/stores/preferences-multi-backend.test.ts
+          packages/ui/src/components/panel-extensions/api4-notes-channel.test.ts
           packages/ui/src/components/form-request-tool-target.test.ts
           packages/ui/src/components/form-request.test.ts
           packages/ui/src/components/instance/shell/useSessionCache.test.ts
@@ -585,6 +644,7 @@ jobs:
           packages/ui/src/components/tool-call/renderers/execute-data.test.ts
           packages/ui/src/components/tool-call/renderers/bash-data.test.ts
           packages/ui/src/components/prompt-input/usePromptState.test.ts
+          packages/ui/src/components/prompt-input/backend-history.test.ts
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/assistant-meta.test.ts
@@ -595,10 +655,35 @@ jobs:
           packages/ui/src/stores/instance-startup-priority.test.ts
           packages/ui/src/stores/session-list-startup.test.ts
           packages/ui/src/stores/app-tabs.test.ts
+          packages/ui/src/stores/backend-instance-identity.test.ts
+          packages/ui/src/lib/backend-events.test.ts
+          packages/ui/src/lib/backend-session-routing.test.ts
+          packages/ui/src/lib/backend-files-routing.test.ts
+          packages/ui/src/lib/backend-event-lifecycle.test.ts
+          packages/ui/src/lib/backend-event-authority.test.ts
+          packages/ui/src/lib/backend-consumer-lifetime.test.ts
+          packages/ui/src/lib/backend-async-inventory.test.ts
+          packages/ui/src/stores/backend-demand-lifetime.test.ts
+          packages/ui/src/stores/backend-action-lifetime.test.ts
+          packages/ui/src/stores/backend-runtime-lifetime.test.ts
+          packages/ui/src/stores/backend-session-flags.test.ts
+          packages/ui/src/stores/backend-session-read-flags.test.ts
+          packages/ui/src/stores/backend-store-indicators.test.ts
+          packages/ui/src/components/backend-view-indicators.test.ts
+          packages/ui/src/lib/backend-panel-deadline.test.ts
+          packages/ui/src/lib/backend-panel-extensions-routing.test.ts
           packages/ui/src/stores/app-session-workspace-hydration.test.ts
+          packages/ui/src/components/backend-view-lifetime.test.ts
+          packages/ui/src/lib/backend-view-io.test.ts
+          packages/ui/src/components/panel-extensions/extension-manager-lifetime.test.ts
+          packages/ui/src/stores/backend-workspace-list-refresh.test.ts
           packages/ui/src/stores/forms.test.ts
           packages/ui/src/stores/preferences-favorites-mode.test.ts
           packages/ui/src/stores/instances-restore-ownership.test.ts
+          packages/ui/src/stores/instances-cancellation-flight.test.ts
+          packages/ui/src/stores/workspace-creation-cancellation-admission.test.ts
+          packages/ui/src/stores/workspace-creation-cancellation-order.test.ts
+          packages/ui/src/stores/instances-backend-lifecycle.test.ts
           packages/ui/src/stores/instances-pending-compaction.test.ts
           packages/ui/src/stores/instances-pending-requests.test.ts
           packages/ui/src/stores/pending-recovery-cause.test.ts
@@ -618,7 +703,6 @@ jobs:
           packages/ui/src/stores/session-child-transcript-watch.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
-          packages/ui/src/stores/opencode-compaction.test.ts
           packages/ui/src/lib/message-part-grouping.test.ts
           packages/ui/src/lib/settings/behavior-registry.test.ts
           packages/ui/src/components/instance/shell/right-panel/core-plugin.test.ts
@@ -640,6 +724,10 @@ jobs:
           packages/ui/src/stores/session-native-events.test.ts
           packages/ui/src/stores/interruption-scope.test.ts
           packages/ui/src/stores/session-workspace-scope.test.ts
+          packages/ui/src/stores/session-projection-cost.test.ts
+          packages/ui/src/stores/session-projection.test.ts
+          packages/ui/src/lib/deadline-memo.test.ts
+          packages/ui/src/lib/server-events-lifecycle.test.ts
           packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-lifecycle-signals.test.ts
@@ -648,11 +736,11 @@ jobs:
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-default-agent.test.ts
           packages/ui/src/stores/session-default-model.test.ts
-          packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/history-search-sessions.test.ts
           packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
           packages/ui/src/stores/blank-session-cleanup.test.ts
+          packages/ui/src/stores/instance-reconnect-reconciliation.test.ts
           packages/ui/src/stores/session-status.test.ts
           packages/ui/src/stores/session-subsession-activity.test.ts
           packages/ui/src/stores/worktree-ready.test.ts
@@ -660,6 +748,10 @@ jobs:
           packages/ui/src/stores/project-names.test.ts
           packages/ui/src/stores/temporary-instances.test.ts
           packages/ui/src/stores/closed-workspace-drafts.test.ts
+
+      - name: Test compaction and verify natural exit
+        timeout-minutes: 1
+        run: node --conditions=browser --import tsx --test packages/ui/src/stores/opencode-compaction.test.ts
 
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
@@ -817,6 +909,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Test concurrent server identity and crash recovery
+        run: node --import tsx --test packages/server/src/settings/server-identity.test.ts
+
       - name: Restore the Electron download
         if: ${{ hashFiles('.github/actions/download-cache/action.yml') != '' }}
         uses: ./.github/actions/download-cache
@@ -970,7 +1065,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config zsh libgtk-3-dev \
-            libglib2.0-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            libglib2.0-dev libwebkit2gtk-4.1-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-good libsoup-3.0-dev \
             libayatana-appindicator3-dev librsvg2-dev
       - run: npm ci --workspaces --include=optional
       - name: Test WebKit qualification workflow contract

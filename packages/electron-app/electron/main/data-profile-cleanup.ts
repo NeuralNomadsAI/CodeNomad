@@ -292,6 +292,7 @@ async function defaultProfileCandidate(roots: ProfileRoots, current: CurrentProf
     ...DEFAULT_ELECTRON_CHILDREN.directories.map((name) => ({ root: roots.electronBase, name, directory: true })),
     ...DEFAULT_ELECTRON_CHILDREN.files.map((name) => ({ root: roots.electronBase, name, directory: false })),
     { root: sharedState, name: "client-state.json", directory: false },
+    { root: sharedState, name: "workspace-file-drafts.json", directory: false },
     { root: sharedState, name: "partitions", directory: true },
     { root: roots.homeClientState, name: "client-state.json", directory: false },
     ...DEFAULT_WEBVIEW_CHILDREN.map((name) => ({ root: roots.webviewRoot, name, directory: true })),

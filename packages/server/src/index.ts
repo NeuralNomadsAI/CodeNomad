@@ -9,6 +9,7 @@ import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
 import { parseAllowedOrigins } from "./server/direct-origin"
+import { verifiedHttpsOrigins } from "./remote-control/direct-https"
 import { sessionTimeoutMs } from "./auth/session-manager"
 import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
@@ -20,14 +21,19 @@ import { prepareForeignProbe } from "./opencode-update/shared-installation"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
+import { CODENOMAD_API_CONTRACT, CODENOMAD_CAPABILITIES } from "./meta-contract"
 import { InstanceStore } from "./storage/instance-store"
 import { InstanceEventBridge } from "./workspaces/instance-events"
 import { createLogger } from "./logger"
+import { serverLogFile } from "./log-file"
 import { launchInBrowser } from "./launcher"
 import { resolveUi } from "./ui/remote-ui"
 import { AuthManager, BOOTSTRAP_TOKEN_STDOUT_PREFIX, DEFAULT_AUTH_COOKIE_NAME, DEFAULT_AUTH_USERNAME } from "./auth/manager"
+import { handleManagedSessionControl } from "./auth/managed-session-control"
 import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
+import { RemoteServerBrowseManager } from "./codenomad-servers/browse-manager"
+import { LiveVoiceGateway } from "./speech/live-voice-gateway"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
 import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
@@ -39,11 +45,11 @@ import { PreviewManager } from "./previews/manager"
 import { ClientConnectionManager } from "./clients/connection-manager"
 import { runCliUpgrade } from "./cli-upgrade"
 import { createServerShutdownHandler, installShutdownSignalHandlers, installShutdownStdinHandler, orchestrateServerShutdown } from "./shutdown"
-import { AutoAcceptManager } from "./permissions/auto-accept-manager"
-import { createOpencodePermissionReplier } from "./permissions/opencode-replier"
 import { PermissionReceipts } from "./permissions/receipts"
 import { PermissionReceiptStore } from "./permissions/receipt-store"
-import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metadata"
+import { SessionPermissionModes } from "./permissions/session-mode"
+import { connectSessionPermissionRefresh } from "./server/routes/session-permission-refresh"
+import { SessionCleanupFence } from "./server/session-cleanup-fence"
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
@@ -279,6 +285,9 @@ export function programHasArg(argv: string[], flag: string): boolean {
   return argv.some((argument) => argument === flag || argument.startsWith(`${flag}=`))
 }
 
+/** The server's own log file, once `main` has resolved it. */
+let logFile: string | undefined
+
 async function main() {
   const options = parseCliOptions(process.argv.slice(2))
   if (options.upgrade !== undefined) {
@@ -287,7 +296,10 @@ async function main() {
     return
   }
 
-  const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app" })
+  const configLocation = resolveConfigLocation(options.configPath)
+  // An explicit destination replaces stdout and this file alike.
+  if (!options.logDestination) logFile = serverLogFile(configLocation.baseDir)
+  const logger = createLogger({ level: options.logLevel, destination: options.logDestination, component: "app", file: logFile })
   const workspaceLogger = logger.child({ component: "workspace" })
   const configLogger = logger.child({ component: "config" })
   const eventLogger = logger.child({ component: "events" })
@@ -307,7 +319,6 @@ async function main() {
 
   const eventBus = new EventBus(eventLogger)
 
-  const configLocation = resolveConfigLocation(options.configPath)
   const configDir = configLocation.baseDir
   const memoryStore = new MemoryStore(configLocation.baseDir)
 
@@ -338,6 +349,7 @@ async function main() {
       sessionIdleMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_IDLE_SECONDS, "CODENOMAD_SESSION_IDLE_SECONDS"),
       sessionAbsoluteMs: sessionTimeoutMs(process.env.CODENOMAD_SESSION_ABSOLUTE_SECONDS, "CODENOMAD_SESSION_ABSOLUTE_SECONDS"),
       generateToken: options.generateToken,
+      managedLocal: process.env.CODENOMAD_NATIVE_PARENT === "1",
       dangerouslySkipAuth: options.dangerouslySkipAuth,
     },
     logger.child({ component: "auth" }),
@@ -362,6 +374,9 @@ async function main() {
   })
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
+  serverMeta.serverId = settings.getServerId()
+  serverMeta.apiContract = CODENOMAD_API_CONTRACT
+  serverMeta.capabilities = [...CODENOMAD_CAPABILITIES]
   const binaryResolver = new BinaryResolver(settings)
   // Warm the bounded, asynchronous version probe of a foreign PATH OpenCode so
   // synchronous resolution can prefer a managed OpenCode 2 without spawning.
@@ -428,19 +443,11 @@ async function main() {
     logger: logger.child({ component: "sidecars" }),
   })
   const previewManager = new PreviewManager()
-  const yoloLogger = logger.child({ component: "yolo" })
-  const sessionMetadataPersistence = createOpencodeYoloPersistence(workspaceManager, settings)
   const permissionReceipts = new PermissionReceipts(
-    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus, yoloLogger,
+    new PermissionReceiptStore(path.join(configLocation.baseDir, "permission-receipts")), workspaceManager, eventBus,
+    logger.child({ component: "permission-receipts" }),
   )
   permissionReceipts.start()
-  const yoloManager = new AutoAcceptManager({
-    eventBus,
-    logger: yoloLogger,
-    replier: createOpencodePermissionReplier({ workspaceManager, permissionReceipts }),
-    persistence: sessionMetadataPersistence,
-  })
-  yoloManager.start()
   const instanceEventBridge = new InstanceEventBridge({
     workspaceManager,
     eventBus,
@@ -508,12 +515,17 @@ async function main() {
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
   let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  let remoteControlServesRemotePreview: (token: string) => boolean = () => false
+  const allowedOrigins = parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS)
+  let remoteControlVoiceUpgrade: ReturnType<typeof createHttpServer>["remoteVoiceUpgrade"] | null = null
   const remoteControlManager = new RemoteControlManager({
+    directHttpsOrigins: () => verifiedHttpsOrigins(serverMeta, allowedOrigins),
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
     previewUpgrade: () => remoteControlPreviewUpgrade,
-    hasPreview: (token) => previewManager.get(token) !== undefined,
+    voiceUpgrade: () => remoteControlVoiceUpgrade,
+    hasPreview: (token) => previewManager.get(token) !== undefined || remoteControlServesRemotePreview(token),
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     disabledByAdministrator: options.remoteControlDisabled,
     logger: logger.child({ component: "remote-control" }),
@@ -535,34 +547,42 @@ async function main() {
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
     void refreshDesignRequest()
-  })
+  }, id => eventBus.publish({ type: "panelExtensions.notesChanged", id }))
   // This backend's Design request, carried by each of its session-pruning leases.
   const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
   void refreshDesignRequest()
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
+  const sessionPermissions = { modes: new SessionPermissionModes(settings), cleanup: new SessionCleanupFence() }
+  const stopPermissionRefresh = connectSessionPermissionRefresh(eventBus, workspaceManager, sessionPermissions.modes,
+    worktreeDeletionFence, sessionPermissions.cleanup, logger)
   const missionsHost = () => missionBridge !== "failed"
+  const remoteServerBrowseManager = new RemoteServerBrowseManager(settings)
+  const reconcileBackends = () => remoteServerBrowseManager.reconcile()
+  eventBus.on("storage.stateChanged", reconcileBackends)
 
   // The same application behind every listener of this backend.
   const listenerDeps = {
-    allowedOrigins: parseAllowedOrigins(process.env.CODENOMAD_ALLOWED_ORIGINS),
+    allowedOrigins,
     memoryStore,
     workspaceManager,
     settings,
+    remoteServerBrowseManager,
     fileSystemBrowser,
     eventBus,
     serverMeta,
     instanceStore,
     speechService,
+    liveVoice: new LiveVoiceGateway(speechService),
     sidecarManager,
     previewManager,
     authManager,
     clientConnectionManager,
     remoteProxySessionManager,
     remoteControlManager,
-    yoloManager,
     permissionReceipts,
+    sessionPermissions,
     panelExtensions,
     uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
     logger,
@@ -617,6 +637,8 @@ async function main() {
   const routingServer = options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer
   remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
   remoteControlPreviewUpgrade = routingServer.previewUpgrade
+  remoteControlServesRemotePreview = routingServer.servesRemotePreview
+  remoteControlVoiceUpgrade = routingServer.remoteVoiceUpgrade
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),
@@ -714,6 +736,7 @@ async function main() {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
 
+  let shuttingDown = false
   const shutdown = createServerShutdownHandler({
     logger,
     holdAfterFailure: () => new Promise<void>(() => { setInterval(() => undefined, 60_000) }),
@@ -721,12 +744,13 @@ async function main() {
       process.stdin.destroy()
       process.exitCode = code
     },
-    shutdown: () =>
-      orchestrateServerShutdown(
+    shutdown: () => {
+      shuttingDown = true
+      return orchestrateServerShutdown(
         {
           stopInstanceEventBridge: async () => {
             instanceEventBridge.shutdown()
-            await Promise.all([yoloManager.stop(), permissionReceipts.stop()])
+            await Promise.all([permissionReceipts.stop(), stopPermissionRefresh()])
           },
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
@@ -734,7 +758,6 @@ async function main() {
           stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             // Accepted HTTP mutations can confirm receipts after observers stop.
-            await yoloManager.stop()
             await permissionReceipts.stop()
             const results = await Promise.allSettled([
               workspaceManager.shutdown(), pruningLifecycle.stop(), automationLifecycle.stop(), missionsLifecycle.stop(), memoryLifecycle.stop(),
@@ -745,6 +768,8 @@ async function main() {
             if (failures.length) throw new AggregateError(failures, "Workspace and plugin cleanup failed")
           },
           stopHttpServers: async () => {
+            eventBus.off("storage.stateChanged", reconcileBackends)
+            remoteServerBrowseManager.close()
             const results = await Promise.allSettled(servers.map((srv) => srv.stop()))
             const failures = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
             if (failures.length > 0) {
@@ -757,16 +782,18 @@ async function main() {
           stopReleaseMonitor: () => devReleaseMonitor?.stop(),
         },
         logger,
-      ),
+      )
+    },
   })
 
   installShutdownSignalHandlers(process, shutdown)
-  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line))
+  installShutdownStdinHandler(process.stdin, shutdown, (line) => nativeParent.handleLine(line)
+    || (!shuttingDown && nativeParent.available && handleManagedSessionControl(line, authManager, value => process.stdout.write(`${value}\n`))))
 }
 
 if (path.resolve(process.argv[1] ?? "") === __filename) {
   main().catch((error) => {
-    const logger = createLogger({ component: "app" })
+    const logger = createLogger({ component: "app", file: logFile })
     logger.error({ err: error }, "CLI server crashed")
     process.exit(1)
   })

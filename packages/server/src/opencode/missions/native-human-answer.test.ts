@@ -9,7 +9,7 @@ import { OpenCode } from "@opencode/client"
 import pino from "pino"
 import { Context, Effect } from "effect"
 import { AuthManager } from "../../auth/manager"
-import { stableToken, MissionJournal, type MissionStorage } from "../../missions/journal"
+import { stableToken, MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
 import { MissionControl } from "../../missions/control"
 import { buildAssignmentPrompt } from "../../missions/recipes"
 import { HUMAN_MARK_STORAGE_PREFIX } from "../../missions/human-answer"
@@ -18,7 +18,8 @@ import { createAutomationBridgeRegistration, publishAutomationBridge } from "../
 import { registerAutomationPluginRoute } from "../../server/routes/automation-plugin"
 import { registerInstanceProxyRoutes } from "../../server/http-server"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import type { NativeDecisionEvidenceRequest } from "../../missions/native-human-evidence"
+import type { NativeDecisionProvenance } from "../../missions/decision-artifact"
+type NativeDecisionEvidenceRequest = NativeDecisionProvenance & { question: string; answer: string | string[]; projectID: string; directory: string; delegationToolName: string }
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 import { attachRemoteDevice, markRemoteSocket } from "../../remote-control/request-origin"
 
@@ -103,8 +104,9 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions:
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
-  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet },
-    rpc: () => ({ ...native, scheduleCarrierRead: async () => ({ owned: false }) }) }, assertCurrent: () => {},
+  const connection = { endpoint: { url: "http://127.0.0.1:1" }, client: { session: { get: nativeGet,
+    form: { get: async () => ({ ...form, state }) } },
+    rpc: () => ({ ...native }) }, assertCurrent: () => {},
     fetch: async (_url: unknown, init: { body: string }) => {
       ordinary = true
       await Effect.runPromise(Effect.provide(forms.reply({ id: form.id, answer: JSON.parse(init.body).answer }), graph))
@@ -638,16 +640,33 @@ test("an unrelated metadata-less root answers without reading a populated Missio
   } finally { await f.dispose() }
 })
 
-test("an attached journal coordinator still pays the exact membership read and gets its mark", async () => {
+test("an attached journal coordinator gets its exact mark beside a long ordinary mission", async () => {
   const f = await fixture()
   try {
     attached(f)
-    await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "evt_attached", type: "mission.created",
+    const journal = new MissionJournal(f.storage, "project", f.directory)
+    const missionID = "msn_aaa_neighbor", prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${missionID}`
+    const common = { version: 1, missionID, projectID: "project" }
+    f.put(`${prefix}/evt_created`, { ...common, id: "evt_created", type: "mission.created", createdAt: 1,
+      projectCanonical: f.directory, objective: "Neighbor", template: "custom",
+      coordinator: { sessionID: "ses_elsewhere", title: "Neighbor", location: { directory: f.directory } } })
+    f.db.exec("BEGIN")
+    try {
+      for (let n = 1; n <= 2050; n++) {
+        const id = `evt_edit_${n}`
+        f.put(`${prefix}/${id}`, { ...common, id, type: "mission.updated", createdAt: n + 1, objective: n === 1 ? "ses_root" : `Edit ${n}` })
+      }
+      f.db.exec("COMMIT")
+    } catch (error) { f.db.exec("ROLLBACK"); throw error }
+    await assert.rejects(journal.snapshot(), /2000-event safety limit/, "the compatibility scanner cannot read the neighbor")
+    assert.equal(await f.native.binding({ sessionID: f.form.sessionID, rootSessionID: "ses_root",
+      formID: f.form.id, profileID: "profile", executionHost: "native" }), null, "an ID mentioned in text is not membership")
+    f.put(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/msn_attached/evt_attached`, {
+      version: 1, id: "evt_attached", type: "mission.created",
       missionID: "msn_attached", projectID: "project", projectCanonical: f.directory, createdAt: 1, objective: "Attached", template: "custom",
       coordinator: { sessionID: "ses_root", title: "Attached", location: { directory: f.directory } } })
-    const scans = f.journalScans()
     assert.equal((await f.submit()).statusCode, 204)
-    assert(f.journalScans() > scans, "a probe hit is confirmed by the exact snapshot")
+    assert.equal(f.journalScans(), 0, "positive membership reads through the native range")
     assert.equal(f.get(f.markKey)?.state, "confirmed")
   } finally { await f.dispose() }
 })

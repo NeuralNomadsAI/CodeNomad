@@ -15,6 +15,8 @@ interface StoredDevice {
   tokenHash: string
   createdAt: string
   lastSeenAt: string
+  /** Verified direct HTTPS origin the device paired on; absent for Remote Control devices. */
+  origin?: string
 }
 
 interface StoredState {
@@ -30,12 +32,14 @@ interface StoredState {
 /**
  * Host-owned Remote Control authorization: the stable tunnel route, one
  * single-use pairing code at a time, and hashed device credentials that expire
- * after a period without use.
+ * after a period without use. A code and its device belong to one channel: the
+ * tunnel (no origin) or one verified direct HTTPS origin.
  */
 export class RemoteDeviceRegistry {
   private state: StoredState
-  private pairing: { codeHash: Buffer; expiresAt: number } | null = null
+  private pairing: { codeHash: Buffer; expiresAt: number; origin?: string } | null = null
   private readonly persistedLastSeen = new Map<string, number>()
+  private readonly pendingRevocations = new Map<string, RemoteControlDevice>()
   private persisted: boolean
 
   constructor(private readonly filePath: string, private readonly now: () => number = Date.now) {
@@ -55,9 +59,9 @@ export class RemoteDeviceRegistry {
     return this.state.enabled === true
   }
 
-  /** Records the user's Start/Stop choice; installations that never started stay unwritten. */
   setStartsOnLaunch(enabled: boolean): void {
-    if (this.startsOnLaunch() === enabled) return
+    if (enabled && this.startsOnLaunch()) return
+    if (!enabled && !this.persisted && !this.startsOnLaunch()) return
     this.state.enabled = enabled
     this.persist()
   }
@@ -73,25 +77,26 @@ export class RemoteDeviceRegistry {
     this.persist()
   }
 
-  /** Issues a new pairing code; any earlier unused code stops working. */
-  createPairing(): { code: string; expiresAt: string } {
+  /** Issues a new pairing code for one channel; any earlier unused code stops working. */
+  createPairing(origin?: string): { code: string; expiresAt: string } {
     const code = randomBytes(24).toString("base64url")
     const expiresAt = this.now() + PAIRING_TTL_MS
-    this.pairing = { codeHash: hash(code), expiresAt }
+    this.pairing = { codeHash: hash(code), expiresAt, ...(origin ? { origin } : {}) }
     return { code, expiresAt: new Date(expiresAt).toISOString() }
   }
 
+  /** Cancels an unused tunnel code; a direct HTTPS code is independent of the tunnel. */
   cancelPairing(): void {
-    this.pairing = null
+    if (this.pairing?.origin === undefined) this.pairing = null
   }
 
   /**
-   * Consumes a pairing code once and returns the new device credential. At the
-   * device limit, the least recently seen device is replaced and reported.
+   * Consumes a pairing code once, on its own channel, and returns the new device
+   * credential. At the device limit, the least recently seen device is replaced and reported.
    */
-  exchange(code: string, name: string): { device: RemoteControlDevice; token: string; evictedId?: string } | null {
+  exchange(code: string, name: string, origin?: string): { device: RemoteControlDevice; token: string; evictedId?: string } | null {
     const pairing = this.pairing
-    if (!pairing || pairing.expiresAt <= this.now() || !timingSafeEqual(pairing.codeHash, hash(code))) return null
+    if (!pairing || pairing.origin !== origin || pairing.expiresAt <= this.now() || !timingSafeEqual(pairing.codeHash, hash(code))) return null
     this.pairing = null
     this.pruneExpired()
     let evictedId: string | undefined
@@ -107,42 +112,51 @@ export class RemoteDeviceRegistry {
       tokenHash: hash(token).toString("hex"),
       createdAt: timestamp,
       lastSeenAt: timestamp,
+      ...(origin ? { origin } : {}),
     }
     this.state.devices.push(stored)
     this.persist()
     return { device: publicDevice(stored), token, ...(evictedId ? { evictedId } : {}) }
   }
 
-  authenticate(token: string | undefined): RemoteControlDevice | null {
+  /** A device of this channel: the tunnel without an origin, or that direct HTTPS origin. */
+  authenticate(token: string | undefined, origin?: string): RemoteControlDevice | null {
     if (!token) return null
     const tokenHash = hash(token).toString("hex")
     const device = this.state.devices.find((candidate) => candidate.tokenHash === tokenHash)
-    if (!device || this.isExpired(device)) return null
+    if (!device || device.origin !== origin || this.isExpired(device)) return null
     const now = this.now()
     device.lastSeenAt = new Date(now).toISOString()
     if (now - (this.persistedLastSeen.get(device.id) ?? 0) >= LAST_SEEN_PERSIST_MS) {
-      this.persistedLastSeen.set(device.id, now)
       this.persist()
+      this.persistedLastSeen.set(device.id, now)
     }
     return publicDevice(device)
   }
 
   /** Read-only revalidation of a previously authenticated device; never refreshes lastSeen. */
-  isPaired(id: string): boolean {
+  isPaired(id: string, origin?: string): boolean {
     const device = this.state.devices.find((candidate) => candidate.id === id)
-    return device !== undefined && !this.isExpired(device)
+    return device !== undefined && device.origin === origin && !this.isExpired(device)
   }
 
   list(): RemoteControlDevice[] {
     this.pruneExpired()
-    return this.state.devices.map(publicDevice)
+    return [...this.state.devices.map(publicDevice), ...this.pendingRevocations.values()]
+  }
+
+  pairedCount(): number {
+    this.pruneExpired()
+    return this.state.devices.length
   }
 
   revoke(id: string): boolean {
-    const before = this.state.devices.length
-    this.state.devices = this.state.devices.filter((device) => device.id !== id)
-    if (this.state.devices.length === before) return false
-    this.persistedLastSeen.delete(id)
+    const device = this.state.devices.find(device => device.id === id)
+    if (device) {
+      this.state.devices = this.state.devices.filter(device => device.id !== id)
+      this.pendingRevocations.set(id, { ...publicDevice(device), revocationPending: true })
+      this.persistedLastSeen.delete(id)
+    } else if (!this.pendingRevocations.has(id)) return false
     this.persist()
     return true
   }
@@ -163,6 +177,7 @@ export class RemoteDeviceRegistry {
     const temporary = `${this.filePath}.${process.pid}.tmp`
     fs.writeFileSync(temporary, `${JSON.stringify(this.state, null, 2)}\n`, { mode: 0o600 })
     fs.renameSync(temporary, this.filePath)
+    this.pendingRevocations.clear()
     this.persisted = true
   }
 }
@@ -203,7 +218,8 @@ function readState(filePath: string): StoredState | null {
   const devices = candidate.devices.filter((device): device is StoredDevice =>
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
-    && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt))))
+    && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt)))
+    && (device.origin === undefined || typeof device.origin === "string" && device.origin.startsWith("https://")))
   return {
     version: 1, route: candidate.route, devices,
     ...(candidate.enabled === true ? { enabled: true } : {}),
@@ -212,7 +228,7 @@ function readState(filePath: string): StoredState | null {
 }
 
 function publicDevice(device: StoredDevice): RemoteControlDevice {
-  return { id: device.id, name: device.name, createdAt: device.createdAt, lastSeenAt: device.lastSeenAt }
+  return { id: device.id, name: device.name, createdAt: device.createdAt, lastSeenAt: device.lastSeenAt, ...(device.origin ? { origin: device.origin } : {}) }
 }
 
 function sanitizeName(name: string): string {

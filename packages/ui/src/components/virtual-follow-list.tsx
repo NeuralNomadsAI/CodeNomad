@@ -5,7 +5,7 @@ import { flushFrameBatchedMounts } from "../lib/frame-batch-schedule"
 import { attachScrollGestureRouting, findNestedScroller, getElementZoom, POINTER_CONTROL_SELECTOR, wheelDeltaUnit } from "../lib/scroll-gesture-routing"
 import { remapVirtualMeasurements } from "./virtual-follow-measurements"
 import { createVirtualReaderSettlement } from "./virtual-reader-settlement"
-import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
+import { advanceBottomPinSettlement, AnchorRestoreStabilizer, canScrollInDirection, classifyVirtualItemKeyChange, describeKeyTarget, getBottomAnchoredViewportOffset, getFollowSnapshotState, getKeyboardScrollIntent, getPrimaryPointerDragDirection, isAtBottomForMode, isAutoFollowing, isMiddleButtonScrollIntent, isScrollRestoreMeasurementReady, markScrollMetricsStale, resolveAutoPinHoldElement, restoreFollowModeFromSnapshot, SCROLL_INTENT_KEYS, scrollElementMetrics, ScrollObservationGate, USER_SCROLL_INTENT_WINDOW_MS, ScrollRestoreTokenGuard, selectTopViewportAnchor, shouldNavigateAtBoundary, VirtualScrollController, type BottomPinSettlementState, type FollowEffect, type FollowEvent, type FollowMode, type HoldTargetElementResolver, type ScrollControllerMetrics, type ScrollControllerResult } from "./virtual-follow-behavior.ts"
 import { isScrollTraceEnabled, traceScroll, type ScrollReason, type ScrollTraceEntry, type ScrollTraceKind } from "./virtual-scroll-trace"
 
 const DEFAULT_HOLD_TARGET_TOP_THRESHOLD_PX = 8
@@ -29,6 +29,9 @@ const ROLL_READER_ROUNDING_PX = 2
 // `index` of `virtualItems` is Virtua's row `index + HEADER_ROWS`.
 const HEADER_ROWS = 1
 const HEADER_ROW = {}
+
+/** The follow writers, which re-issue every frame and merge to one write per frame. */
+const PIN_WRITE_REASONS: ReadonlySet<ScrollReason> = new Set(["content-grew", "observe", "explicit-pin"] as const)
 
 export interface VirtualExplicitBottomPinIntent {
   token: string | number
@@ -203,6 +206,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   let pendingContentRenderedFrame: number | null = null
   let bottomPin: BottomPin | null = null
   let bottomPinFrame: number | null = null
+  // The merged scroll-write pipeline (see `writeScroll`): one pending intent,
+  // flushed in a microtask; a per-frame-merged pin waits for the marker's
+  // next frame instead.
+  let pendingScrollWrite: { reason: ScrollReason; op: ScrollWriteOp } | null = null
+  let scrollWriteMicrotaskScheduled = false
+  let scrollWriteFrameMarker: number | null = null
+  let scrollWriteFrame = 0
+  let scrollWritePinFrame = -1
   // The last intent token started or cancelled: an intent never restarts itself.
   let handledBottomPinToken: string | number | null = null
   let programmaticScrollUntil = 0
@@ -254,6 +265,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     rollReader = rollAnchor = undefined
     touchFlingClaimUntil = 0
     cancelActiveScrollRestore()
+    pendingScrollWrite = null
     if (bottomPin?.settle || explicitBottomPinIntent()) cancelExplicitBottomPin()
   }
 
@@ -268,6 +280,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     invalidateScrollRestore()
     endBottomPin("interrupted")
     scrollObservation.cancelPending()
+    pendingScrollWrite = null
+    if (scrollWriteFrameMarker !== null) cancelAnimationFrame(scrollWriteFrameMarker)
+    scrollWriteFrameMarker = null
+    scrollWritePinFrame = -1
     if (pendingContentRenderedFrame !== null) cancelAnimationFrame(pendingContentRenderedFrame)
     pendingContentRenderedFrame = null
   }
@@ -341,6 +357,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.onScrollIntent?.(direction)
     supersedePositioning()
     const element = scrollElement()
+    // A gesture observes live geometry: content may have grown since the last
+    // measured epoch (a delayed image extending a nested report) without any
+    // scroll, row resize or render announcing it.
+    markScrollMetricsStale()
     syncControllerResult(scrollController.userGesture(direction, performance.now() + USER_SCROLL_INTENT_WINDOW_MS, element ? getDomMetrics(element) : null, distance), "user-gesture")
     // No list positioning outlives this: see `writeScroll`.
     // At a clamped edge a wheel/key produces no scroll event. The gesture
@@ -376,8 +396,50 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
    * operation either: its leaving rows are retired in place (see the items
    * effect). Virtua's own compensation, the browser's clamping and user
    * gestures are observed as `unowned` scrolls.
+   *
+   * Writes are intents: they merge (the last one wins) into one DOM write per
+   * microtask, so reactive effect re-runs never write `scrollTop`
+   * synchronously and a frame's interleaved read/write churn collapses. The
+   * follow writers (`PIN_WRITE_REASONS`) apply at most once per frame; any
+   * other write (reader corrections, jumps, restores) applies in its own
+   * microtask, before the paint of the phase that asked for it.
    */
   function writeScroll(reason: ScrollReason, op: ScrollWriteOp) {
+    if (!scrollElement()) return
+    // A reactive chain often issues a jump or correction and then its pin
+    // loop's re-issue in the same task: the navigation or correction keeps the
+    // slot (its label is the write's provenance); a later pin merges into it.
+    if (pendingScrollWrite && !PIN_WRITE_REASONS.has(pendingScrollWrite.reason) && PIN_WRITE_REASONS.has(reason)) return
+    pendingScrollWrite = { reason, op }
+    if (!scrollWriteMicrotaskScheduled) {
+      scrollWriteMicrotaskScheduled = true
+      queueMicrotask(flushPendingScrollWrite)
+    }
+  }
+
+  function flushPendingScrollWrite() {
+    scrollWriteMicrotaskScheduled = false
+    applyPendingScrollWrite()
+  }
+
+  /** `force` applies even a per-frame-merged pin (a state capture must read the intended position). */
+  function applyPendingScrollWrite(force = false) {
+    const pending = pendingScrollWrite
+    if (!pending) return
+    if (!force && PIN_WRITE_REASONS.has(pending.reason) && scrollWritePinFrame === scrollWriteFrame && scrollWriteFrameMarker !== null) return
+    pendingScrollWrite = null
+    if (scrollWriteFrameMarker === null) {
+      scrollWriteFrameMarker = requestAnimationFrame(() => {
+        scrollWriteFrameMarker = null
+        scrollWriteFrame += 1
+        applyPendingScrollWrite()
+      })
+    }
+    if (PIN_WRITE_REASONS.has(pending.reason)) scrollWritePinFrame = scrollWriteFrame
+    performScrollWrite(pending.reason, pending.op)
+  }
+
+  function performScrollWrite(reason: ScrollReason, op: ScrollWriteOp) {
     const element = scrollElement()
     if (!element) return
     const traced = scrollTraceEnabled()
@@ -439,13 +501,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     })
   }
 
-  /** The DOM offset, not Virtua's `scrollOffset`, which lags a write until its scroll event. */
+  /** The DOM offset, not Virtua's `scrollOffset`, which lags a write until its scroll event. Extents come from the shared per-frame measurement. */
   function getDomMetrics(element: HTMLDivElement, offset = element.scrollTop): ScrollControllerMetrics {
-    return {
-      offset,
-      scrollHeight: element.scrollHeight,
-      clientHeight: element.clientHeight,
-    }
+    const metrics = scrollElementMetrics(element)
+    return offset === metrics.offset ? metrics : { ...metrics, offset }
   }
 
   function isActuallyAtBottom() {
@@ -455,7 +514,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function getMaxOffset(element: HTMLElement) {
-    return Math.max(element.scrollHeight - element.clientHeight, 0)
+    const { scrollHeight, clientHeight } = scrollElementMetrics(element)
+    return Math.max(scrollHeight - clientHeight, 0)
   }
 
   function canPinFollowBottom() {
@@ -466,14 +526,14 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const element = scrollElement()
     if (!element || virtualItems().length === 0) return
     if (canPinFollowBottom()) return pinFollowBottom(reason)
-    if (canScrollInDirection(element, "down")) {
+    if (canScrollInDirection(scrollElementMetrics(element), "down")) {
       writeScroll(reason, { type: "native", top: getMaxOffset(element), behavior: immediate ? "instant" : "smooth", record: false })
     }
   }
 
   function writeBottom(reason: ScrollReason) {
     const element = scrollElement()
-    if (element && canScrollInDirection(element, "down")) {
+    if (element && canScrollInDirection(scrollElementMetrics(element), "down")) {
       writeScroll(reason, { type: "dom", top: getMaxOffset(element), record: true })
     }
   }
@@ -620,6 +680,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handle = virtuaHandle()
     const element = scrollElement()
     if (!handle || !element) return
+    // The observation reads the position the pipeline intends: apply a merged
+    // pending write first (the pre-write state would read as an off-bottom
+    // move and answer with a redundant write of its own).
+    applyPendingScrollWrite()
 
     const offset = element.scrollTop
     const metrics = getDomMetrics(element, offset)
@@ -759,6 +823,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     rowResizeObserver?.disconnect()
     if (typeof ResizeObserver === "undefined") return
     rowResizeObserver = new ResizeObserver(() => {
+      // Row resizes change scroll geometry: start a new measurement epoch.
+      markScrollMetricsStale()
       restoreHeaderFocus()
       collapseRetiredRows()
       settleRollAnchor()
@@ -807,6 +873,9 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function captureScrollSnapshot(): VirtualFollowScrollSnapshot | undefined {
+    // The capture must read the position the pipeline intends, not the one
+    // before a still-merged write.
+    applyPendingScrollWrite(true)
     const element = scrollElement()
     if (!element) return undefined
     const scrollTop = element.scrollTop
@@ -1100,6 +1169,10 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const handleKeyIntent = (event: KeyboardEvent) => {
       if (!isActive() || event.defaultPrevented) return
       if (!SCROLL_INTENT_KEYS.has(event.key)) return
+      // Boundary keys route on nested extents: recheck them against live
+      // geometry (a delayed image may have extended a nested report since the
+      // last measured epoch without any observed scroll, resize or render).
+      markScrollMetricsStale()
       const intent = getKeyboardScrollIntent({
         key: event.key,
         shiftKey: event.shiftKey,
@@ -1400,19 +1473,24 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     if (!element || typeof ResizeObserver === "undefined") return
     const viewportHeight = trackHeightDelta(element, (heightDelta) => {
       if (!isActive() || scrollController.snapshot().restoring) return
+      markScrollMetricsStale()
       if (canPinFollowBottom()) {
         pinFollowBottom("viewport-resize")
       } else if (!readerSettlement.held() && element.scrollTop > TOP_SCROLL_EPSILON_PX) {
         // A reader at the start stays there; others keep the content above the composer.
         const before = element.scrollTop
-        writeScroll("viewport-resize", { type: "dom", top: getBottomAnchoredViewportOffset(before, heightDelta), record: true })
+        const target = getBottomAnchoredViewportOffset(before, heightDelta)
+        writeScroll("viewport-resize", { type: "dom", top: target, record: true })
         // The rolled reader's place follows the bottom-anchored (and clamped) content.
-        if (rollReader) rollReader.offset -= element.scrollTop - before
+        if (rollReader) rollReader.offset -= Math.max(0, Math.min(target, getMaxOffset(element))) - before
       }
       scrollObservation.observeNow()
     })
     // An inactive or restoring list only rebases. A held element re-aligns itself on its next frame.
-    const observer = new ResizeObserver(() => { viewportHeight.update(isActive() && !scrollController.snapshot().restoring) })
+    const observer = new ResizeObserver(() => {
+      markScrollMetricsStale()
+      viewportHeight.update(isActive() && !scrollController.snapshot().restoring)
+    })
     observer.observe(element)
     onCleanup(() => {
       observer.disconnect()

@@ -1,4 +1,4 @@
-// Shared presentation of recent project folders (home page and new-instance launcher).
+// Shared presentation of recent project folders in the empty tab and quick launcher.
 
 type Translate = (key: string, params?: Record<string, unknown>) => string
 
@@ -76,4 +76,11 @@ export function formatRelativeTime(t: Translate, timestamp: number, now = Date.n
   if (hours > 0) return t("time.relative.hoursAgoShort", { count: hours })
   if (minutes > 0) return t("time.relative.minutesAgoShort", { count: minutes })
   return t("time.relative.justNow")
+}
+
+export function filterRecents<T extends { path: string; projectName?: string; serverLabel?: string }>(recents: readonly T[], query: string): readonly T[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return recents
+  return recents.filter(recent => [getProjectDisplayName(recent.path, recent.projectName), recent.path, recent.serverLabel]
+    .some(value => value?.toLowerCase().includes(needle)))
 }

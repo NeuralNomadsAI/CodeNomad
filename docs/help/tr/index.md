@@ -55,7 +55,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | --- | --- |
 | Proje sekmesi / çalışma alanı / örnek | Açıkça açılmış bir klasöre CodeNomad bağlantısı; birden fazla sekme paylaşılan hizmeti kullanabilir. |
 | Konuşma / oturum | Yerel OpenCode geçmişi ve dizini ile ilişkili yürütme. |
-| Aile | Konuşma ve tüm alt oturumları; taşıma, etkinlik, Yolo ve Görev kontrolleri açısından önemlidir. |
+| Aile | Konuşma ve tüm alt oturumları; taşıma, etkinlik ve Görev kontrolleri açısından önemlidir. |
 | Çalışma ağacı | Göz atma veya oturum yerleştirme için seçilen, sahipliği doğrulanmış depo çalışma kopyası. Göz atmak konuşmayı taşımaz. |
 | Location | OpenCode'un dizin kapsamlı yerel çalışma zamanı bağlamı; proje sekmesini kapatmak bu bağlamı kaldırmaz veya oturumlarını durdurmaz. |
 | CodeNomad arka uç | Çalışma alanı, Git, kimlik doğrulama ve istemci bağlantısı sağlayan sunucu. Hesabı ve ortamı, arka uç dosya sistemi erişimini belirler. |
@@ -72,7 +72,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Çalışma alanını kurun veya sunun | [Kurulum](install.md), [Sunucu başvurusu](server.md), [Ağ ve TLS](remote-access.md) |
 | Çalışma kopyaları ve konuşmalar arasında çalışın | [Projeler](projects.md), [Konuşmalar](conversations.md), [Dosyalar](files.md) |
 | Geçmişi bulun veya güvenle temizleyin | [Geçmiş](history.md) |
-| Yerel soruları ve izinleri yanıtlayın | [İzinler](permissions.md) |
+| Konuşma izinlerini ayarlayın veya istekleri yanıtlayın | [İzin modları](permissions.md#conversation-mode), [Sorular ve izinler](permissions.md) |
 | Sınırlı veya zamanlanmış işleri koordine edin | [Görevler](missions.md) |
 | Yürütme ve entegrasyonları yapılandırma | [OpenCode](opencode.md), [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) |
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |
@@ -85,8 +85,9 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 Durum paneli etkin oturumun sağlayıcı kullanımını ve OpenCode arka plan Shell süreçlerini gösterir. Konuşma durumu ve alt konuşma etkinliği; çalışan, sıkıştırılan ve girdi bekleyen oturumları belirtir. Arka plan Shell sürecini izlemek, ileti düzenleyicisinden Shell isteği göndermekten veya ayrı barındırılan terminal SideCar kullanmaktan farklıdır.
 
 1. Seçilen görüşmenin Location'si (veya hiçbir konuşma seçilmediğinde açık çalışma alanı) için **Durum → Arka Plan Shell'leri** öğesini açın.
-2. Yalnızca açıkça arka plana alınmış çalışan komutlar, her satırda bir tane listelenir. Üzerine gelince kabuk, klasör ve PID görünür; **Çıktıyı görüntüle** simgesi yerel çıktıyı açar.
-3. Satırdaki **Durdur ve kaldır** simgesini kullanıp hedefi onaylayın.
+2. Açıkça arka plana alınmış çalışan komutlar, küçük bir durum göstergesiyle birer satırda görünür; uzun komutlar kısaltılır. Çıktı penceresini açmak için komuta tıklayın veya komuta odaklanıp Enter ya da Boşluk tuşuna basın.
+3. Tam komutu ve durumunu, ayrıca mevcut klasör, kabuk, PID, çıkış kodu ve başlangıç/bitiş tarihlerini görmek için komutun üzerine gelin, klavyeyle odaklanın veya dokunmatik ekranda uzun basın. Ayrıntıları kapatmak için Escape tuşuna basın veya dışarıya dokunun.
+4. Çöp kutusu düğmesi komut alanının dışında, sağdadır. Çalışan bir kabuk için **Durdur ve kaldır** seçeneğini seçip onaylayın; tamamlanmış bir kayıt hâlâ görünüyorsa **Kaldır** seçeneğini seçip onaylayın. Çöp kutusu düğmesi çıktıyı açmadan kabuk üzerinde işlem yapar.
 
 Çalışan bir Shell'nin kaldırılması bu işlemi durdurur; çıkış penceresini kapatmak bunu yapmaz.
 

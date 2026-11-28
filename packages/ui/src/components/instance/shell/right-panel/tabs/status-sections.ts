@@ -1,7 +1,7 @@
-import type { RightPanelItem } from "../registry"
+import { CONVERSATION_PERMISSIONS_SECTION_ID, type RightPanelItem } from "../registry"
 import type { HelpDestination } from "../../../../../lib/help-url"
 
-export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean; help: HelpDestination })[] = [
+export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey: string; defaultExpanded?: boolean; help?: HelpDestination })[] = [
   {
     id: "tokens",
     labelKey: "instanceShell.rightPanel.sections.tokens",
@@ -10,10 +10,9 @@ export const CORE_STATUS_SECTION_ITEMS: readonly (RightPanelItem & { tooltipKey:
     order: 0,
   },
   {
-    id: "yolo-mode",
-    labelKey: "instanceShell.rightPanel.sections.yoloMode",
-    tooltipKey: "instanceShell.rightPanel.sections.yoloMode.tooltip",
-    help: { page: "permissions", anchor: "yolo-mode" },
+    id: CONVERSATION_PERMISSIONS_SECTION_ID,
+    labelKey: "permissions.title",
+    tooltipKey: "permissions.info.label",
     order: 10,
   },
   {

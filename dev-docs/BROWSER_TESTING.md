@@ -58,6 +58,8 @@ module URLs stable across the daemon's dynamically registered HTML routes.
 - The control plane is plain HTTP over loopback with endpoint secrets passed
   from spawner to borrower through the environment.
 
+Session preview fixtures bind opened project occurrences and use one `SessionPreviewHost` with the active occurrence's `SessionPreviewSlot`. A tab switch moves the foreground slot while live guests retain their documents.
+
 ## Native fixtures
 
 Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode daemon through
@@ -76,8 +78,31 @@ admitted Location before their first RPC, and surface failed setup immediately.
   registration (`writeFixtureServiceRegistration`). [OpenCode integrations](OPENCODE_INTEGRATIONS.md#test-fixtures)
   describes their options and commands.
 
+## Renderer performance guard
+
+The PR build runs `scripts/perf/bench.mjs` on Linux against a pinned OpenCode
+binary, a loopback provider, an owned daemon and a private headless Chromium
+profile. The foreground session has 300 history turns. The guard compares three
+8-session samples of JavaScript calls, Solid computations and DOM mutations per
+native event. Each client and level forks the same seed histories and must
+complete the expected stream in every active session. At 8 and 32 sessions the
+guard compares the final foreground marker on screen and p95 key latency.
+Latency samples leave long-reply following enabled in both clients.
+Intermediate-marker coverage is reported separately. Ratios floor both inputs
+at 50 ms.
+
+Reproduce with the tools and build steps from `pr-build.yml`, then run
+`node scripts/perf/bench.mjs /absolute/path/to/opencode`. Run
+`node scripts/perf/perf-check.mjs <printed results directory>` for the verdict.
+Counter failures include the largest per-file JavaScript call increases.
+After a renderer improvement merges, generate a candidate from three Linux
+samples of `dev` with `perf-check.mjs <results> --calibrate`. Lower the budgets
+for improved metrics to the new median plus 15% and refresh the per-file
+reference. Review any proposed increase separately.
+
 ## Agent conventions
 
+- History keyboard scenarios await publication of both exact store keys; a controller-held remote response verifies the absence of premature gestures and the actual keydown recipient.
 - Mermaid initialization-deadline checks use the file preview's single renderer
   consumer and await the held Tiny module's evaluation before checking late
   iframe creation. Markdown's deferred highlight pass can remount a fence and
@@ -119,12 +144,18 @@ admitted Location before their first RPC, and surface failed setup immediately.
 - Projection-only fixtures provide a valid empty outline through the API adapter
   before mounting and reject outline HTTP reads.
 - Shell fixtures share `tests/browser/panel-read-fixture.ts` to observe optional
-  panel-extension list cancellations: the exact request identity, its owning
+  panel-extension list cancellations below the registered backend transport,
+  preserving the client's object identity (each operation creates its own API): the exact request identity, its owning
   aborted signal and its native `AbortError` receipt must agree. Drain pending
   classifications before asserting; retain raw failures alongside the classified
   cancellations. Same-URL network aborts and missing, unknown or reused identities
   remain failures. Hold a controller-owned read across a native SSE open to
   exercise supersession with the navigation ownership assertions intact.
+  Empty catalogues answer `/api/panel-extensions` with `[]`. First-open probes
+  retain a persistent native SSE stream, assert its replacement catalogue read
+  after the initial HTTP snapshot, and supersede held reads on that real open.
+  Deferred navigation scenarios have a 60-second
+  timeout and release their barriers in `finally`.
 - Fixtures consuming EventSource serve a persistent `text/event-stream` response
   and let the real connection close with its page. Never answer that path with
   the generic JSON fallback. Composer bootstrap awaits DOM readiness and its
@@ -144,7 +175,7 @@ admitted Location before their first RPC, and surface failed setup immediately.
   Rail checks compare mounted icons with fresh bounds and unmounted icons with
   independently measured SVG-local anchors; endpoint counts and tolerances stay explicit.
 - Panel-resize bootstrap installs `observeHeaderFixture` before navigation and uses
-  `fixtureEventStream` plus the exact session Yolo read. Failed initialization,
+  `fixtureEventStream`. Failed initialization,
   navigation and readiness close the page through `runWithDiagnosticCleanup`;
   bounded bootstrap snapshots go to owned TEMP files. The rendered-fixture wait
   retains its 30-second deadline. A held initial HTTP state read exercises that

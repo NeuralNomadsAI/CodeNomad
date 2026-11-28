@@ -3,17 +3,20 @@ export interface MemoryCleanupRequest {
   id: string
   scope: "global" | "project"
   workspaceId: string
+  serverId?: string
   directory: string
 }
 export function normalizeMemoryCleanupRequest(value: unknown): MemoryCleanupRequest | null {
   if (!value || typeof value !== "object") return null
   const input = value as Record<string, unknown>
-  if (Object.keys(input).some(key => !["id", "scope", "workspaceId", "directory"].includes(key))) return null
+  if (Object.keys(input).some(key => !["id", "scope", "workspaceId", "serverId", "directory"].includes(key))) return null
+  if (input.serverId !== undefined && (typeof input.serverId !== "string" || !input.serverId || input.serverId.length > 512 || /[\x00-\x1f]/.test(input.serverId))) return null
   if (input.scope !== "global" && input.scope !== "project") return null
   for (const key of ["id", "workspaceId", "directory"]) {
     if (typeof input[key] !== "string" || !input[key] || (input[key] as string).length > (key === "directory" ? 32768 : 128) || /[\x00-\x1f]/.test(input[key] as string)) return null
   }
-  return { id: input.id as string, scope: input.scope, workspaceId: input.workspaceId as string, directory: input.directory as string }
+  return { id: input.id as string, scope: input.scope, workspaceId: input.workspaceId as string, directory: input.directory as string,
+    ...(typeof input.serverId === "string" ? { serverId: input.serverId } : {}) }
 }
 
 export function memoryCleanupPrompt(scope: MemoryCleanupRequest["scope"]): string {

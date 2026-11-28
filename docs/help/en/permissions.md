@@ -51,25 +51,32 @@ If another client settles a request, it may disappear here. A timeout or failed 
 2. For decisions without a source message, open **Session permission decisions**.
 3. Use **Load more decisions** to continue, or **Retry** after a read failure.
 
-Receipts record known requests/resources, the confirmed decision and available reason/provenance. **Decision in CodeNomad**, **Automatic · Yolo** and **Native decision** distinguish observed origins; a native settlement is not proof of a user click in this window.
+Receipts record known requests/resources, the confirmed decision and available reason/provenance. **Decision in CodeNomad**, **Automatic decision** and **Native decision** distinguish observed origins; a native settlement is not proof of a user click in this window.
 
 Receipts are read-only CodeNomad annotations, not native messages or permission-rule editors. They are excluded from native full-history search, message copy and export. They cannot reconstruct decisions missed while CodeNomad was offline, and a successful tool result is not substituted for a missing receipt. Session deletion removes its receipts.
 
-## Yolo mode and family scope {#yolo-mode}
+## Conversation permission mode {#conversation-mode}
 
-1. Select a conversation and open **Status → Yolo Mode**.
-2. Enable it only if automatic permission approval is acceptable for the whole family.
-3. Disable it before further untrusted work; inspect pending requests and any already-running tools.
+Select a conversation, open **Status → Permissions**, and click a mode. When the section is collapsed, a lightning bolt (Autonomous) or shield (Supervised) shows the last known mode.
 
-Although the control refers to a session, its effective scope is the resolved family root and descendants: enabling/disabling it from a child affects that family. A native fork is treated as its own root. It is not global approval for every project or independent conversation.
+- **Autonomous** — Follows OpenCode’s permission rules.
+- **Supervised** — Asks before agent edits and shell commands. For those actions, global, project and conversation deny rules still apply, and allow rules become requests. Matching **Always Allow** approvals saved by OpenCode still apply.
 
-Yolo approves **permissions only**. It does not answer questions or Forms, supply missing information, guarantee successful execution or bypass backend ownership checks. The CodeNomad backend performs the auto-approval: closing one window is not sufficient to disable it while the backend remains active, and a stopped backend cannot keep approving requests. The family setting is persisted and hydrated when the workspace is loaded again.
+Both modes use OpenCode’s session rules, including in its terminal UI when connected to the same service and conversation. Switching to **Autonomous** removes only the rules added for supervision. OpenCode’s configuration files stay unchanged. CodeNomad does not auto-approve requests in either mode.
 
-Turning Yolo off does not revoke a decision already accepted or roll back file/network effects. Review **Automatic · Yolo** receipts and stop execution explicitly if needed. For automation with human gates, see [Missions](missions.md).
+Supervised is not a sandbox. Reads, access outside the project and MCP tools keep their own rules. Open requests keep their original rules.
+
+In a subagent, **Permissions** shows and changes the root conversation’s mode. Existing subagents keep their rules when the mode changes; when a subagent starts another, the new one copies its immediate parent’s rules.
+
+A fork gets a copy of its source’s rules and has its own mode. If CodeNomad can’t verify which rules to remove, the fork keeps them and you can still send messages.
+
+If the mode is unconfirmed, choose **Reload permissions**. To set the starting mode, see [New conversation permissions](settings.md#new-conversation-permissions).
 
 ## Recover missing or stale requests {#request-recovery}
 
 1. Check the connection indicator and reconnect to the same backend/project.
 2. Let recovery reconcile pending native requests; known requests and drafts are retained if coverage is incomplete.
 
-An incomplete response is not an authoritative empty queue, and the warning is not permission to repeat a prompt, answer or approval. Configuration reload can cancel native Forms/permissions; do not use it as a routine request-refresh button. See [Troubleshooting](troubleshooting.md) and [OpenCode setup](opencode.md).
+Transient recovery failures retry in the background without creating notifications. If the bundled OpenCode plugin cannot list waiting requests, one notice per backend appears in the browser tab until recovery succeeds.
+
+An incomplete response is not an authoritative empty queue, and a missing-plugin notice is not permission to repeat a prompt, answer or approval. Configuration reload can cancel native Forms/permissions; do not use it as a routine request-refresh button. See [Troubleshooting](troubleshooting.md) and [OpenCode setup](opencode.md).

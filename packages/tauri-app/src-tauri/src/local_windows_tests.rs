@@ -5,6 +5,155 @@ fn id(value: u8) -> String {
 }
 
 #[test]
+fn pending_windows_reserve_saved_ids_and_count_against_capacity() {
+    let mut registry = Registry::default();
+    let saved = vec![id(1), id(2)];
+    assert_eq!(
+        registry.reserve_new_window(saved.clone()).unwrap(),
+        (id(1), true)
+    );
+    assert_eq!(
+        registry.reserve_new_window(saved.clone()).unwrap(),
+        (id(2), true)
+    );
+    assert!(registry.mru_label().is_none());
+    for _ in 2..MAX_LOCAL_WINDOWS {
+        let (new_id, existing) = registry.reserve_new_window(saved.clone()).unwrap();
+        assert!(!existing);
+        assert!(registry.contains_id(&new_id));
+    }
+    assert!(registry.reserve_new_window(saved.clone()).is_err());
+    registry.pending.remove(&id(1));
+    assert_eq!(registry.reserve_new_window(saved).unwrap(), (id(1), true));
+}
+
+#[test]
+fn scheduled_new_window_cannot_register_between_shutdown_snapshot_and_admission() {
+    use std::sync::mpsc::{channel, RecvTimeoutError};
+    use std::time::Duration;
+
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let queue = |id| queued_window(&windows, &shutdown, vec![id]);
+    let admitted = queue(id(1))
+        .construct(&windows, &shutdown, true, |record, new_record| {
+            assert!(!new_record);
+            Ok(record)
+        })
+        .unwrap();
+    let pending = queue(id(2));
+    let timeout = Duration::from_secs(1);
+    std::thread::scope(|scope| {
+        let (snapshot_tx, snapshot_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (shutdown_ref, windows_ref) = (&shutdown, &windows);
+        let quitting = scope.spawn(move || {
+            shutdown_ref
+                .begin_shutdown(
+                    std::iter::once_with(move || {
+                        let labels = windows_ref.user_window_labels();
+                        snapshot_tx.send(()).unwrap();
+                        resume_rx.recv().unwrap();
+                        labels
+                    })
+                    .flatten(),
+                )
+                .unwrap()
+        });
+        snapshot_rx.recv_timeout(timeout).unwrap();
+
+        let (dispatch_tx, dispatch_rx) = channel();
+        let (result_tx, result_rx) = channel();
+        scope.spawn(move || {
+            dispatch_tx.send(()).unwrap();
+            result_tx
+                .send(pending.construct(windows_ref, shutdown_ref, true, |_, _| {
+                    panic!("constructing a window after shutdown won admission")
+                }))
+                .unwrap();
+        });
+        dispatch_rx.recv_timeout(timeout).unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(30)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        resume_tx.send(()).unwrap();
+        let requests = quitting.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, admitted.label);
+        assert_eq!(
+            result_rx.recv_timeout(timeout).unwrap().unwrap_err(),
+            SHUTDOWN_IN_PROGRESS
+        );
+    });
+
+    assert!(!windows.contains_id(&id(2)));
+    assert_eq!(
+        windows
+            .schedule_new_window(&shutdown, vec![id(3)], |_| panic!("dispatch after shutdown"))
+            .unwrap_err(),
+        SHUTDOWN_IN_PROGRESS
+    );
+    assert!(!windows.contains_id(&id(3)));
+}
+
+fn queued_window(
+    windows: &LocalWindows,
+    shutdown: &ShutdownCoordinator,
+    saved: Vec<String>,
+) -> PendingNewWindow {
+    let mut queued = None;
+    windows
+        .schedule_new_window(shutdown, saved, |pending| {
+            queued = Some(pending);
+            Ok(())
+        })
+        .unwrap();
+    queued.unwrap()
+}
+
+#[test]
+fn shutdown_waits_for_admitted_new_window_to_enqueue_publication() {
+    use std::sync::mpsc::channel;
+    use std::time::{Duration, Instant};
+
+    let windows = LocalWindows::default();
+    let shutdown = ShutdownCoordinator::default();
+    let queue = client_state::IpcQueue::new();
+    let pending = queued_window(&windows, &shutdown, vec![]);
+    let label = local_window_label(&pending.id).unwrap();
+    let timeout = Duration::from_secs(1);
+    std::thread::scope(|scope| {
+        let (entered_tx, entered_rx) = channel();
+        let (resume_tx, resume_rx) = channel();
+        let (published_tx, published_rx) = channel();
+        let (windows_ref, shutdown_ref, queue_ref) = (&windows, &shutdown, &queue);
+        let construction = scope.spawn(move || {
+            pending.construct(windows_ref, shutdown_ref, true, |record, new_record| {
+                assert!(new_record);
+                entered_tx.send(()).unwrap();
+                resume_rx.recv().unwrap();
+                queue_ref.enqueue(Box::new(move || published_tx.send(()).unwrap()))?;
+                Ok(record)
+            })
+        });
+        entered_rx.recv_timeout(timeout).unwrap();
+        let requests = shutdown.begin_shutdown(windows.user_window_labels()).unwrap();
+        assert_eq!(requests[0].0, label);
+        assert!(!shutdown.wait_for_local_window_builds(Duration::ZERO));
+
+        let cleanup = scope.spawn(move || {
+            assert!(shutdown_ref.wait_for_local_window_builds(timeout));
+            assert!(queue_ref.seal_and_drain_until(Instant::now() + timeout));
+        });
+        resume_tx.send(()).unwrap();
+        construction.join().unwrap().unwrap();
+        cleanup.join().unwrap();
+        published_rx.try_recv().unwrap();
+    });
+}
+
+#[test]
 fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
     let mut registry = Registry::default();
     let first = registry.add(id(1), true).unwrap();
@@ -30,6 +179,68 @@ fn registry_tracks_uuid_labels_mru_and_folder_ack_order() {
     );
     assert_eq!(registry.remove(&first.label).unwrap().id, first.id);
     assert_eq!(registry.mru_label(), Some(second.label));
+}
+
+#[test]
+fn browser_open_ranks_ready_local_windows_by_focus_then_mru() {
+    let mut registry = Registry::default();
+    let first = registry.add(id(1), true).unwrap().label;
+    let second = registry.add(id(2), true).unwrap().label;
+    let loading = registry.add(id(3), true).unwrap().label;
+    let hidden = registry.add_window(id(4), false, true).unwrap().label;
+    for label in [&first, &second, &hidden] {
+        registry.records.get_mut(label).unwrap().renderer_ready = true;
+    }
+    let candidates = |focused| {
+        registry
+            .automation_labels(focused)
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        candidates(Some(&loading)),
+        vec![second.clone(), first.clone()]
+    );
+    assert_eq!(
+        candidates(Some(&hidden)),
+        vec![second.clone(), first.clone()]
+    );
+    assert_eq!(
+        candidates(Some(&first)),
+        vec![first.clone(), second.clone()]
+    );
+    assert_eq!(candidates(None), vec![second, first]);
+}
+
+#[test]
+fn a_reopened_saved_window_does_not_reuse_automation_authority() {
+    let windows = LocalWindows::default();
+    let label = {
+        let mut registry = windows.registry.lock().unwrap();
+        let first = registry.add(id(1), true).unwrap();
+        registry
+            .records
+            .get_mut(&first.label)
+            .unwrap()
+            .renderer_ready = true;
+        first.label
+    };
+    let (_, old) = windows.automation_labels().pop().unwrap();
+    assert!(windows.automation_window_current(&label, &old));
+    {
+        let mut registry = windows.registry.lock().unwrap();
+        registry.remove(&label);
+        let reopened = registry.add(id(1), true).unwrap();
+        registry
+            .records
+            .get_mut(&reopened.label)
+            .unwrap()
+            .renderer_ready = true;
+    }
+    assert!(!windows.automation_window_current(&label, &old));
+    let (_, new) = windows.automation_labels().pop().unwrap();
+    assert!(windows.automation_window_current(&label, &new));
 }
 
 #[test]
@@ -69,25 +280,6 @@ fn new_window_admission_ignores_hidden_launch_windows() {
     let user_labels = windows.user_window_labels();
     assert_eq!(user_labels.len(), MAX_LOCAL_WINDOWS);
     assert!(!user_labels.contains(&local_window_label(&id(99)).unwrap()));
-}
-
-#[test]
-fn only_a_user_window_closing_beside_another_one_forgets_its_saved_state() {
-    let windows = LocalWindows::default();
-    let (first, second) = {
-        let mut registry = windows.registry.lock().unwrap();
-        // A hidden launch window and remote windows never count: they hold no local state.
-        registry.add_window(id(99), false, true).unwrap();
-        (
-            registry.add(id(1), true).unwrap().label,
-            registry.add(id(2), true).unwrap().label,
-        )
-    };
-    assert!(windows.has_other_user_window(&first, |_| false));
-    // The other one is already closing: this is the last local window, which keeps its state.
-    assert!(!windows.has_other_user_window(&first, |label| label == second));
-    windows.remove_runtime(&second);
-    assert!(!windows.has_other_user_window(&first, |_| false));
 }
 
 #[test]
@@ -247,7 +439,10 @@ fn updates_requested_from_preferences_or_remote_run_in_the_last_local_window() {
     let local = format!("local-{}", id(1));
     let other = format!("local-{}", id(2));
     for focused in ["preferences", "remote-profile"] {
-        assert_eq!(select_update_label(Some(focused), Some(&local)), Some(local.clone()));
+        assert_eq!(
+            select_update_label(Some(focused), Some(&local)),
+            Some(local.clone())
+        );
     }
     assert_eq!(select_update_label(Some(&other), Some(&local)), Some(other));
     assert_eq!(select_update_label(Some("preferences"), None), None);
@@ -269,31 +464,61 @@ fn menu_toggle_during_native_focus_gap_keeps_view_and_file_commands_enabled() {
             "leftPanel": { "label": "Left", "checked": checked, "enabled": true },
             "rightPanel": { "label": "Right", "checked": true, "enabled": true },
             "timeline": { "label": "Timeline", "checked": true, "enabled": true }
-        })).unwrap()
+        }))
+        .unwrap()
     };
-    windows.set_workspace_menu_enabled(&local.label, true).unwrap();
-    windows.set_view_menu_state(&local.label, Some(snapshot(true))).unwrap();
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(true))));
+    windows
+        .set_workspace_menu_enabled(&local.label, true)
+        .unwrap();
+    windows
+        .set_view_menu_state(&local.label, Some(snapshot(true)))
+        .unwrap();
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(true)))
+    );
 
     // The native popup temporarily owns focus, then the renderer publishes the
     // unchecked panel. Both menus must retain the same target as click dispatch.
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(true))));
-    windows.set_view_menu_state(&local.label, Some(snapshot(false))).unwrap();
+    windows
+        .set_view_menu_state(&local.label, Some(snapshot(false)))
+        .unwrap();
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(false)))
+    );
 
     for non_local in ["remote-profile", crate::preferences_window::LABEL] {
         assert_eq!(windows.menu_state(Some(non_local)), (false, None));
     }
     let other = windows.registry.lock().unwrap().add(id(2), true).unwrap();
-    assert_eq!(windows.menu_state(Some(&local.label)), (true, Some(snapshot(false))));
-    assert_eq!(windows.menu_state(None), (false, None), "new MRU has no project");
+    assert_eq!(
+        windows.menu_state(Some(&local.label)),
+        (true, Some(snapshot(false)))
+    );
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "new MRU has no project"
+    );
     windows.remove_runtime(&other.label);
     assert_eq!(windows.menu_state(None), (true, Some(snapshot(false))));
-    windows.set_workspace_menu_enabled(&local.label, false).unwrap();
-    assert_eq!(windows.menu_state(None), (false, None), "reload clears both snapshots");
+    windows
+        .set_workspace_menu_enabled(&local.label, false)
+        .unwrap();
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "reload clears both snapshots"
+    );
     windows.remove_runtime(&local.label);
-    assert_eq!(windows.menu_state(None), (false, None), "closed windows cannot remain targets");
+    assert_eq!(
+        windows.menu_state(None),
+        (false, None),
+        "closed windows cannot remain targets"
+    );
 }
 
 #[test]
@@ -308,9 +533,10 @@ fn initial_local_document_is_an_offline_about_blank() {
 
 #[test]
 fn local_window_initialization_script_appends_the_boot_splash() {
-    let script = local_window_initialization_script("window-1");
+    let script = local_window_initialization_script("window-1", "instance-1");
     assert!(script.starts_with(LOCAL_WINDOW_CONTEXT_SCRIPT));
     assert!(script.contains("window.__CODENOMAD_WINDOW_ID__ = \"window-1\";"));
+    assert!(script.contains("window.__CODENOMAD_WINDOW_INSTANCE__ = \"instance-1\";"));
     assert!(
         script.ends_with(BOOT_SPLASH_SCRIPT),
         "the boot splash must run in the initial about:blank document"
@@ -345,7 +571,7 @@ fn window_created_after_error_publication_opens_the_loading_page() {
     );
 
     // With a ready backend the destination stays the backend target.
-    let mut ready = LocalWindows::default();
+    let ready = LocalWindows::default();
     ready.set_backend_target(Some("http://127.0.0.1:9899/".to_string()));
     assert_eq!(
         local_window_initial_destination(ready.backend_target().as_deref()),

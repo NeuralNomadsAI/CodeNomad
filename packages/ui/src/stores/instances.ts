@@ -1,13 +1,18 @@
-import { createSignal } from "solid-js"
+import { createEffect, createRoot, createSignal } from "solid-js"
 import type { Instance, LogEntry } from "../types/instance"
 import type { PermissionReply, PermissionRequest } from "../types/permission"
 import { getPermissionSessionId, mergePermissionRequest } from "../types/permission"
-import { sdkManager } from "../lib/sdk-manager"
 import { consumeFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
 import { sseManager } from "../lib/sse-manager"
 import { serverApi } from "../lib/api-client"
-import { serverEvents } from "../lib/server-events"
-import type { WorkspaceDescriptor, WorkspaceEventPayload, WorkspaceLogEntry } from "../../../server/src/api-types"
+import { generateUUID } from "../lib/client-identity"
+import { backendEvents as serverEvents } from "../lib/server-events"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
+import type { BackendEventPayload } from "../lib/backend-events"
+import { admittedServerIds, backends, backendOf, type BackendClient } from "../lib/backend-client"
+import { captureWorkspaceOperation, workspaceRequestKey, type WorkspaceOperationReceipt } from "./workspace-operation-receipt"
+import type { WorkspaceDescriptor, WorkspaceLogEntry } from "../../../server/src/api-types"
 import { PENDING_RECONCILIATION_HEADER, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { ensureInstanceConfigLoaded } from "./instance-config"
 import {
@@ -34,14 +39,15 @@ import {
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
+import { clearPendingSessionMove } from "./session-events"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
-import { backgroundReads } from "../lib/background-read-queue"
+import { prioritizedRead } from "../lib/prioritized-read"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
-import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
+import { captureUnsupportedPendingRecoveryNotice, claimUnsupportedPendingRecoveryNotice } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
-import { serverSettings } from "./preferences"
+import { preferencesForBackend } from "./preferences"
 import {
   reconcileSessionPendingState,
   activeSessionId,
@@ -50,6 +56,7 @@ import {
   setSessionPendingForm,
   setSessionPendingPermission,
   invalidateSessionMessageLoad,
+  clearInstanceMovedAwaySessions,
 } from "./session-state"
 import { setHasInstances } from "./ui"
 import { messageStoreBus } from "./message-v2/bus"
@@ -72,14 +79,6 @@ import {
   markPermissionReplied,
 } from "./permission-replies"
 import { clearSettledForms, hasSettledForm, markFormSettled } from "./form-settlements"
-import {
-  clearPermissionAutoAcceptForInstance,
-  isPermissionAutoAcceptEnabled,
-  resolvePermissionAutoAcceptFamilyRoot,
-  setPermissionAutoAcceptEnabled,
-  setPermissionAutoAcceptFamilyRootResolver,
-  togglePermissionAutoAccept,
-} from "./permission-auto-accept"
 import { clearCacheForInstance } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { clearInstanceMetadata } from "./instance-metadata"
@@ -89,7 +88,7 @@ import { tGlobal } from "../lib/i18n"
 import { getInstanceLabel } from "../lib/instance-label"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import {
-  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
+  batchIssue, combinePendingFailures, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
   type PendingRecoveryCause, type RecoveryDirectory, type RecoverySnapshot,
 } from "./pending-recovery-cause"
 import { loadInstanceMetadata, loadInstanceProjectMetadata } from "../lib/hooks/use-instance-metadata"
@@ -106,53 +105,24 @@ import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
-import { restoreClosedWorkspaceDrafts, retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
+import { retainClosedWorkspaceDrafts } from "./closed-workspace-drafts"
+import { remoteRestoreTabs } from "./remote-restore-tabs"
 import { clearInstanceSeenInterruptions } from "./session-interruption-seen"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
 import { getUnavailableWorkspaceIds } from "./app-session-reconciliation"
-import { getAbortReason } from "./app-session-restore-timeout"
+import { getAbortReason, runAbortable } from "./app-session-restore-timeout"
 import { AbortCreatedWorkspaceCleanup } from "./abort-created-workspace-cleanup"
 import { TrailingResyncCoordinator, waitForSettledPrerequisite } from "../lib/trailing-resync"
 import { retryWithBackoff } from "../lib/retry-utils"
-import { cancelRestoreCreation } from "./restore-creation-cancellation"
 import {
   RestoreWorkspaceCommitGates, type RestoreWorkspaceCommitGate, type RestoreWorkspaceTerminal,
 } from "./restore-workspace-commit-gates"
-import { WorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { BackendWorkspaceListReconciliationFence } from "./workspace-list-reconciliation-fence"
+import { backendIdOf, instanceKey, LOCAL_BACKEND_ID, parseInstanceKey } from "../lib/backend-identity"
+import type { BackendId } from "../lib/backend-transport"
 import { usesClientState } from "../lib/runtime-env"
 
 const log = getLogger("api")
-
-setPermissionAutoAcceptFamilyRootResolver((instanceId, sessionId) => {
-  const instanceSessions = sessions().get(instanceId)
-  if (!instanceSessions) return sessionId
-  return resolvePermissionAutoAcceptFamilyRoot(sessionId, (id) => instanceSessions.get(id))
-})
-
-// Server is authoritative for Yolo state; mirror toggles (incl. from other
-// clients) arriving over the CodeNomad server event stream into the local
-// projection so the badge/switch stay in sync.
-serverEvents.on("yolo.stateChanged", (event) => {
-  if (event.type !== "yolo.stateChanged") return
-  const { instanceId, sessionId, enabled } = event
-  if (typeof instanceId !== "string" || typeof sessionId !== "string" || typeof enabled !== "boolean") return
-  log.info(`[SSE] Yolo state changed: ${instanceId}:${sessionId} -> ${enabled}`)
-  setPermissionAutoAcceptEnabled(instanceId, sessionId, enabled)
-})
-
-// When the server auto-accepts a permission, clean up the UI queue immediately
-// instead of waiting for the OpenCode permission.replied SSE event (which may
-// be delayed or missed on a flaky connection). This preserves the #424
-// invariant: auto-accept cleanup happens at the queue level, not tied to
-// external event timing.
-serverEvents.on("yolo.autoAccepted", (event) => {
-  if (event.type !== "yolo.autoAccepted") return
-  const { instanceId, permissionId } = event
-  if (typeof instanceId !== "string" || typeof permissionId !== "string") return
-  markPermissionReplied(instanceId, permissionId)
-  removePermissionFromQueue(instanceId, permissionId)
-  removePermissionV2(instanceId, permissionId)
-})
 
 const [instances, setInstances] = createSignal<Map<string, Instance>>(new Map())
 
@@ -235,6 +205,10 @@ class InterruptionRegistry<T extends { id: string }> {
     return this.sessionCounts.get(instanceId)?.keys() ?? new Map<string, number>().keys()
   }
 
+  hasSession(instanceId: string, sessionId: string): boolean {
+    return this.sessionCounts.get(instanceId)?.has(sessionId) ?? false
+  }
+
   clear(instanceId: string, requests: readonly T[], clearPending: (sessionId: string) => void): void {
     requests.forEach(({ id }) => this.enqueuedAt.delete(id))
     for (const sessionId of this.sessionCounts.get(instanceId)?.keys() ?? []) clearPending(sessionId)
@@ -272,6 +246,9 @@ const initialSessionHydrations = new Map<string, Promise<void>>()
 const initialWorkspaceMetadataHydrations = new Map<string, Promise<void>>()
 const pendingRequestSyncEpochs = new Map<string, number>()
 const successfulPendingRecoveries = new Map<string, number>()
+// Directories the last completed untargeted recovery scanned, per instance.
+// Activation only accelerates a scan; the liveness sweep stays the backstop.
+const lastScannedRequestDirectories = new Map<string, Set<string>>()
 const pendingPermissionMutationEpochs = new Map<string, number>()
 const pendingFormMutationEpochs = new Map<string, number>()
 const pendingRequestSyncGenerations = new Map<string, number>()
@@ -282,37 +259,34 @@ const pendingRequestSyncs = new Map<string, {
   promise: Promise<void>
 }>()
 const pendingRequestLiveness = new Map<string, Promise<void>>()
+const pendingOperationOwners = new WeakMap<Promise<void>, () => boolean>()
+
+function captureInstanceOperation(instanceId: string, parent?: AbortSignal) {
+  const client = instances().get(instanceId)?.client
+  const generation = getOpenCodeInstanceGeneration(instanceId)
+  return captureBackendOperation(instanceId, parent, () => instances().get(instanceId)?.client === client
+    && getOpenCodeInstanceGeneration(instanceId) === generation)
+}
 const pendingRequestControllers = new Map<string, Set<AbortController>>()
 const [incompletePendingRecovery, setIncompletePendingRecovery] = createSignal<ReadonlySet<string>>(new Set())
 export { incompletePendingRecovery }
-const notifiedPendingRecovery = new Set<string>()
 const failedPendingRecoveries = new Map<string, number>()
-// A single incomplete scan usually recovers on the next 30-second liveness pass.
-// Warn only when recovery stays incomplete across consecutive attempts.
+// A single incomplete scan usually recovers on the next liveness pass.
+// Only an unsupported plugin surfaces a user-facing notice, after consecutive failures.
 const PENDING_RECOVERY_WARNING_ATTEMPTS = 2
 function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause): void {
-  const instance = instances().get(instanceId)
   log.warn("Pending request recovery is incomplete", { instanceId, cause })
-  // Name the sessions that made these directories required: active or holding a request.
-  const sessionTitlesIn = (directories: readonly string[]) => {
-    const wanted = new Set(directories.map(normalizeWorkspacePath))
-    return Array.from(sessions().get(instanceId)?.values() ?? []).filter((session) => session.location?.directory
-      && wanted.has(normalizeWorkspacePath(session.location.directory))
-      && (session.status !== "idle" || session.pendingPermission || session.pendingForm))
-      .map((session) => session.title || session.id)
-  }
-  const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
-  if (!claimPendingRecoveryNotice(pendingRecoveryNoticeKey(pendingRecoveryProject(instanceId), cause, message))) return
-  // A project diagnostic, not a request itself: it keeps its bubble and History entry.
-  showToastNotification({ category: "projects", title, message, variant: "warning" })
+  if (cause.kind !== "unsupported") return
+  if (!claimUnsupportedPendingRecoveryNotice(parseInstanceKey(instanceId).backendId)) return
+  showToastNotification({
+    category: "projects",
+    title: tGlobal("interruption.recoveryUnsupported.title"),
+    message: tGlobal("interruption.recoveryCause.unsupported"),
+    variant: "warning",
+  })
 }
 
-function pendingRecoveryProject(instanceId: string): string {
-  const folder = instances().get(instanceId)?.folder
-  return folder ? normalizeWorkspacePath(folder) : instanceId
-}
-
-// A cause marks an attempt that counts toward the warning; without one, the state only changes.
+// A cause marks an attempt that counts toward the unsupported-plugin notice; without one, the state only changes.
 function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: PendingRecoveryCause): void {
   setIncompletePendingRecovery((previous) => {
     if (previous.has(instanceId) === incomplete) return previous
@@ -322,33 +296,38 @@ function markPendingRecovery(instanceId: string, incomplete: boolean, cause?: Pe
     return next
   })
   if (!incomplete) {
-    notifiedPendingRecovery.delete(instanceId)
     failedPendingRecoveries.delete(instanceId)
     return
   }
   if (!cause) return
   const failures = (failedPendingRecoveries.get(instanceId) ?? 0) + 1
   failedPendingRecoveries.set(instanceId, failures)
-  if (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && !notifiedPendingRecovery.has(instanceId)) {
-    notifiedPendingRecovery.add(instanceId)
+  if (failures === PENDING_RECOVERY_WARNING_ATTEMPTS || (failures >= PENDING_RECOVERY_WARNING_ATTEMPTS && cause.kind === "unsupported")) {
     notifyPendingRecovery(instanceId, cause)
   }
 }
 const pendingRequestSyncSuperseded = new Error("Pending request sync was superseded")
 const pendingDiscoveryDeferred = new Error("Pending discovery deferred during compaction")
 type PendingCompaction = {
-  client: NonNullable<Instance["client"]>; active: boolean; created: number; sequence?: number
+  client: NonNullable<Instance["client"]>; active: boolean; created: number; sequence?: number; signal: AbortSignal
 }
 const pendingCompactions = new Map<string, Map<string, PendingCompaction>>()
-const deferredPendingDiscovery = new Set<string>()
+const deferredPendingDiscovery = new Map<string, ReturnType<typeof captureInstanceOperation>>()
 let pendingDiscoveryResume: Promise<void> | undefined
 let nextPendingRequestSyncGeneration = 0
 
+// A client compaction hold cannot outlast the daemon's own bounded compaction, and
+// the backend's loaded-only deferral remains the authoritative fence: an aged-out
+// hold only risks a read the server will 503-defer on its own.
+const PENDING_COMPACTION_HOLD_MAX_MS = 10 * 60_000
+
 function isPendingDiscoveryCompacting(): boolean {
   // ponytail: one daemon per backend; only observed compactions are known here.
+  const now = Date.now()
   for (const instance of instances().values()) {
     const tracked = pendingCompactions.get(instance.id)
-    if (Array.from(tracked?.values() ?? []).some((entry) => entry.active)) return true
+    if (Array.from(tracked?.values() ?? []).some((entry) =>
+      entry.active && !entry.signal.aborted && now - entry.created <= PENDING_COMPACTION_HOLD_MAX_MS)) return true
     if (!instance.client || instance.status !== "ready") continue
     if (Array.from(sessions().get(instance.id)?.values() ?? []).some((session) => session.status === "compacting" && !tracked?.has(session.id))) return true
   }
@@ -358,20 +337,26 @@ function isPendingDiscoveryCompacting(): boolean {
 function deferPendingDiscovery(instanceId: string): boolean {
   if (!isPendingDiscoveryCompacting()) return false
   markPendingRecovery(instanceId, true)
-  deferredPendingDiscovery.add(instanceId)
+  deferredPendingDiscovery.set(instanceId, captureInstanceOperation(instanceId))
   return true
 }
 
 function resumePendingDiscovery(): void {
   if (pendingDiscoveryResume || !deferredPendingDiscovery.size || isPendingDiscoveryCompacting()) return
+  const owners = new Map(deferredPendingDiscovery)
   const resume = Promise.resolve().then(async () => {
     while (deferredPendingDiscovery.size && !isPendingDiscoveryCompacting()) {
-      const id = deferredPendingDiscovery.values().next().value!
+      const id = deferredPendingDiscovery.keys().next().value!
+      const operation = owners.get(id)
+      if (!operation || deferredPendingDiscovery.get(id) !== operation) break
+      if (!operation.current()) { deferredPendingDiscovery.delete(id); continue }
       await pendingRequestSyncs.get(id)?.promise.catch(() => {})
+      if (!operation.current()) continue
       if (isPendingDiscoveryCompacting()) break
+      if (deferredPendingDiscovery.get(id) !== operation) break
       if (!deferredPendingDiscovery.delete(id)) continue
       const instance = instances().get(id)
-      if (instance?.client && instance.status === "ready") await syncPendingRequests(id).catch((error) => {
+      if (instance?.client && instance.status === "ready") await syncPendingRequests(id, undefined, undefined, operation.signal).catch((error) => {
         log.warn("Failed to resume pending discovery after compaction", { instanceId: id, error })
       })
     }
@@ -389,32 +374,40 @@ function observePendingCompaction(instanceId: string, event: Parameters<NonNulla
   if (!client || !("sessionID" in event.data)) return
   const id = event.data.sessionID
   const entries = pendingCompactions.get(instanceId) ?? new Map<string, PendingCompaction>()
-  const previous = entries.get(id)
+  const captured = entries.get(id)
+  const previous = captured && !captured.signal.aborted ? captured : undefined
   if (!starting && previous && (!previous.active || previous.client !== client)) return
   const sequence = "durable" in event ? event.durable.seq : undefined
   if (previous?.client === client && (sequence === undefined ? event.created <= previous.created
     : previous.sequence !== undefined && sequence <= previous.sequence)) return
-  entries.set(id, { client, active: starting, created: Math.max(event.created, previous?.created ?? 0), sequence: sequence ?? previous?.sequence })
+  entries.set(id, { client, active: starting, created: Math.max(event.created, previous?.created ?? 0), sequence: sequence ?? previous?.sequence,
+    signal: serverEvents.signalForInstance(instanceId) })
   pendingCompactions.set(instanceId, entries)
   if (starting) {
-    for (const [id, sync] of pendingRequestSyncs) if (!sync.targeted) deferredPendingDiscovery.add(id)
+    for (const [id, sync] of pendingRequestSyncs) if (!sync.targeted) deferredPendingDiscovery.set(id, captureInstanceOperation(id))
   } else resumePendingDiscovery()
 }
 
-async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000): Promise<T> {
+async function withPendingRequestTimeout<T>(instanceId: string, run: (signal: AbortSignal) => Promise<T>, background = true, timeoutMs = 10_000, parentSignal?: AbortSignal): Promise<T> {
+  const operation = captureInstanceOperation(instanceId, parentSignal)
+  operation.signal.throwIfAborted()
   const controller = new AbortController()
+  const signal = AbortSignal.any([operation.signal, controller.signal])
   const controllers = pendingRequestControllers.get(instanceId) ?? new Set<AbortController>()
   controllers.add(controller)
   pendingRequestControllers.set(instanceId, controllers)
   try {
     const timed = async () => {
+      signal.throwIfAborted()
+      if (!operation.current()) throw pendingRequestSyncSuperseded
       // Check after background queue admission, immediately before dispatch.
       if (background && deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
       const timeout = setTimeout(() => controller.abort(), timeoutMs)
-      try { return await run(controller.signal) }
+      try { return await run(signal) }
       finally { clearTimeout(timeout) }
     }
-    return await (background ? backgroundReads.run(controller.signal, timed) : timed())
+    // The shown project's questions and permissions never wait behind other projects' scans.
+    return await (background ? prioritizedRead(() => activeInstanceId() === instanceId, signal, timed) : timed())
   } finally {
     controllers.delete(controller)
     if (!controllers.size && pendingRequestControllers.get(instanceId) === controllers) {
@@ -457,36 +450,95 @@ function invalidatePendingRequestSync(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
 }
-type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean }
-const workspaceListReconciliationFence = new WorkspaceListReconciliationFence()
+type RestoreWorkspaceDescriptor = WorkspaceDescriptor & { reused?: boolean; receipt?: WorkspaceOperationReceipt }
+const workspaceListReconciliationFence = new BackendWorkspaceListReconciliationFence()
+const restoreCreationReceipts = new Map<string, WorkspaceOperationReceipt & {
+  cancelOnDeparture?: (requestId: string) => Promise<void>
+}>()
+let workspaceCreationLifetime = new AbortController()
+let workspaceCommitHold: { promise: Promise<void>; resolve: () => void } | undefined
+export class WorkspaceCreationDeparture extends Error {
+  constructor() { super("Window is releasing workspace records") }
+}
+
+function holdWorkspaceCommits(): void {
+  if (workspaceCommitHold) return
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  workspaceCommitHold = { promise, resolve }
+}
+
+function workspaceOpeningSignal(signal: AbortSignal): AbortSignal {
+  return AbortSignal.any([workspaceCreationLifetime.signal, signal])
+}
+
+function pendingWorkspaceCommit(signal: AbortSignal): Promise<void> | undefined {
+  signal.throwIfAborted()
+  const hold = workspaceCommitHold
+  if (hold) return runAbortable(() => hold.promise, { signal })
+}
+
+function clearWorkspaceCommitHold(): void {
+  const hold = workspaceCommitHold
+  workspaceCommitHold = undefined
+  hold?.resolve()
+}
+
+function observeRestoreWorkspace(workspace: WorkspaceDescriptor): RestoreWorkspaceDescriptor | undefined {
+  const backendId = parseInstanceKey(workspace.id).backendId
+  const requestKey = workspace.requestId && workspaceRequestKey(backendId, workspace.requestId, serverEvents.signal(backendId))
+  if (requestKey && restoreCreatedWorkspaceCleanup.shouldIgnoreObservation(workspace.id, requestKey, (workspace as RestoreWorkspaceDescriptor).reused)) return undefined
+  const tracked = restoreCreatedWorkspaceCleanup.get(workspace.id, true)
+  const receipt = requestKey
+    ? restoreCreationReceipts.get(requestKey)
+    : tracked?.receipt
+  // An observation may enrich a claim only on its original attachment.
+  return receipt?.attached() ? { ...workspace, requestId: workspace.requestId ?? receipt.requestId,
+    ...(tracked?.reused ? { reused: true } : {}), receipt: Object.freeze({ ...receipt,
+    rawId: parseInstanceKey(workspace.id).workspaceId, instanceId: workspace.id,
+  }) } : workspace
+}
 
 const restoreCreatedWorkspaceCleanup = new AbortCreatedWorkspaceCleanup<RestoreWorkspaceDescriptor>({
+  requestKey: workspace => workspace.receipt?.requestKey,
+  isCurrent: workspace => workspace.receipt?.attached() === true,
+  isCurrentKey: (id, key) => {
+    const backendId = parseInstanceKey(id).backendId
+    const [, requestId] = JSON.parse(key) as [string, string]
+    return key === workspaceRequestKey(backendId, requestId, serverEvents.signal(backendId))
+  },
+  onSettled: workspace => {
+    if (workspace.receipt) restoreCreationReceipts.delete(workspace.receipt.requestKey)
+  },
   discardWorkspace: (workspace) => {
     if (!workspace.requestId) return Promise.reject(new Error(`Restore workspace ${workspace.id} has no creation request`))
-    return serverApi.cancelWorkspaceCreation(workspace.requestId)
+    if (!workspace.receipt) return Promise.reject(new Error("Workspace creation owner unavailable"))
+    return workspace.receipt.api.cancelWorkspaceCreation(workspace.requestId)
   },
   restoreWorkspace: (workspace) => {
+    if (!workspace.receipt?.attached()) return false
     workspaceListReconciliationFence.markMutation(workspace.id)
-    upsertWorkspace(workspace)
+    upsertWorkspace(workspace, undefined, workspace.receipt.backendId)
   },
   onPermanentFailure: (workspace, error) => {
-    log.error("Failed to cancel restore workspace ownership; restored it to the UI", {
+    log.error("Failed to settle restore workspace ownership", {
       workspaceId: workspace.id,
       error,
     })
   },
 })
-let restoreCreationRequestSequence = 0
 const restoreCreationCommitGates = new RestoreWorkspaceCommitGates<RestoreWorkspaceDescriptor>()
 
 /** Bounded backoff for a failed reconnect reconciliation; a reconnect pulse
  * (upstream recovery) keeps the browser stream open, so nothing else retries it. */
 const CONNECTION_RESYNC_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000]
 const connectionResyncs = new TrailingResyncCoordinator(
-  async (instanceId) => {
+  async (instanceId, signal) => {
     await waitForSettledPrerequisite(initialHydrations.get(instanceId))
+    signal.throwIfAborted()
     const instance = instances().get(instanceId)
     if (!instance?.client || instance.status !== "ready") return
+    const current = () => !signal.aborted && instances().get(instanceId)?.client === instance.client
     // Every read runs even when another fails: the transcript repair below is
     // the only path for events this connection may have missed, and the first
     // failure fails the pass so the coordinator retries it.
@@ -498,17 +550,23 @@ const connectionResyncs = new TrailingResyncCoordinator(
         failures.push(error)
       }
     }
-    await settle(() => fetchSessions(instanceId, { reset: true }))
-    await Promise.all([
-      settle(() => reloadWorktrees(instanceId)),
-      settle(() => syncPendingRequests(instanceId)),
-      settle(() => refreshVolatileInstanceState(instanceId)),
-      settle(() => syncLoadedSessionInboxes(instanceId)),
-    ])
-    const loadedMessages = messagesLoaded().get(instanceId) ?? new Set<string>()
-    for (const sessionId of loadedMessages) invalidateSessionMessageLoad(instanceId, sessionId)
+    await settle(() => fetchSessions(instanceId, { reset: true, signal }))
+    if (!current()) return
+    const loadedMessages = new Set(messagesLoaded().get(instanceId) ?? [])
     const activeId = activeSessionId().get(instanceId)
-    if (activeId && loadedMessages.has(activeId)) await settle(() => loadMessages(instanceId, activeId, { force: true }))
+    for (const sessionId of loadedMessages) {
+      signal.throwIfAborted()
+      if (!current()) return
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+    await Promise.all([
+      activeId && loadedMessages.has(activeId) ? settle(() => loadMessages(instanceId, activeId, { force: true, signal })) : Promise.resolve(),
+      settle(() => reloadWorktrees(instanceId, false, signal)),
+      settle(() => syncPendingRequests(instanceId, undefined, undefined, signal)),
+      settle(() => refreshVolatileInstanceState(instanceId, undefined, signal)),
+      settle(() => syncLoadedSessionInboxes(instanceId, signal, loadedMessages)),
+    ])
+    if (!current()) return
     reconcilePendingSessionIndicators(instanceId)
     if (failures.length) throw failures[0]
   },
@@ -520,17 +578,22 @@ const connectionResyncs = new TrailingResyncCoordinator(
 const connectionResyncGate = new ConnectionResyncGate()
 
 function resyncConnectedInstance(instanceId: string): void {
-  void connectionResyncs.request(instanceId)
+  void connectionResyncs.request(instanceId, serverEvents.signalForInstance(instanceId))
 }
 
-async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
+async function syncLoadedSessionInboxes(
+  instanceId: string,
+  signal?: AbortSignal,
+  loaded: ReadonlySet<string> = messagesLoaded().get(instanceId) ?? new Set<string>(),
+): Promise<void> {
+  if (signal?.aborted) return
   const instance = instances().get(instanceId)
   if (!instance?.client || instance.status !== "ready") return
-  const loaded = messagesLoaded().get(instanceId) ?? new Set<string>()
   await Promise.all(Array.from(loaded, async (sessionId) => {
+    if (signal?.aborted) return
     const directory = sessions().get(instanceId)?.get(sessionId)?.location.directory ?? instance.folder
     try {
-      await syncOpenCodeSessionInbox(instanceId, sessionId, directory)
+      await syncOpenCodeSessionInbox(instanceId, sessionId, directory, signal)
     } catch (error) {
       log.warn("Failed to resync session inbox after connection", { instanceId, sessionId, error })
     }
@@ -538,14 +601,16 @@ async function syncLoadedSessionInboxes(instanceId: string): Promise<void> {
 }
 
 const allInstanceRefreshTargets: readonly InstanceRefreshTarget[] = ["agents", "providers", "commands", "metadata", "filesystem"]
-const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget> }>()
+const volatileInstanceRefreshes = new Map<string, { promise: Promise<void>; pending: Set<InstanceRefreshTarget>; signal?: AbortSignal; client: Instance["client"] }>()
 
 function refreshVolatileInstanceState(
   instanceId: string,
   targets: readonly InstanceRefreshTarget[] = allInstanceRefreshTargets,
+  signal = serverEvents.signalForInstance(instanceId),
 ): Promise<void> {
+  if (signal?.aborted) return Promise.resolve()
   const existing = volatileInstanceRefreshes.get(instanceId)
-  if (existing) {
+  if (existing && !existing.signal?.aborted && existing.client === instances().get(instanceId)?.client) {
     for (const target of targets) existing.pending.add(target)
     return existing.promise
   }
@@ -553,12 +618,14 @@ function refreshVolatileInstanceState(
   if (!instance?.client || instance.status !== "ready") return Promise.resolve()
   const client = instance.client
 
-  const state = { promise: Promise.resolve(), pending: new Set(targets) }
+  const state = { promise: Promise.resolve(), pending: new Set(targets), signal, client }
   state.promise = (async () => {
     do {
+      if (signal?.aborted || instances().get(instanceId)?.client !== client) return
       const current = new Set(state.pending)
       state.pending.clear()
       if (current.has("filesystem")) invalidateFilesystemCaches(instanceId)
+      if (signal?.aborted) return
       const requests: Promise<unknown>[] = []
       const location = getActiveCatalogLocation(instanceId)
       if (current.has("agents")) requests.push(fetchAgents(instanceId, location, true))
@@ -568,6 +635,7 @@ function refreshVolatileInstanceState(
         requests.push(loadInstanceMetadata(instance, { force: true, location }))
       }
       await Promise.all(requests)
+      if (signal?.aborted || instances().get(instanceId)?.client !== client) return
     } while (state.pending.size)
   })().finally(() => {
     if (volatileInstanceRefreshes.get(instanceId) === state) volatileInstanceRefreshes.delete(instanceId)
@@ -587,11 +655,7 @@ serverEvents.on("instance.eventStatus", (event) => {
 })
 
 function createRestoreCreationRequestId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return `restore-${globalThis.crypto.randomUUID()}`
-  }
-  restoreCreationRequestSequence += 1
-  return `restore-${Date.now().toString(36)}-${restoreCreationRequestSequence.toString(36)}`
+  return `restore-${generateUUID()}`
 }
 
 type InstanceReadyWaiter = {
@@ -622,10 +686,19 @@ function reconcilePendingSessionIndicators(instanceId: string): void {
   )
 }
 
-function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName?: string): Instance {
+export function getSessionPendingIndicators(instanceId: string, sessionId: string) {
+  return {
+    pendingPermission: permissionRegistry.hasSession(instanceId, sessionId),
+    pendingForm: formRegistry.hasSession(instanceId, sessionId),
+  }
+}
+
+function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectName: string | undefined, backendId: BackendId, serverId?: string): Instance {
   const existing = instances().get(descriptor.id)
+  const environment = preferencesForBackend(backendId).serverSettings().environmentVariables
   return {
     id: descriptor.id,
+    ...(backendId !== LOCAL_BACKEND_ID ? { backendId, serverId } : {}),
     folder: descriptor.path,
     projectName: projectName ?? existing?.projectName ?? descriptor.name,
     port: descriptor.port ?? existing?.port ?? 0,
@@ -638,15 +711,22 @@ function workspaceDescriptorToInstance(descriptor: WorkspaceDescriptor, projectN
     binaryPath: descriptor.binaryId ?? descriptor.binaryLabel ?? existing?.binaryPath,
     binaryLabel: descriptor.binaryLabel,
     binaryVersion: descriptor.binaryVersion ?? existing?.binaryVersion,
-    environmentVariables: existing?.environmentVariables ?? serverSettings().environmentVariables ?? {},
+    environmentVariables: backendId === LOCAL_BACKEND_ID ? existing?.environmentVariables ?? environment ?? {} : environment,
     ...(descriptor.temporary ? { temporary: true } : {}),
   }
 }
 
-function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) {
+/** `descriptor.id` is the instance key of a workspace of `backendId`. */
+function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string, backendId: BackendId = LOCAL_BACKEND_ID) {
   // A workspace (re)created after a stop event keeps its instance.
   pendingWorkspaceStops.delete(descriptor.id)
-  const mapped = workspaceDescriptorToInstance(descriptor, projectName)
+  const backend = backends.get(backendId)
+  const serverId = backend && admittedServerIds.get(backend)
+  const previous = instances().get(descriptor.id)
+  if (previous && serverId && previous.serverId !== serverId) {
+    removeInstance(descriptor.id, { authoritative: false })
+  }
+  const mapped = workspaceDescriptorToInstance(descriptor, projectName, backendId, serverId)
   if (instances().has(descriptor.id)) {
     updateInstance(descriptor.id, mapped)
   } else {
@@ -665,6 +745,8 @@ function upsertWorkspace(descriptor: WorkspaceDescriptor, projectName?: string) 
 }
 
 function attachClient(descriptor: WorkspaceDescriptor) {
+  const signal = serverEvents.signalForInstance(descriptor.id)
+  if (signal.aborted) return
   const instance = instances().get(descriptor.id)
   if (!instance) return
 
@@ -679,12 +761,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
   }
 
   if (instance.client) {
-    sdkManager.destroyClientsForInstance(descriptor.id)
+    backendOf(descriptor.id).sdk.destroyClientsForInstance(descriptor.id)
     destroyOpenCodeData(descriptor.id)
     cancelTranscriptProjections(descriptor.id)
   }
 
-  const client = sdkManager.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
+  const client = backendOf(descriptor.id).sdk.createClient(descriptor.id, nextProxyPath, () => activeInstanceId() === descriptor.id)
   updateInstance(descriptor.id, {
     client,
     port: nextPort ?? 0,
@@ -692,7 +774,7 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     status: "ready",
   })
   sseManager.seedStatusIfMissing(descriptor.id, "connecting")
-  const sessionHydration = startInstanceSessionHydration(descriptor.id)
+  const sessionHydration = startInstanceSessionHydration(descriptor.id, false, signal)
   initialSessionHydrations.set(descriptor.id, sessionHydration.sessions)
   initialWorkspaceMetadataHydrations.set(descriptor.id, sessionHydration.workspaceMetadata)
   const recovered = successfulPendingRecoveries.get(descriptor.id)
@@ -700,11 +782,12 @@ function attachClient(descriptor: WorkspaceDescriptor) {
     propagateErrors: true,
     sessionHydration: sessionHydration.sessions,
     workspaceMetadataHydration: sessionHydration.workspaceMetadata,
+    signal,
   })
   initialHydrations.set(descriptor.id, hydration)
   void hydration.catch((error) => {
     log.error("Failed to hydrate instance data", error)
-    if (initialHydrations.get(descriptor.id) === hydration
+    if (!signal.aborted && initialHydrations.get(descriptor.id) === hydration
       && instances().get(descriptor.id)?.client === client
       && successfulPendingRecoveries.get(descriptor.id) === recovered) markPendingRecovery(descriptor.id, true, hydrationCause(error))
   })
@@ -757,7 +840,7 @@ function releaseInstanceResources(instanceId: string) {
   if (!instance) return
 
   if (instance.client) {
-    sdkManager.destroyClientsForInstance(instanceId)
+    backends.get(parseInstanceKey(instanceId).backendId)?.sdk.destroyClientsForInstance(instanceId)
   }
   destroyOpenCodeData(instanceId)
   cancelTranscriptProjections(instanceId)
@@ -791,6 +874,7 @@ function pendingSnapshotResults<T>(
   select: (entry: { permissions: PermissionRequest[]; forms: FormWithLocation[] }) => T[],
 ): PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>[] {
   return snapshot.directories.flatMap<PromiseSettledResult<{ location: { directory: string }; response: { location: { directory: string }; data: T[]; complete: boolean } }>>((entry) => {
+    if (entry.status === "excluded") return []
     // Only broker-validated native placement keys are authority, never UI aliases.
     const locations = entry.locations ?? []
     return [
@@ -803,13 +887,16 @@ function pendingSnapshotResults<T>(
   })
 }
 
-async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean, reconcileInventory = true, retryDirectories?: string[]): Promise<RecoverySnapshot> {
+async function readPendingRequestSnapshot(
+  instanceId: string, isCurrent: () => boolean,
+  { reconcileInventory = true, onlyDirectories }: { reconcileInventory?: boolean; onlyDirectories?: string[] } = {},
+): Promise<RecoverySnapshot> {
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
   const liveRequired = new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
-  const directories = retryDirectories ?? [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
+  const directories = onlyDirectories ?? [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
     .flatMap((location) => location.directory ? [location.directory] : []))]
   const snapshot: Extract<RecoverySnapshot, { supported: true }> = { supported: true, directories: [] }
   for (let offset = 0; offset < directories.length;) {
@@ -840,14 +927,17 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
         if (entry.status !== "excluded") snapshot.directories.push(entry)
         else if (!optional.includes(entry.directory) || currentRequired.has(normalizeWorkspacePath(entry.directory))) {
           snapshot.directories.push({ directory: entry.directory, status: "error", reason: "excluded" })
-        }
-        // Excluded historical hints never authorize clearing a known queue.
+        } else snapshot.directories.push(entry)
       }
     }
     try {
       // Directory/Git authorization has a longer broker budget than native queue
       // reads. Let it finish, with a small transport margin, before aborting.
-      const next = await withPendingRequestTimeout(instanceId, (signal) => serverApi.getPendingRequests(instanceId, batch, signal, optional), true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      const next = await withPendingRequestTimeout(instanceId, (signal) => {
+        if (!isCurrent()) throw pendingRequestSyncSuperseded
+        return backendOf(instanceId).api.getPendingRequests(instanceId, batch, signal, optional)
+      }, true, PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS + 5_000)
+      if (!isCurrent()) throw pendingRequestSyncSuperseded
       if (next.supported === false) return next
       if (next.supported !== true) throw new Error("Invalid pending request snapshot")
       addBatch(next.directories)
@@ -882,7 +972,7 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
     const currentRequired = requiredDirectories()
     const retryDirectories = staleInventory.filter(entry => !currentRequired.has(normalizeWorkspacePath(entry.directory))).map(entry => entry.directory)
     if (retryDirectories.length) {
-      const retry = await readPendingRequestSnapshot(instanceId, isCurrent, false, retryDirectories)
+      const retry = await readPendingRequestSnapshot(instanceId, isCurrent, { reconcileInventory: false, onlyDirectories: retryDirectories })
       if (retry.supported) snapshot.directories = [...snapshot.directories.filter(entry => !retryDirectories.includes(entry.directory)), ...retry.directories]
     }
   }
@@ -896,6 +986,10 @@ async function syncPendingPermissions(
   snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  const owns = isCurrent
+  isCurrent = () => operation.current() && owns()
+  if (!isCurrent()) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const mutationEpoch = pendingPermissionMutationEpochs.get(instanceId) ?? 0
@@ -980,6 +1074,10 @@ async function syncPendingForms(
   snapshot?: Promise<RecoverySnapshot>,
   targetLocations?: RequestLocation[],
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  const owns = isCurrent
+  isCurrent = () => operation.current() && owns()
+  if (!isCurrent()) return
   const instance = instances().get(instanceId)
   if (!instance?.client) return
   const mutationEpoch = pendingFormMutationEpochs.get(instanceId) ?? 0
@@ -1051,15 +1149,17 @@ async function runPendingRequestSync(
   generation: number,
   token: { cancelled: boolean },
   targetLocations?: RequestLocation[],
+  operation = captureInstanceOperation(instanceId),
 ): Promise<void> {
+  const { current } = operation
   const startingClient = instances().get(instanceId)?.client
-  for (let attempt = 0; attempt < 3 && !token.cancelled; attempt += 1) {
+  for (let attempt = 0; attempt < 3 && !token.cancelled && current(); attempt += 1) {
     if (!targetLocations && deferPendingDiscovery(instanceId)) return
     const epoch = (pendingRequestSyncEpochs.get(instanceId) ?? 0) + 1
     pendingRequestSyncEpochs.set(instanceId, epoch)
     const client = instances().get(instanceId)?.client
     if (!client) return
-    const isCurrent = () => !token.cancelled
+    const isCurrent = () => !token.cancelled && current()
       && instances().get(instanceId)?.client === client
       && pendingRequestSyncEpochs.get(instanceId) === epoch
       && pendingRequestSyncGenerations.get(instanceId) === generation
@@ -1067,26 +1167,35 @@ async function runPendingRequestSync(
       // Unavailable loaded-only recovery is non-authoritative, never permission
       // to construct every historical/worktree Location. Only settlement targets
       // use ordinary lists; SSE and later snapshots still recover global Forms.
+      const notice = targetLocations ? undefined : captureUnsupportedPendingRecoveryNotice(parseInstanceKey(instanceId).backendId)
       const snapshot = targetLocations ? undefined : readPendingRequestSnapshot(instanceId, isCurrent)
       const results = await Promise.allSettled([
         syncPendingPermissions(instanceId, true, isCurrent, snapshot, targetLocations),
         syncPendingForms(instanceId, true, isCurrent, snapshot, targetLocations),
       ])
       for (const result of results) if (result.status === "rejected") throw result.reason
+      const coverage = await snapshot
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
-        releasePendingRecoveryNotices(pendingRecoveryProject(instanceId))
         markPendingRecovery(instanceId, false)
+        if (coverage?.supported) {
+          lastScannedRequestDirectories.set(instanceId, new Set(coverage.directories
+            .filter((entry) => entry.status !== "excluded")
+            .map((entry) => normalizeWorkspacePath(entry.directory))))
+          notice?.release()
+        }
       }
       return
     } catch (error) {
-      if (isCurrent()) markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
-        ? recoveryCauseOf(error) : undefined)
+      if (isCurrent()) {
+        markPendingRecovery(instanceId, true, error !== pendingDiscoveryDeferred && error !== pendingRequestSyncSuperseded
+          ? recoveryCauseOf(error) : undefined)
+      }
       if (error === pendingDiscoveryDeferred) { resumePendingDiscovery(); return }
       if (error !== pendingRequestSyncSuperseded) throw error
     }
   }
-  if (!token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
+  if (current() && !token.cancelled && pendingRequestSyncGenerations.get(instanceId) === generation) {
     if (instances().get(instanceId)?.client === startingClient) {
       markPendingRecovery(instanceId, true, { kind: "unstable" })
     }
@@ -1098,36 +1207,47 @@ function syncPendingRequests(
   instanceId: string,
   registerInvalidation?: (invalidate: () => void) => void,
   targetLocations?: RequestLocation[],
+  signal?: AbortSignal,
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId, signal)
+  signal = operation.signal
+  if (signal?.aborted) return Promise.resolve()
+  const owned = (promise: Promise<void>, invalidate: () => void) => {
+    registerInvalidation?.(invalidate)
+    if (!signal) return promise
+    signal?.addEventListener("abort", invalidate, { once: true })
+    if (signal?.aborted) invalidate()
+    void promise.then(() => signal?.removeEventListener("abort", invalidate), () => signal?.removeEventListener("abort", invalidate))
+    return promise
+  }
   const generation = pendingRequestSyncGenerations.get(instanceId)
   if (generation === undefined) return Promise.resolve()
   if (!targetLocations && deferPendingDiscovery(instanceId)) return Promise.resolve()
   const existing = pendingRequestSyncs.get(instanceId)
-  if (existing?.generation === generation) {
-    if (!targetLocations && existing.targeted) { deferredPendingDiscovery.add(instanceId); resumePendingDiscovery() }
-    registerInvalidation?.(() => {
+  if (existing?.generation === generation && pendingOperationOwners.get(existing.promise)?.()) {
+    if (!targetLocations && existing.targeted) { deferredPendingDiscovery.set(instanceId, operation); resumePendingDiscovery() }
+    return owned(existing.promise, () => {
       if (pendingRequestSyncs.get(instanceId)?.token !== existing.token) return
       existing.token.cancelled = true
       abortPendingRequestWork(instanceId)
       invalidatePendingRequestSync(instanceId)
       pendingRequestSyncs.delete(instanceId)
     })
-    return existing.promise
   }
   const token = { cancelled: false }
   if (!targetLocations) deferredPendingDiscovery.delete(instanceId)
-  const promise = runPendingRequestSync(instanceId, generation, token, targetLocations).finally(() => {
+  const promise = runPendingRequestSync(instanceId, generation, token, targetLocations, operation).finally(() => {
     if (pendingRequestSyncs.get(instanceId)?.promise === promise) pendingRequestSyncs.delete(instanceId)
   })
   pendingRequestSyncs.set(instanceId, { generation, targeted: Boolean(targetLocations), token, promise })
-  registerInvalidation?.(() => {
+  pendingOperationOwners.set(promise, operation.current)
+  return owned(promise, () => {
     if (pendingRequestSyncs.get(instanceId)?.token !== token) return
     token.cancelled = true
     abortPendingRequestWork(instanceId)
     invalidatePendingRequestSync(instanceId)
     pendingRequestSyncs.delete(instanceId)
   })
-  return promise
 }
 
 function schedulePendingRequestReconciliation(instanceId: string, location?: RequestLocation): void {
@@ -1142,18 +1262,76 @@ function schedulePendingRequestReconciliation(instanceId: string, location?: Req
   })
 }
 
-async function runPendingRequestLiveness(instanceId: string): Promise<void> {
+/** The session someone just opened must not wait for the slow liveness sweep:
+ * when the last completed recovery never covered the session's directory, a
+ * fresh untargeted scan starts right away. Read-only and SSE-independent. */
+function requestPendingRequestScanForActiveSession(instanceId: string, sessionId: string | null | undefined): void {
+  if (!sessionId || sessionId === "info") return
+  const instance = instances().get(instanceId)
+  if (!instance?.client || instance.status !== "ready") return
+  const directory = sessions().get(instanceId)?.get(sessionId)?.location?.directory
+  if (!directory) return
+  const operation = captureInstanceOperation(instanceId)
+  const needed = () => {
+    const scanned = lastScannedRequestDirectories.get(instanceId)
+    return !scanned || !scanned.has(normalizeWorkspacePath(directory))
+  }
+  if (!needed()) return
+  const run = () => {
+    if (!operation.current() || activeSessionId().get(instanceId) !== sessionId || !needed()) return
+    void syncPendingRequests(instanceId, undefined, undefined, operation.signal).catch((error) => {
+      log.warn("Failed to sync pending requests after session activation", { instanceId, error })
+    })
+  }
+  // A scan started before this session loaded may finish without its directory;
+  // re-check afterwards instead of superseding the in-flight read.
+  const inFlight = pendingRequestSyncs.get(instanceId)
+  if (inFlight && !inFlight.targeted) void inFlight.promise.then(run, run)
+  else run()
+}
+
+createRoot(() => {
+  let previous = new Map<string, string | null | undefined>()
+  createEffect(() => {
+    const current = new Map(activeSessionId())
+    for (const [instanceId, sessionId] of current) {
+      if (previous.get(instanceId) !== sessionId) requestPendingRequestScanForActiveSession(instanceId, sessionId)
+    }
+    previous = current
+  })
+})
+
+/** Periodic liveness polling only needs to run for projects with active work,
+ * queued requests, or an incomplete previous recovery. Idle projects rely on
+ * live SSE events, foreground refresh on wake/reconnect, and session activation,
+ * avoiding cold Location wakeups and plugin reloads. */
+function needsPendingRequestLiveness(instanceId: string, hidden = false): boolean {
+  if (incompletePendingRecovery().has(instanceId)) return true
+  if (hidden) return false
+  if (getPermissionQueue(instanceId).length > 0 || getFormQueue(instanceId).length > 0) return true
   const instanceSessions = sessions().get(instanceId)
-  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting")
+  if (Array.from(instanceSessions?.values() ?? []).some((session) => session.status === "working" || session.status === "compacting" || session.generationRecovery === "pending")) return true
+  const compactions = pendingCompactions.get(instanceId)
+  if (Array.from(compactions?.values() ?? []).some((entry) => entry.active && !entry.signal.aborted)) return true
+  return false
+}
+
+async function runPendingRequestLiveness(instanceId: string, operation = captureInstanceOperation(instanceId)): Promise<void> {
+  if (!operation.current()) return
+  const instanceSessions = sessions().get(instanceId)
+  const hasRunningSession = Array.from(instanceSessions?.values() ?? []).some(
+    (session) => session.status === "working" || session.status === "compacting"
+      || (session.generationRecovery === "pending" && session.generationAdmissionEpoch !== undefined),
+  )
   let sessionError: unknown
   const compactions = new Map(pendingCompactions.get(instanceId) ?? [])
   const client = instances().get(instanceId)?.client
-  if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
+  if (hasRunningSession || Array.from(compactions.values()).some((entry) => entry.active && !entry.signal.aborted) || getPermissionQueue(instanceId).length || getFormQueue(instanceId).length) {
     try {
       const active = await withPendingRequestTimeout(instanceId, (signal) => refreshSessionRuntimeStatus(instanceId, signal), false)
-      if (active && instances().get(instanceId)?.client === client) {
+      if (active && operation.current() && instances().get(instanceId)?.client === client) {
         for (const [id, baseline] of compactions) {
-          if (baseline.active && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {
+          if (baseline.active && !baseline.signal.aborted && pendingCompactions.get(instanceId)?.get(id) === baseline && !Object.prototype.hasOwnProperty.call(active, id)) {
             pendingCompactions.get(instanceId)!.set(id, { ...baseline, active: false })
           }
         }
@@ -1163,31 +1341,40 @@ async function runPendingRequestLiveness(instanceId: string): Promise<void> {
       sessionError = error
     }
   }
-  await syncPendingRequests(instanceId)
+  if (!operation.current()) return
+  await syncPendingRequests(instanceId, undefined, undefined, operation.signal)
+  if (!operation.current()) return
   reconcilePendingSessionIndicators(instanceId)
   if (sessionError) throw sessionError
 }
 
 function reconcilePendingRequestLiveness(instanceId: string): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  if (!operation.current()) return Promise.resolve()
   const existing = pendingRequestLiveness.get(instanceId)
-  if (existing) return existing
-  const promise = runPendingRequestLiveness(instanceId).finally(() => {
+  if (existing && pendingOperationOwners.get(existing)?.()) return existing
+  const promise = runPendingRequestLiveness(instanceId, operation).finally(() => {
     if (pendingRequestLiveness.get(instanceId) === promise) pendingRequestLiveness.delete(instanceId)
   })
   pendingRequestLiveness.set(instanceId, promise)
+  pendingOperationOwners.set(promise, operation.current)
   return promise
 }
 
-function startInstanceSessionHydration(instanceId: string, force = false): {
+function startInstanceSessionHydration(instanceId: string, force = false, signal = serverEvents.signalForInstance(instanceId)): {
   sessions: Promise<void>
   workspaceMetadata: Promise<void>
 } {
+  const client = instances().get(instanceId)?.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
+  if (!current()) return { sessions: Promise.resolve(), workspaceMetadata: Promise.resolve() }
   const worktreeHydration = force
-    ? reloadWorktrees(instanceId)
-    : ensureWorktreesLoaded(instanceId)
+    ? reloadWorktrees(instanceId, false, signal)
+    : ensureWorktreesLoaded(instanceId, signal)
   const projectMetadata = Promise.resolve().then(async () => {
+    if (!current()) return
     const instance = instances().get(instanceId)
-    if (instance?.client) await loadInstanceProjectMetadata(instance, { force }).catch((error) => {
+    if (instance?.client) await loadInstanceProjectMetadata(instance, { force, signal }).catch((error) => {
       log.warn("Failed to load project metadata before session hydration", { instanceId, error })
     })
   })
@@ -1198,16 +1385,18 @@ function startInstanceSessionHydration(instanceId: string, force = false): {
   // Publish the root directory page without waiting for project/checkout metadata.
   // Full family reconciliation still awaits that inventory in session-api.
   const sessions = Promise.resolve().then(async () => {
+    if (!current()) return
     // fetchSessions reconciles the index after publication. Clearing it here
     // hides restored rows while the first network request is still pending.
-    await fetchSessions(instanceId, { projectMetadata }).catch((error) => {
+    await fetchSessions(instanceId, { projectMetadata, signal }).catch((error) => {
       log.error("Failed to hydrate sessions", { instanceId, error })
     })
   })
   void sessions.then(async () => {
+    if (!current()) return
     const instance = instances().get(instanceId)
     if (instance?.client) {
-      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId) })
+      await loadInstanceMetadata(instance, { force, location: getActiveCatalogLocation(instanceId), signal })
     }
   }).catch((error) => log.warn("Failed to load supplemental instance metadata", { instanceId, error }))
   return { sessions, workspaceMetadata }
@@ -1218,22 +1407,33 @@ async function hydrateInstanceData(instanceId: string, options?: {
   propagateErrors?: boolean
   sessionHydration?: Promise<void>
   workspaceMetadataHydration?: Promise<void>
+  signal?: AbortSignal
 }) {
+  const signal = options?.signal ?? serverEvents.signalForInstance(instanceId)
+  const client = instances().get(instanceId)?.client
+  const current = () => !signal.aborted && instances().get(instanceId)?.client === client
+  if (!current()) return
   try {
     const hydration = options?.sessionHydration
       ? {
           sessions: options.sessionHydration,
           workspaceMetadata: options.workspaceMetadataHydration ?? Promise.resolve(),
         }
-      : startInstanceSessionHydration(instanceId, options?.force)
-    // Composer catalogues must not wait for the complete historical inventory.
-    await Promise.all([
+      : startInstanceSessionHydration(instanceId, options?.force, signal)
+    // Pending recovery needs only the session inventory and worktree metadata;
+    // catalogue and config reads must not delay the first interruption scan.
+    const pendingRecovery = Promise.all([
       hydration.sessions,
       hydration.workspaceMetadata,
-      refreshSessionCatalog(instanceId, options?.force),
+    ]).then(() => {
+      if (current()) return syncPendingRequests(instanceId, undefined, undefined, signal)
+    })
+    await Promise.all([
+      pendingRecovery,
+      refreshSessionCatalog(instanceId, options?.force).then(() => {
+        if (current()) return ensureInstanceConfigLoaded(instanceId)
+      }),
     ])
-    await ensureInstanceConfigLoaded(instanceId)
-    await syncPendingRequests(instanceId)
   } catch (error) {
     log.error("Failed to fetch initial data", error)
     if (options?.propagateErrors) throw error
@@ -1244,22 +1444,45 @@ function clearReloadableInstanceState(instanceId: string): void {
   clearCacheForInstance(instanceId)
   clearCommands(instanceId)
   clearInstanceMetadata(instanceId)
+  lastScannedRequestDirectories.delete(instanceId)
   // Recovery can be unavailable; only authoritative coverage or settlement
   // removes known interruptions, not a catalogue/location rehydration.
   markPendingRecovery(instanceId, true)
 }
 
-async function refreshWorkspaceList(): Promise<void> {
+/** Reconciles one backend; false means this read had no current publication authority. */
+async function refreshWorkspaceList(
+  backendId: BackendId = LOCAL_BACKEND_ID,
+  api: Pick<typeof serverApi, "fetchWorkspaces"> = serverApi,
+  signal = serverEvents.signal(backendId),
+  connectionCurrent?: () => boolean,
+): Promise<boolean> {
+  const active = () => !signal?.aborted && (connectionCurrent?.() ?? true)
+  if (!active()) return false
   // Preferences imports shared controls, but does not own workspace/session
   // hydration. Its provider editor receives an explicit location from the host.
-  if (!usesClientState()) return
-  const requestFence = workspaceListReconciliationFence.begin()
-  const removalCandidates = new Set(instances().keys())
+  if (!usesClientState()) return false
+  if (backendId !== LOCAL_BACKEND_ID && api === serverApi) throw new Error("A non-local workspace list needs its backend API")
+  const inventoryPublished = backendId === LOCAL_BACKEND_ID ? undefined
+    : (await import("./remote-backends")).backendRegistry.workspaceReadGuard(backendId, signal)
+  if (!active()) return false
+  const requestFence = workspaceListReconciliationFence.begin(backendId)
+  const removalCandidates = new Set([...instances().values()]
+    .filter((instance) => backendIdOf(instance) === backendId).map(({ id }) => id))
   try {
-    const workspaces = await serverApi.fetchWorkspaces()
-    if (!workspaceListReconciliationFence.isCurrent(requestFence)) return
+    const listed = await api.fetchWorkspaces(signal)
+    if (!active() || !workspaceListReconciliationFence.isCurrent(requestFence)) return false
+    // Workspaces are keyed by instance key: the workspace id itself for the local backend.
+    const workspaces = listed.map((workspace) => {
+      const id = instanceKey(backendId, workspace.id)
+      return id === workspace.id ? workspace : { ...workspace, id }
+    })
     const remoteIds = new Set(workspaces.map(({ id }) => id))
-    for (const workspace of workspaces) {
+    for (const descriptor of workspaces) {
+      if (!active()) return false
+      const workspace = observeRestoreWorkspace(descriptor)
+      if (!workspace) continue
+      if (!active()) return false
       if (!workspaceListReconciliationFence.allows(requestFence, workspace.id)) continue
       restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
       if (restoreCreationCommitGates.deferRefreshWorkspace(workspace)) continue
@@ -1267,16 +1490,20 @@ async function refreshWorkspaceList(): Promise<void> {
         restoreCreatedWorkspaceCleanup.track(workspace)
         continue
       }
-      upsertWorkspace(workspace)
+      upsertWorkspace(workspace, undefined, backendId)
     }
     const unchangedCandidates = [...removalCandidates]
       .filter((id) => workspaceListReconciliationFence.allows(requestFence, id))
     for (const instanceId of getUnavailableWorkspaceIds(
       unchangedCandidates, remoteIds, (id) => restoreCreatedWorkspaceCleanup.owns(id),
     )) {
+      if (!active()) return false
       releaseInstanceResources(instanceId)
       removeInstance(instanceId, { authoritative: false })
     }
+    const published = active() && workspaceListReconciliationFence.isCurrent(requestFence)
+    if (published) inventoryPublished?.()
+    return published
   } finally {
     workspaceListReconciliationFence.complete(requestFence)
   }
@@ -1319,7 +1546,7 @@ function waitForWorkspaceLoadChange(
 
 /**
  * Temporary folders as of the latest `workspace.temporaryChanged` on this
- * event connection; null before one arrives or after a reconnect may have
+ * backend event connection; absent before one arrives or after a reconnect may have
  * missed some. A discard deletes the record before unregistering its folder,
  * while Keep unregisters first: a deleted record whose folder is still
  * registered was discarded, in whichever window. Without that list nothing is
@@ -1327,21 +1554,36 @@ function waitForWorkspaceLoadChange(
  * older than Keep, a Keep missed while disconnected), and keeping a deleted
  * folder's drafts is harmless while dropping a kept project's is not.
  */
-let temporaryRegistry: Set<string> | null = null
+const temporaryRegistries = new Map<BackendId, Set<string>>()
+serverEvents.onDetach(backendId => temporaryRegistries.delete(backendId))
 
 function isRegisteredTemporary(instance: Instance): boolean {
-  return temporaryRegistry?.has(normalizeWorkspacePath(instance.folder)) === true
+  return temporaryRegistries.get(backendIdOf(instance))?.has(normalizeWorkspacePath(instance.folder)) === true
 }
 
-serverEvents.onOpen(() => {
-  temporaryRegistry = null
-  publishLatestWorkspaceLoad(refreshWorkspaceList().then(
+serverEvents.onOpen((backendId) => {
+  temporaryRegistries.delete(backendId)
+  const backend = backends.get(backendId)
+  const signal = serverEvents.signal(backendId)
+  if (!backend || !signal) return
+  const connectionCurrent = backendId === LOCAL_BACKEND_ID ? undefined : backend.events.connectionGuard()
+  const refresh = async () => {
+    if (backendId !== LOCAL_BACKEND_ID) {
+      const { backendRegistry } = await import("./remote-backends")
+      // Reconcile changes made before SSE opened without superseding admission's read.
+      await backendRegistry.initialInventory(backend)
+      if (signal.aborted || serverEvents.signal(backendId) !== signal) return
+    }
+    await refreshWorkspaceList(backendId, backend.api, signal, connectionCurrent)
+  }
+  const load = refresh().then(
     () => ({}),
     (error) => {
-      log.warn("Failed to reconcile workspaces after event reconnect", error)
+      log.warn("Failed to reconcile workspaces after event reconnect", { backendId, error })
       return { error }
     },
-  ))
+  )
+  if (backendId === LOCAL_BACKEND_ID) publishLatestWorkspaceLoad(load)
 })
 
 async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> {
@@ -1356,7 +1598,7 @@ async function waitForInitialWorkspaceLoad(signal?: AbortSignal): Promise<void> 
 
 serverEvents.on("*", (event) => handleWorkspaceEvent(event))
 
-function handleWorkspaceEvent(event: WorkspaceEventPayload) {
+function handleWorkspaceEvent(event: BackendEventPayload) {
   if (!usesClientState()) return
   const workspaceId = event.type === "workspace.log"
     ? event.entry.workspaceId
@@ -1369,8 +1611,10 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
     workspaceListReconciliationFence.markMutation(workspaceId)
   }
   if ("workspace" in event) {
-    restoreCreatedWorkspaceCleanup.trackPendingRequest(event.workspace)
-    if (restoreCreationCommitGates.deferWorkspace(event.workspace)) return
+    const workspace = observeRestoreWorkspace(event.workspace)
+    if (!workspace) return
+    restoreCreatedWorkspaceCleanup.trackPendingRequest(workspace)
+    if (restoreCreationCommitGates.deferWorkspace(workspace)) return
   }
   if (event.type === "workspace.stopped"
     && restoreCreationCommitGates.deferStopped(event.workspaceId, event.reason)) {
@@ -1382,16 +1626,14 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
 
   switch (event.type) {
     case "workspace.created":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       break
     case "workspace.started":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       break
     case "workspace.error":
-      upsertWorkspace(event.workspace)
+      upsertWorkspace(event.workspace, undefined, event.backendId)
       showWorkspaceLaunchError(event.workspace)
-      clearPermissionAutoAcceptForInstance(event.workspace.id)
-      clearSyncedYoloSessionsForInstance(event.workspace.id)
       break
     case "workspace.stopped": {
       const instance = instances().get(event.workspaceId)
@@ -1404,23 +1646,27 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
         })
       }
       requestInstanceTabClose(event.workspaceId)
-      restoreCreatedWorkspaceCleanup.release(event.workspaceId)
+      const tracked = restoreCreatedWorkspaceCleanup.get(event.workspaceId, true)
+      if (tracked?.receipt?.attached()) restoreCreatedWorkspaceCleanup.release(event.workspaceId, tracked.receipt.requestKey)
       // Clear the instance after this event batch has unmounted its tab: clearing
       // a visible shell's state in the same update remounted views inside the
       // dying subtree and broke the whole window. Skip a re-created workspace.
       const stop = Symbol(event.workspaceId)
+      const operation = captureInstanceOperation(event.workspaceId)
       pendingWorkspaceStops.set(event.workspaceId, stop)
-      const discarded = event.reason === "deleted" && instance !== undefined && isRegisteredTemporary(instance)
+      const discarded = event.reason === "deleted" && !event.temporaryRetained && instance !== undefined && isRegisteredTemporary(instance)
       queueMicrotask(() => {
         if (pendingWorkspaceStops.get(event.workspaceId) !== stop) return
         pendingWorkspaceStops.delete(event.workspaceId)
+        if (!operation.current()) return
         releaseInstanceResources(event.workspaceId)
-        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted", drafts: discarded ? "discard" : "keep" })
+        removeInstance(event.workspaceId, { authoritative: event.reason === "deleted",
+          drafts: discarded ? "discard" : "keep" })
       })
       break
     }
     case "workspace.temporaryChanged":
-      temporaryRegistry = new Set(event.folders.map(normalizeWorkspacePath))
+      temporaryRegistries.set(event.backendId ?? LOCAL_BACKEND_ID, new Set(event.folders.map(normalizeWorkspacePath)))
       break
     case "workspace.log":
       handleWorkspaceLog(event.entry)
@@ -1502,7 +1748,7 @@ function setInstanceLogStreaming(instanceId: string, enabled: boolean) {
 
 function addInstance(instance: Instance) {
   const occurrence = Array.from(instances().values())
-    .filter((existing) => normalizeInstanceFolderPath(existing.folder) === normalizeInstanceFolderPath(instance.folder))
+    .filter((existing) => isSameProject(existing, instance))
     .length
   pendingRequestSyncGenerations.set(instance.id, ++nextPendingRequestSyncGeneration)
   setInstances((prev) => {
@@ -1517,8 +1763,9 @@ function addInstance(instance: Instance) {
     instanceId: instance.id,
     folder: instance.folder,
     occurrence,
+    ...(instance.backendId ? { backendId: instance.backendId } : {}),
+    ...(instance.serverId ? { serverId: instance.serverId } : {}),
   })
-  restoreClosedWorkspaceDrafts(instance.id, instance.folder, () => waitForInstanceInitialSessionHydration(instance.id))
   syncHasInstancesFlag()
 }
 
@@ -1547,6 +1794,7 @@ function updateInstance(id: string, updates: Partial<Instance>) {
 }
 
 function removeInstance(id: string, options: { authoritative?: boolean; drafts?: "keep" | "skip" | "discard" } = {}) {
+  clearSessionListView(id)
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
@@ -1554,7 +1802,7 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())
-        .filter((instance) => normalizeInstanceFolderPath(instance.folder) === normalizeInstanceFolderPath(removedInstance.folder))
+        .filter((instance) => isSameProject(instance, removedInstance))
         .findIndex((instance) => instance.id === id)
     : -1
   if (removedInstance && removedOccurrence >= 0 && options.authoritative === false) {
@@ -1563,6 +1811,8 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
+      ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })
   }
   detachInstanceTabMembership(id)
@@ -1598,12 +1848,11 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearPermissionQueue(id)
   clearRepliedPermissions(id)
   clearSettledForms(id)
+  lastScannedRequestDirectories.delete(id)
   clearPendingFormQueue(id)
   clearInstanceMetadata(id)
   destroyOpenCodeData(id)
   cancelTranscriptProjections(id)
-  clearPermissionAutoAcceptForInstance(id)
-  clearSyncedYoloSessionsForInstance(id)
   initialHydrations.delete(id)
   initialSessionHydrations.delete(id)
   initialWorkspaceMetadataHydrations.delete(id)
@@ -1623,7 +1872,9 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   // Clean up session indexes and drafts for removed instance
   clearCacheForInstance(id)
   messageStoreBus.unregisterInstance(id)
-  if (removedInstance) retainClosedWorkspaceDrafts(id, removedInstance.folder, options.drafts)
+  if (removedInstance) retainClosedWorkspaceDrafts(id, removedInstance.folder,
+    remoteRestoreTabs().some(tab => tab.instanceId === id) && options.drafts !== "discard" ? "suspend" : options.drafts,
+    removedInstance.serverId)
   clearInstanceDraftPrompts(id)
   clearInstanceSeenInterruptions(id)
   clearSessionListRequestState(id)
@@ -1631,6 +1882,8 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
   clearSessionCatalogState(id)
   clearInstanceAttachments(id)
   clearInstanceDeletedSessionAuthority(id)
+  clearInstanceMovedAwaySessions(id)
+  clearPendingSessionMove(id)
   clearInstanceSessionExpansionState(id)
   clearInstanceSessionSelection(id)
   if (removedInstance && removedOccurrence >= 0 && options.authoritative !== false) {
@@ -1639,6 +1892,8 @@ function removeInstance(id: string, options: { authoritative?: boolean; drafts?:
       instanceId: id,
       folder: removedInstance.folder,
       occurrence: removedOccurrence,
+      ...(removedInstance.backendId ? { backendId: removedInstance.backendId } : {}),
+      ...(removedInstance.serverId ? { serverId: removedInstance.serverId } : {}),
     })
   }
   syncHasInstancesFlag()
@@ -1654,36 +1909,69 @@ function removeRestoreCreatedInstanceFromUi(instanceId: string): void {
 }
 
 function disposeRestoreWorkspaceResponse(workspace: RestoreWorkspaceDescriptor): Promise<void> {
-  if (workspace.reused !== true) removeRestoreCreatedInstanceFromUi(workspace.id)
+  if (workspace.reused !== true && workspace.receipt?.attached()
+    && restoreCreatedWorkspaceCleanup.get(workspace.id, true)?.receipt?.requestKey === workspace.receipt.requestKey
+    && !restoreCreatedWorkspaceCleanup.isReleased(workspace.id, workspace.receipt.requestKey)) removeRestoreCreatedInstanceFromUi(workspace.id)
   return restoreCreatedWorkspaceCleanup.discardCreated(workspace, { retainTombstone: workspace.reused !== true })
 }
 
 function disposeRestoreCreatedInstance(instanceId: string): Promise<void> {
   const workspace = restoreCreatedWorkspaceCleanup.get(instanceId)
   if (!workspace) return Promise.resolve()
-  if (workspace.reused !== true) removeRestoreCreatedInstanceFromUi(instanceId)
-  return restoreCreatedWorkspaceCleanup.discardTracked(instanceId, { retainTombstone: workspace.reused !== true })
+  return disposeRestoreWorkspaceResponse(workspace)
 }
 
 async function releaseRestoreCreatedInstance(instanceId: string, requestId: string): Promise<void> {
-  await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, () =>
-    retryWithBackoff(() => serverApi.releaseWorkspaceCreation(instanceId, requestId), {
+  // ponytail: linear in outstanding claims; index requests if very large restores make this measurable.
+  const receipts = [...restoreCreationReceipts.values()].filter(receipt => receipt.instanceId === instanceId && receipt.requestId === requestId)
+  if (receipts.length > 1) throw new Error("Workspace creation owner ambiguous")
+  const receipt = receipts[0]
+  if (!receipt) return
+  if (receipt.requestId !== requestId) throw new Error("Workspace creation owner unavailable")
+  await releaseCapturedWorkspaceCreation(instanceId, requestId, receipt.requestKey)
+}
+
+async function releaseCapturedWorkspaceCreation(instanceId: string, requestId: string, requestKey: string): Promise<void> {
+  await restoreCreatedWorkspaceCleanup.releaseAfter(instanceId, (workspace) => {
+    if (!workspace.receipt || workspace.requestId !== requestId) return Promise.reject(new Error("Workspace creation owner unavailable"))
+    return retryWithBackoff(() => workspace.receipt!.api.releaseWorkspaceCreation(instanceId, requestId), {
       maxAttempts: 4,
       initialDelayMs: 250,
       maxDelayMs: 2_000,
       backoffMultiplier: 4,
-    }))
+    })
+  }, requestKey)
 }
 
-async function cancelRestoreCreationRequest(instanceId: string | undefined, requestId: string): Promise<void> {
-  await cancelRestoreCreation(requestId)
-  if (instanceId) restoreCreatedWorkspaceCleanup.forgetRequest(instanceId, requestId)
+async function cancelRestoreCreationRequest(receipt: WorkspaceOperationReceipt): Promise<void> {
+  await restoreCreatedWorkspaceCleanup.cancelRequest(receipt.requestKey, () => receipt.api.cancelWorkspaceCreation(receipt.requestId!))
+  restoreCreationReceipts.delete(receipt.requestKey)
 }
 
-function claimRestoreCreatedInstanceForUser(instanceId: string): void {
+function cancelUnattachedWorkspaceCreations(attachedIds: ReadonlySet<string>): Promise<unknown> {
+  const cancellations = [...restoreCreationReceipts.values()].map(async receipt => {
+    if (receipt.instanceId && (attachedIds.has(receipt.instanceId)
+      || restoreCreatedWorkspaceCleanup.isReleased(receipt.instanceId, receipt.requestKey))) return
+    // An earlier ordinary cancel may still be in flight and cannot survive navigation.
+    if (receipt.cancelOnDeparture) await receipt.cancelOnDeparture(receipt.requestId!)
+    else await receipt.api.cancelWorkspaceCreation(receipt.requestId!, true)
+    restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+    restoreCreationReceipts.delete(receipt.requestKey)
+  })
+  workspaceCreationLifetime.abort(new WorkspaceCreationDeparture())
+  clearWorkspaceCommitHold()
+  return Promise.allSettled(cancellations)
+}
+
+function resumeWorkspaceCreations(): void {
+  if (workspaceCreationLifetime.signal.aborted) workspaceCreationLifetime = new AbortController()
+  clearWorkspaceCommitHold()
+}
+
+function claimRestoreCreatedInstanceForUser(instanceId: string, creation?: WorkspaceCreationOwnership): void {
   const workspace = restoreCreatedWorkspaceCleanup.get(instanceId)
-  if (!workspace?.requestId) return
-  void releaseRestoreCreatedInstance(instanceId, workspace.requestId).catch((error) => {
+  const release = creation ? creation.release() : workspace?.requestId ? releaseRestoreCreatedInstance(instanceId, workspace.requestId) : undefined
+  void release?.catch((error) => {
     log.warn("Failed to transfer restore workspace creation ownership to the user", { instanceId, error })
   })
 }
@@ -1693,84 +1981,142 @@ async function settleRestoreWorkspaceTerminal(
   terminal: RestoreWorkspaceTerminal,
 ): Promise<void> {
   if (terminal.status === "stopped") {
-    restoreCreatedWorkspaceCleanup.release(workspace.id)
-    removeRestoreCreatedInstanceFromUi(workspace.id)
+    if (workspace.receipt) restoreCreatedWorkspaceCleanup.release(workspace.id, workspace.receipt.requestKey)
+    if (workspace.receipt?.attached()) removeRestoreCreatedInstanceFromUi(workspace.id)
     return
   }
   await disposeRestoreWorkspaceResponse(workspace)
+}
+
+/** Captures one request, API, attachment and occurrence until tab ownership transfers. */
+export interface WorkspaceCreationOwnership {
+  current(instanceId: string): boolean
+  discard(): Promise<void>
+  release(): Promise<void>
 }
 
 async function createInstance(
   folder: string,
   projectName?: string,
   options?: {
+    backend?: BackendClient
     signal?: AbortSignal
     shouldCreateCommit?: (instanceId: string) => boolean
     onBeforeCreateCommit?: (instanceId: string) => void
     onCreateCommit?: (instanceId: string) => void
+    onCreation?: (creation: WorkspaceCreationOwnership) => void
     waitForCreateCommit?: () => Promise<void>
+    cancelOnDeparture?: (requestId: string) => Promise<void>
   },
 ): Promise<{ instanceId: string; reused: boolean; requestId?: string }> {
-  const restoreRequestId = options?.signal ? createRestoreCreationRequestId() : undefined
-  if (restoreRequestId) restoreCreatedWorkspaceCleanup.beginRequest(restoreRequestId)
-  const commitGate: RestoreWorkspaceCommitGate<RestoreWorkspaceDescriptor> | undefined = restoreRequestId && options?.waitForCreateCommit
-    ? restoreCreationCommitGates.begin(restoreRequestId, options.waitForCreateCommit(), folder)
+  if (options?.onCreation && !options.signal) throw new Error("Creation ownership requires a cancellation signal")
+  const lifetime = workspaceCreationLifetime.signal
+  lifetime.throwIfAborted()
+  const restoreRequestId = createRestoreCreationRequestId()
+  const receipt = Object.freeze({
+    ...captureWorkspaceOperation(folder, options?.backend, restoreRequestId,
+      options?.signal ? workspaceOpeningSignal(options.signal) : lifetime),
+    cancelOnDeparture: options?.cancelOnDeparture,
+  })
+  const userOpeningOrder = !options?.signal ? restoreCreatedWorkspaceCleanup.captureOperationOrder() : undefined
+  const signal = receipt.signal
+  const commitGate: RestoreWorkspaceCommitGate<RestoreWorkspaceDescriptor> | undefined = options?.waitForCreateCommit
+    ? restoreCreationCommitGates.begin(restoreRequestId, options.waitForCreateCommit(), folder, receipt.backendId, receipt.attached)
     : undefined
   let cancellationRequest: Promise<boolean> | null = null
+  let resolvedWorkspace: RestoreWorkspaceDescriptor | undefined
   let requestResolved = false
   let terminalHandled = false
   const cancelPendingCreation = () => {
-    if (!restoreRequestId) return
-    const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(restoreRequestId)
-    cancellationRequest ??= trackedCleanup
-      ? trackedCleanup.then(() => true)
-      : cancelRestoreCreationRequest(undefined, restoreRequestId)
-          .then(() => true, (error) => {
-            log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
-            return false
-          })
+    // Window release dispatches the exact cancellation with keepalive before aborting.
+    if (lifetime.aborted || !restoreCreationReceipts.has(receipt.requestKey)) return
+    if (cancellationRequest) return cancellationRequest
+    if (restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)) return Promise.resolve(true)
+    restoreCreatedWorkspaceCleanup.beginRequest(receipt.requestKey)
+    const trackedCleanup = restoreCreatedWorkspaceCleanup.quarantineRequest(receipt.requestKey)
+    cancellationRequest = Promise.resolve().then(async () => {
+      if (resolvedWorkspace?.requestId) await disposeRestoreWorkspaceResponse(resolvedWorkspace)
+      else if (trackedCleanup) await trackedCleanup
+      else {
+        await cancelRestoreCreationRequest(receipt)
+      }
+      return restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)
+    }).catch(error => {
+      log.warn("Failed to cancel restore workspace creation", { requestId: restoreRequestId, error })
+      return false
+    }).finally(() => {
+      cancellationRequest = null
+    })
+    return cancellationRequest
   }
-  options?.signal?.addEventListener("abort", cancelPendingCreation, { once: true })
+  signal.addEventListener("abort", cancelPendingCreation, { once: true })
 
   try {
-    if (options?.signal?.aborted) throw getAbortReason(options.signal)
-    const workspace = await serverApi.createWorkspace({
+    options?.onCreation?.({
+      current: instanceId => !lifetime.aborted && receipt.attached() && !!resolvedWorkspace && instanceId === resolvedWorkspace.id && instances().has(instanceId)
+        && restoreCreatedWorkspaceCleanup.get(resolvedWorkspace.id, true)?.receipt?.requestKey === receipt.requestKey
+        && !restoreCreatedWorkspaceCleanup.isReleased(resolvedWorkspace.id, receipt.requestKey)
+        && !restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(resolvedWorkspace.id, receipt.requestKey),
+      discard: async () => { await cancelPendingCreation() },
+      release: async () => {
+        if (!resolvedWorkspace) throw new Error("Workspace creation has not resolved")
+        await releaseCapturedWorkspaceCreation(resolvedWorkspace.id, restoreRequestId, receipt.requestKey)
+      },
+    })
+    signal.throwIfAborted()
+    if (!receipt.current()) throw new Error("Workspace creation owner unavailable")
+    restoreCreationReceipts.set(receipt.requestKey, receipt)
+    restoreCreatedWorkspaceCleanup.beginRequest(receipt.requestKey)
+    const response = await receipt.api.createWorkspace({
       path: folder,
       name: projectName,
       requestId: restoreRequestId,
-    }, { signal: options?.signal })
+    }, { signal })
+    const id = instanceKey(receipt.backendId, response.id)
+    const responseReceipt = Object.freeze({ ...receipt, rawId: response.id, instanceId: id })
+    if (!restoreCreatedWorkspaceCleanup.isRequestSettled(receipt.requestKey)) restoreCreationReceipts.set(receipt.requestKey, responseReceipt)
+    const workspace: RestoreWorkspaceDescriptor = { ...response, id, receipt: responseReceipt }
+    if ((workspace.requestId || options?.onCreation) && workspace.requestId !== restoreRequestId) {
+      await cancelPendingCreation()
+      throw new Error("Workspace creation response ownership mismatch")
+    }
+    resolvedWorkspace = workspace
     requestResolved = true
+    if (!workspace.requestId) {
+      restoreCreationReceipts.delete(receipt.requestKey)
+      if (options?.signal) restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+      else restoreCreatedWorkspaceCleanup.forgetRequest(workspace.id, receipt.requestKey)
+    }
     const reused = workspace.reused === true
-    if (restoreRequestId) restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id)
-    if (options?.signal?.aborted) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
-      throw getAbortReason(options.signal)
+    restoreCreationCommitGates.bindResponse(restoreRequestId, workspace.id, receipt.attached)
+    if (!receipt.current()) {
+      if (workspace.requestId) await cancelPendingCreation()
+      throw getAbortReason(signal)
     }
     if (options?.signal && workspace.requestId) {
-      const observed = restoreRequestId
-        ? restoreCreationCommitGates.resolve(restoreRequestId, workspace).workspace
-        : workspace
+      const observed = restoreCreationCommitGates.resolve(restoreRequestId, workspace, receipt.backendId, receipt.attached).workspace
       restoreCreatedWorkspaceCleanup.track({
         ...observed,
         requestId: observed.requestId ?? workspace.requestId,
         ...(reused ? { reused: true as const } : {}),
       })
     }
-    else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id)
+    else if (!options?.signal) restoreCreatedWorkspaceCleanup.releaseTombstoneForUserCreate(workspace.id, userOpeningOrder)
     if (commitGate) await commitGate.wait
-    if (options?.signal?.aborted) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
-      throw getAbortReason(options.signal)
+    for (let pending; (pending = pendingWorkspaceCommit(signal));) await pending
+    if (!receipt.current()) {
+      if (workspace.requestId) await cancelPendingCreation()
+      throw getAbortReason(signal)
     }
-    const resolution = restoreRequestId
-      ? restoreCreationCommitGates.resolve(restoreRequestId, workspace)
-      : { workspace }
+    const resolution = restoreCreationCommitGates.resolve(restoreRequestId, workspace, receipt.backendId, receipt.attached)
     const committedWorkspace: RestoreWorkspaceDescriptor = {
       ...resolution.workspace,
+      receipt: responseReceipt,
       requestId: resolution.workspace.requestId ?? workspace.requestId,
       ...(reused ? { reused: true } : {}),
     }
-    if (restoreRequestId) restoreCreatedWorkspaceCleanup.track(committedWorkspace)
+    resolvedWorkspace = committedWorkspace
+    if (committedWorkspace.requestId) restoreCreatedWorkspaceCleanup.track(committedWorkspace)
     const terminal = resolution.terminal ?? (committedWorkspace.status === "error" || committedWorkspace.status === "stopped"
       ? { status: committedWorkspace.status, message: committedWorkspace.error }
       : undefined)
@@ -1779,38 +2125,45 @@ async function createInstance(
       await settleRestoreWorkspaceTerminal(committedWorkspace, terminal)
       throw new Error(terminal.message || `Restore-created workspace ${workspace.id} ${terminal.status}`)
     }
-    const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id)
+    const discarded = restoreCreatedWorkspaceCleanup.shouldIgnoreObservation(workspace.id, receipt.requestKey, reused)
+      || restoreCreatedWorkspaceCleanup.shouldIgnoreEvent(workspace.id, receipt.requestKey)
       || options?.shouldCreateCommit?.(workspace.id) === false
     if (!discarded) {
+      if (!receipt.current()) throw getAbortReason(signal)
       workspaceListReconciliationFence.markMutation(workspace.id)
       options?.onBeforeCreateCommit?.(workspace.id)
-      upsertWorkspace(committedWorkspace, reused ? undefined : projectName)
+      if (!receipt.current()) throw getAbortReason(signal)
+      restoreCreatedWorkspaceCleanup.trackCommitted(committedWorkspace)
+      upsertWorkspace(committedWorkspace, reused ? undefined : projectName, receipt.backendId)
+      if (!receipt.current()) throw getAbortReason(signal)
       options?.onCreateCommit?.(workspace.id)
+      if (!receipt.current()) throw getAbortReason(signal)
     }
     if (discarded) {
-      if (workspace.requestId) await disposeRestoreWorkspaceResponse(workspace)
+      if (workspace.requestId) await cancelPendingCreation()
       throw new Error(`Restore-created workspace ${workspace.id} was closed before startup completed`)
     }
     return { instanceId: workspace.id, reused, requestId: workspace.requestId }
   } catch (error) {
+    lifetime.throwIfAborted()
+    // The create route's explicit rejection is definitive; transport/abort/5xx failures remain unknown.
+    if (!requestResolved && error instanceof HttpResponseError
+      && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 499) {
+      restoreCreationReceipts.delete(receipt.requestKey)
+      restoreCreatedWorkspaceCleanup.settleRequest(receipt.requestKey)
+    }
     if (!terminalHandled && commitGate?.terminal && commitGate.workspace) {
       terminalHandled = true
       await settleRestoreWorkspaceTerminal(commitGate.workspace, commitGate.terminal)
     }
-    if (!options?.signal?.aborted) log.error("Failed to create workspace", error)
+    if (!signal.aborted) log.error("Failed to create workspace", error)
     throw error
   } finally {
-    options?.signal?.removeEventListener("abort", cancelPendingCreation)
-    if (restoreRequestId) {
-      restoreCreationCommitGates.end(restoreRequestId)
-      const pendingCancellation = cancellationRequest as Promise<boolean> | null
-      if (requestResolved || !pendingCancellation) {
-        restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
-      } else {
-        void pendingCancellation.then((cancelled) => {
-          if (cancelled) restoreCreatedWorkspaceCleanup.finishRequest(restoreRequestId)
-        })
-      }
+    signal.removeEventListener("abort", cancelPendingCreation)
+    restoreCreationCommitGates.end(restoreRequestId, receipt.backendId, receipt.attached)
+    const pendingCancellation = cancellationRequest as Promise<boolean> | null
+    if (requestResolved && !signal.aborted || !pendingCancellation) {
+      restoreCreatedWorkspaceCleanup.finishRequest(receipt.requestKey)
     }
   }
 }
@@ -1825,12 +2178,16 @@ function normalizeInstanceFolderPath(folder: string): string {
   return trimmed.replace(/\\/g, "/").toLowerCase()
 }
 
-function getExistingInstanceForFolder(folder: string): Instance | null {
+/** One project is one folder of one backend. */
+function isSameProject(a: Pick<Instance, "folder" | "backendId">, b: Pick<Instance, "folder" | "backendId">): boolean {
+  return backendIdOf(a) === backendIdOf(b) && normalizeInstanceFolderPath(a.folder) === normalizeInstanceFolderPath(b.folder)
+}
+
+function getExistingInstanceForFolder(folder: string, backendId: BackendId = LOCAL_BACKEND_ID): Instance | null {
   if (!folder) return null
-  const target = normalizeInstanceFolderPath(folder)
   const matches = Array.from(instances().values()).filter((instance) => {
     if (instance.status === "stopped") return false
-    return normalizeInstanceFolderPath(instance.folder) === target
+    return isSameProject(instance, { folder, backendId })
   })
 
   if (matches.length === 0) return null
@@ -1839,13 +2196,12 @@ function getExistingInstanceForFolder(folder: string): Instance | null {
   return matches.find((instance) => instance.id === activeId) ?? matches.find((instance) => instance.status === "ready") ?? matches[0] ?? null
 }
 
-function updateProjectNameForFolder(folder: string, projectName: string): void {
+function updateProjectNameForFolder(folder: string, projectName: string, backendId: BackendId = LOCAL_BACKEND_ID): void {
   const name = projectName.trim()
   if (!folder || !name) return
-  const target = normalizeInstanceFolderPath(folder)
   for (const instance of instances().values()) {
     if (instance.status === "stopped") continue
-    if (normalizeInstanceFolderPath(instance.folder) === target) {
+    if (isSameProject(instance, { folder, backendId })) {
       updateInstance(instance.id, { projectName: name })
     }
   }
@@ -1855,12 +2211,12 @@ const workspaceCloseRequests = new Map<string, Promise<void>>()
 const locallyRequestedWorkspaceCloses = new Set<string>()
 
 /** Origin outlives the HTTP request: cleanup and its stop event may arrive later. */
-function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promise<void> {
+function trackWorkspaceClose(id: string, operation: () => Promise<void>, keepalive = false): Promise<void> {
   const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
   const hadOrigin = locallyRequestedWorkspaceCloses.has(id)
   locallyRequestedWorkspaceCloses.add(id)
-  const request = Promise.resolve().then(operation).catch((error) => {
+  const request = (keepalive ? operation() : Promise.resolve().then(operation)).catch((error) => {
     if (!hadOrigin && error instanceof HttpResponseError && error.status >= 400 && error.status < 500) {
       locallyRequestedWorkspaceCloses.delete(id)
     }
@@ -1870,17 +2226,25 @@ function trackWorkspaceClose(id: string, operation: () => Promise<void>): Promis
   return request
 }
 
-function closeWorkspace(id: string): Promise<void> {
+function closeWorkspace(id: string, { keepalive = false, silent = false } = {}): Promise<void> {
   const instance = instances().get(id)
   if (!instance) return Promise.resolve()
   const pending = workspaceCloseRequests.get(id)
   if (pending) return pending
 
-  return trackWorkspaceClose(id, () => serverApi.deleteWorkspace(id))
+  let receipt: WorkspaceOperationReceipt | undefined
+  let captureError: unknown
+  try { receipt = captureWorkspaceOperation(instance.folder, backendOf(id)) }
+  catch (error) { captureError = error }
+  return trackWorkspaceClose(id, () => {
+    if (!receipt) return Promise.reject(captureError)
+    if (!receipt.current()) return Promise.reject(new Error("Workspace close owner unavailable"))
+    return receipt.api.deleteWorkspace(id, keepalive)
+  }, keepalive)
     .catch((error) => {
       log.error("Failed to close workspace", error)
       try {
-        showToastNotification({ category: "projects",
+        if (!silent) showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.error"),
           variant: "error",
         })
@@ -2093,61 +2457,6 @@ function removePermissionFromQueue(instanceId: string, permissionId: string): vo
   }
 }
 
-function togglePermissionAutoAcceptForSession(instanceId: string, sessionId: string): void {
-  const wasEnabled = isPermissionAutoAcceptEnabled(instanceId, sessionId)
-  togglePermissionAutoAccept(instanceId, sessionId)
-  void serverApi
-    .toggleYolo(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      log.warn("Failed to toggle Yolo on server", { instanceId, sessionId, error })
-      // revert to the pre-toggle state (not a naive flip, which can be wrong
-      // if an SSE yolo.stateChanged arrived between toggle and catch)
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, wasEnabled)
-    })
-}
-
-/**
- * Sessions whose Yolo state has been backfilled from the server. The server is
- * authoritative but only pushes changes (`yolo.stateChanged`); a freshly
- * connected client must fetch the effective state for a session so the badge
- * matches reality from the start. De-duped per session and reset on SSE
- * reconnect so state re-syncs after a server restart.
- */
-const syncedYoloSessions = new Set<string>()
-
-export function ensureYoloStateSynced(instanceId: string, sessionId: string): void {
-  if (!instanceId || !sessionId || sessionId === "info") return
-  const key = `${instanceId}:${sessionId}`
-  if (syncedYoloSessions.has(key)) return
-  syncedYoloSessions.add(key)
-  void serverApi
-    .getYoloState(instanceId, sessionId)
-    .then((state) => {
-      setPermissionAutoAcceptEnabled(instanceId, sessionId, state.enabled)
-    })
-    .catch((error) => {
-      // allow retry on next activation (e.g. instance not ready yet)
-      syncedYoloSessions.delete(key)
-      log.warn("Failed to sync Yolo state", { instanceId, sessionId, error })
-    })
-}
-
-serverEvents.onOpen(() => {
-  syncedYoloSessions.clear()
-})
-
-function clearSyncedYoloSessionsForInstance(instanceId: string): void {
-  const prefix = `${instanceId}:`
-  for (const key of Array.from(syncedYoloSessions)) {
-    if (key.startsWith(prefix)) {
-      syncedYoloSessions.delete(key)
-    }
-  }
-}
-
 function clearPermissionQueue(instanceId: string): void {
   bumpEpoch(pendingPermissionMutationEpochs, instanceId)
   permissionRequestLocations.delete(instanceId)
@@ -2178,6 +2487,9 @@ async function sendPermissionResponse(
   reply: PermissionReply,
   message?: string,
 ): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const instance = instances().get(instanceId)
   if (!instance?.client) {
     throw new Error("Instance not ready")
@@ -2193,6 +2505,7 @@ async function sendPermissionResponse(
       ...(message ? { message } : {}),
     })
 
+    if (!operation.current()) return
     markPermissionReplied(instanceId, requestId)
     // Remove from both local queues after successful response; the SSE replied event
     // is still accepted, but the UI no longer depends on receiving it.
@@ -2200,13 +2513,16 @@ async function sendPermissionResponse(
     removePermissionV2(instanceId, requestId)
   } catch (error) {
     log.error("Failed to send permission response", error)
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(permissionRequestLocations, instanceId, requestId)
       ?? sessions().get(instanceId)?.get(permission?.sessionID ?? "")?.location)
     throw error
   }
 }
 
 async function sendFormReply(instanceId: string, formId: string, answer: FormAnswer, interaction?: FormAnswerInteraction): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   const humanSubmit = form.metadata?.kind === "question" && consumeFormAnswerInteraction(interaction, form, answer)
@@ -2217,10 +2533,11 @@ async function sendFormReply(instanceId: string, formId: string, answer: FormAns
       { sessionID: form.sessionID, formID: form.id, answer },
       humanSubmit ? { ...options, headers: { ...options?.headers, "x-codenomad-human-answer": "1" } } : options,
     )
+    if (!operation.current()) return
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }
@@ -2272,6 +2589,9 @@ function clearPendingFormQueue(instanceId: string): void {
 }
 
 async function sendFormCancel(instanceId: string, formId: string): Promise<void> {
+  const operation = captureInstanceOperation(instanceId)
+  operation.signal.throwIfAborted()
+  if (!operation.current()) throw pendingRequestSyncSuperseded
   const form = getFormQueue(instanceId).find((item) => item.id === formId)
   if (!form) throw new Error(`Form request not found: ${formId}`)
   bumpEpoch(pendingFormMutationEpochs, instanceId)
@@ -2280,10 +2600,11 @@ async function sendFormCancel(instanceId: string, formId: string): Promise<void>
       { sessionID: form.sessionID, formID: form.id },
       formRequestOptions(form),
     )
+    if (!operation.current()) return
     markFormSettled(instanceId, form.id)
     removePendingForm(instanceId, form.id)
   } catch (error) {
-    schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
+    if (operation.current()) schedulePendingRequestReconciliation(instanceId, rememberedRequestLocation(formRequestLocations, instanceId, form.id) ?? form.location)
     throw error
   }
 }
@@ -2320,8 +2641,21 @@ const publishSynchronousPage = (
   options: { preserveOmitted?: boolean; confirmPending: boolean; updateUsage: boolean },
 ) => {
   const dropped = takeTranscriptProjection(instanceId, sessionId)
-  projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
-  if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  try {
+    projectOpenCodeMessages(instanceId, sessionId, data, options.preserveOmitted ?? true, options.confirmPending)
+    if (options.updateUsage || Boolean(dropped?.updateUsage)) updateSessionInfo(instanceId, sessionId)
+  } catch (error) {
+    log.error("Failed to project synchronous transcript page", { instanceId, sessionId, error })
+    const watched = activeSessionId().get(instanceId) === sessionId || isSessionTranscriptVisible(instanceId, sessionId)
+    if (watched && isLatestWindow(messageStoreBus.getOrCreate(instanceId).getMessageWindow(sessionId))) {
+      const signal = serverEvents.signalForInstance(instanceId)
+      void loadMessages(instanceId, sessionId, { force: true, signal }).catch((reloadError) => {
+        log.warn("Failed to reload transcript after synchronous projection error", { instanceId, sessionId, error: reloadError })
+      })
+    } else if (messagesLoaded().get(instanceId)?.has(sessionId)) {
+      invalidateSessionMessageLoad(instanceId, sessionId)
+    }
+  }
 }
 
 // One stable, explicitly chunk-safe publication identity for ordinary replay.
@@ -2351,6 +2685,9 @@ const publishTranscriptChunk: NonNullable<OpenCodeDataEventAdmission["publicatio
 function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const instance = instances().get(instanceId)
   if (!instance?.client) return
+  // The catalog consumes the title directly. The SDK's rename reducer instead
+  // fetches SessionInfo even for unseen transcripts, which have no use for it.
+  if (event.type === "session.renamed") return
   observePendingCompaction(instanceId, event)
   const sessionId = "sessionID" in event.data && typeof event.data.sessionID === "string"
     ? event.data.sessionID
@@ -2463,6 +2800,20 @@ setTranscriptProjectionGates({
   invalidateInactiveLoadedSession: (instanceId, sessionId) => {
     if (messagesLoaded().get(instanceId)?.has(sessionId)) invalidateSessionMessageLoad(instanceId, sessionId)
   },
+  reloadFailedProjection: (instanceId, sessionId) => {
+    const signal = serverEvents.signalForInstance(instanceId)
+    void loadMessages(instanceId, sessionId, { force: true, signal }).catch((error) => {
+      log.warn("Failed to reload transcript after projection retries exhausted", { instanceId, sessionId, error })
+    })
+  },
+  onResyncedPage: (instanceId, sessionId, data) => {
+    publishSynchronousPage(instanceId, sessionId, data, {
+      preserveOmitted: false,
+      confirmPending: true,
+      updateUsage: true,
+    })
+    schedulePendingRequestReconciliation(instanceId)
+  },
   onProjectedUsage: updateSessionInfo,
   // Frame publications always keep omitted history; only their confirmation
   // flag varies (projectOpenCodeMessages takes preserveOmitted first).
@@ -2503,6 +2854,11 @@ export {
   cancelRestoreCreationRequest,
   disposeRestoreCreatedInstance,
   releaseRestoreCreatedInstance,
+  cancelUnattachedWorkspaceCreations,
+  holdWorkspaceCommits,
+  pendingWorkspaceCommit,
+  resumeWorkspaceCreations,
+  workspaceOpeningSignal,
   claimRestoreCreatedInstanceForUser,
   waitForInitialWorkspaceLoad,
   waitForInstanceReady,
@@ -2510,6 +2866,7 @@ export {
   waitForInstanceInitialSessionHydration,
   waitForInstanceWorkspaceMetadataHydration,
   getExistingInstanceForFolder,
+  refreshWorkspaceList,
   updateProjectNameForFolder,
   closeWorkspace,
   trackWorkspaceClose,
@@ -2531,7 +2888,6 @@ export {
   removePermissionFromQueue,
   markPermissionReplied,
   hasRepliedPermission,
-  togglePermissionAutoAcceptForSession,
   clearPermissionQueue,
   sendPermissionResponse,
   setActivePermissionIdForInstance,
@@ -2544,6 +2900,7 @@ export {
   disconnectedInstance,
   acknowledgeDisconnectedInstance,
   reconcilePendingSessionIndicators,
+  needsPendingRequestLiveness,
   reconcilePendingRequestLiveness,
   syncPendingRequests,
   invalidatePendingRequestSync,
@@ -2552,3 +2909,4 @@ export {
   handleInstanceInvalidation,
   clearReloadableInstanceState,
 }
+import { clearSessionListView } from "./session-list-view"

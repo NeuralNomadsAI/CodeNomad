@@ -57,7 +57,7 @@ for (const gesture of ["button", "double Escape"] as const) {
 }
 
 for (const rebound of [false, true]) {
-  test(`home Escape dismissal stays separate from ${rebound ? "rebound" : "default"} session abort and respects nested dialogs`, async () => {
+  test(`empty-tab Escape stays separate from ${rebound ? "rebound" : "default"} session abort and respects nested dialogs`, async () => {
     const page = await browser.newPage({ locale: "en-US" })
     const interrupts: string[] = [], errors: string[] = []
     page.on("pageerror", error => errors.push(error.message))
@@ -82,7 +82,7 @@ for (const rebound of [false, true]) {
       if (rebound) {
         await page.keyboard.press(abortKey)
         await page.keyboard.press(abortKey)
-        assert.equal(await page.locator(".folder-home-root").count(), 1, "custom abort never dismisses home")
+        assert.equal(await page.locator(".folder-home-root").count(), 1, "custom abort keeps the empty tab selected")
       }
       await page.evaluate(() => (window as any).fixture.setRecording(true))
       await page.keyboard.press("Escape")
@@ -96,40 +96,21 @@ for (const rebound of [false, true]) {
         document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }))
       })
       await page.keyboard.press("Escape")
-      assert.equal(await page.locator(".folder-home-root").count(), 1, "first Escape only arms home dismissal")
-      await page.locator(".folder-home-root").dispatchEvent("keydown", { key: "Escape", repeat: true })
-      assert.equal(await page.locator(".folder-home-root").count(), 1, "holding Escape never confirms dismissal")
       await page.keyboard.press("Escape")
-      assert.equal(await page.locator(".folder-home-root").count(), 0)
-      assert.equal(await page.locator("textarea.prompt-input").count(), 1, "existing project composer returns")
-      assert.equal(await page.evaluate(() => (window as any).fixture.selected()), "ses_parent")
-      assert.deepEqual(interrupts, [], "home dismissal never aborts the hidden session")
-
-      await page.keyboard.press("Control+n")
-      await page.locator(".folder-home-root").waitFor()
-      await page.keyboard.press("Escape")
-      await page.getByRole("button", { name: "Clone Git Repo", exact: true }).click()
+      assert.equal(await page.locator(".folder-home-root").count(), 1, "Escape leaves the empty tab open")
+      await page.getByRole("button", { name: "Clone repository", exact: true }).click()
       await page.getByRole("dialog").waitFor()
       await page.keyboard.press("Escape")
       await page.getByRole("dialog").waitFor({ state: "hidden" })
       assert.equal(await page.locator(".folder-home-root").count(), 1, "nested dialog owns its Escape")
       await page.keyboard.press("Escape")
-      assert.equal(await page.locator(".folder-home-root").count(), 1, "nested dismissal clears the previous home confirmation")
-      await page.keyboard.press("Escape")
+      assert.equal(await page.locator(".folder-home-root").count(), 1)
+      await page.keyboard.press("Control+w")
       assert.equal(await page.locator(".folder-home-root").count(), 0)
       assert.deepEqual(interrupts, [])
-
-      await page.evaluate(() => (window as any).fixture.select("info"))
-      await page.keyboard.press("Control+n")
-      await page.locator(".folder-home-root").waitFor()
-      await page.keyboard.press("Escape")
-      assert.equal(await page.locator(".folder-home-root").count(), 1, "home dismissal does not require an active conversation")
-      await page.keyboard.press("Escape")
-      assert.equal(await page.locator(".folder-home-root").count(), 0)
-      await page.evaluate(() => (window as any).fixture.select("ses_parent"))
       await page.locator("textarea.prompt-input").focus()
       await page.keyboard.press(abortKey)
-      assert.deepEqual(interrupts, [], "home presses do not prime session abort")
+      assert.deepEqual(interrupts, [], "empty-tab presses do not prime session abort")
       const response = page.waitForResponse(response => response.url().includes("/api/session/ses_parent/interrupt"))
       await page.keyboard.press(abortKey)
       await response

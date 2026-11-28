@@ -27,12 +27,25 @@ export function selectWorkspaceFamilyIds(
 ): Set<string> {
   const directories = workspaceSessionDirectories(folder, worktrees)
   const byId = new Map([...members].map((member) => [member.id, member]))
+  const rootsById = new Map<string, string>()
   const rootOf = (id: string): string => {
+    const cached = rootsById.get(id)
+    if (cached !== undefined) return cached
     const seen = new Set<string>()
     let member = byId.get(id)!
     while (member.parentId && byId.has(member.parentId) && !seen.has(member.id)) {
+      const known = rootsById.get(member.id)
+      if (known !== undefined) {
+        for (const traversed of seen) rootsById.set(traversed, known)
+        return known
+      }
       seen.add(member.id)
       member = byId.get(member.parentId)!
+    }
+    // The existing cycle projection uses the first repeated member for each path.
+    if (!seen.has(member.id)) {
+      rootsById.set(member.id, member.id)
+      for (const traversed of seen) rootsById.set(traversed, member.id)
     }
     return member.id
   }
@@ -47,8 +60,9 @@ export function selectWorkspaceSessionFamilies(
   inventory: SessionInfo[],
   folder: string,
   worktrees: WorktreeDescriptor[],
+  listDirectory: (session: SessionInfo) => string | undefined = () => undefined,
 ): SessionInfo[] {
   const ids = selectWorkspaceFamilyIds(inventory.map((session) => ({ id: session.id, parentId: session.parentID,
-    directory: session.location.directory })), folder, worktrees)
+    directory: listDirectory(session) ?? session.location.directory })), folder, worktrees)
   return inventory.filter((session) => ids.has(session.id))
 }

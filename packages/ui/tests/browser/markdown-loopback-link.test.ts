@@ -20,9 +20,16 @@ after(async () => { await browser?.close() })
 
 const created = (page: Page) => page.evaluate(() => (window as any).fixture.created()) as Promise<Array<{ sessionId: string; url: string }>>
 
-test("loopback link clicks open the session preview only once availability is known", async () => {
+test("loopback link clicks open the session preview only once availability is known", { timeout: 60000 }, async () => {
   const page = await browser.newPage()
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  let unavailable = false
   try {
+    await page.route("**/api/meta", async route => {
+      await pending
+      await route.fulfill({ json: { previewsUnavailable: unavailable } })
+    })
     await page.goto(url)
     const loopback = page.locator('#markdown-root a[href="http://localhost:3000/"]')
     await loopback.waitFor()
@@ -33,7 +40,8 @@ test("loopback link clicks open the session preview only once availability is kn
     await loopback.click()
     assert.deepEqual(await created(page), [])
 
-    await page.evaluate(() => (window as any).fixture.resolvePreviewsAvailable())
+    release()
+    await page.waitForFunction(() => document.querySelector('#markdown-root a[href="http://localhost:3000/"]')?.getAttribute("title")?.includes("web preview"))
 
     // The escape hatch is discoverable on intercepted links only; an
     // author-provided title wins and non-loopback links stay untouched.
@@ -59,12 +67,14 @@ test("loopback link clicks open the session preview only once availability is kn
     // Through Remote Control with the host's web previews off, loopback
     // links keep their default browser behavior and our tooltip clears
     // without touching an author's title.
-    await page.evaluate(() => (window as any).fixture.setPreviewsUnavailable())
+    unavailable = true
+    await page.evaluate(() => (window as any).fixture.refresh())
     await page.waitForFunction(() => (document.querySelector('#markdown-root a[href="http://localhost:3000/"]') as HTMLAnchorElement).title === "")
     assert.equal(await page.locator('#markdown-root a[href="http://localhost:9998/"]').getAttribute("title"), "Custom title")
     await page.locator('#markdown-root a[href="http://localhost:9999/"]').click()
     assert.deepEqual(await created(page), [{ sessionId: "session-link", url: "http://localhost:3000/" }])
   } finally {
+    release()
     await page.close()
   }
 })

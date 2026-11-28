@@ -3,13 +3,14 @@ import type { Plugin } from "@opencode/plugin"
 import { withHistoryDatabase } from "./history-database"
 import { storageDirectory } from "./storage-path"
 import type { HistoryScope } from "./history-store"
-import type { ImagesConversationInput, ImagesConversationResult } from "./assets-gallery-contract"
+import type { ImagesConversationNativeInput, ImagesConversationResult } from "./assets-gallery-contract"
 
 // The location's Images conversation (dev-docs/SESSION_PRUNING_RPC.md#images-conversation):
 // the newest unarchived root session marked `codenomad.companion: images`.
 export const CONVERSATION_SCAN = 20000
 export const COMPANION_METADATA = { "codenomad.companion": "images" } as const
-type Create = (input: { title?: string; agent?: string; model?: ImagesConversationInput["model"]; metadata: typeof COMPANION_METADATA }) => Promise<{ id: string }>
+type Create = (input: Pick<ImagesConversationNativeInput, "title" | "agent" | "model" | "permissions">
+  & { metadata: typeof COMPANION_METADATA }) => Promise<{ id: string }>
 
 /** Authoritative lookup with `ownedSession`'s location predicate, over at most 20,000 root sessions. */
 export function lookupImagesConversation(db: DatabaseSync, scope: HistoryScope): ImagesConversationResult {
@@ -41,7 +42,7 @@ async function exclusive<T>(key: string, run: () => Promise<T>) {
 }
 
 /** The RPC handler: storage or authority that cannot be read or fails leaves the conversation `unknown`; cancellation still rejects. */
-export async function imagesConversationRpc(ctx: Plugin.Context, input: ImagesConversationInput, signal: AbortSignal): Promise<ImagesConversationResult> {
+export async function imagesConversationRpc(ctx: Plugin.Context, input: ImagesConversationNativeInput, signal: AbortSignal): Promise<ImagesConversationResult> {
   signal.throwIfAborted()
   try {
     const result = await withHistoryDatabase(ctx, undefined, signal,
@@ -53,7 +54,7 @@ export async function imagesConversationRpc(ctx: Plugin.Context, input: ImagesCo
 }
 
 /** `lookup` reads; `open` creates under the lock only when the lookup is complete and absent; `new` always creates. */
-export async function imagesConversation(db: DatabaseSync, scope: HistoryScope, input: ImagesConversationInput, create: Create, signal: AbortSignal): Promise<ImagesConversationResult> {
+export async function imagesConversation(db: DatabaseSync, scope: HistoryScope, input: ImagesConversationNativeInput, create: Create, signal: AbortSignal): Promise<ImagesConversationResult> {
   signal.throwIfAborted()
   if (input.mode === "lookup") return lookupImagesConversation(db, scope)
   const file = String(db.prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file ?? "")
@@ -65,7 +66,7 @@ export async function imagesConversation(db: DatabaseSync, scope: HistoryScope, 
       if (found.status !== "absent") return found
     }
     const session = await create({ ...(input.title ? { title: input.title } : {}), ...(input.agent ? { agent: input.agent } : {}),
-      ...(input.model ? { model: input.model } : {}), metadata: COMPANION_METADATA })
+      ...(input.model ? { model: input.model } : {}), ...(input.permissions ? { permissions: input.permissions } : {}), metadata: COMPANION_METADATA })
     return { status: "found", sessionID: String(session.id), created: true }
   })
 }

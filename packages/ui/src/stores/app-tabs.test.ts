@@ -6,13 +6,15 @@ import { HttpResponseError } from "../lib/retryable-file-search"
 import { serverApi } from "../lib/api-client.ts"
 import type { Instance } from "../types/instance.ts"
 import {
-  activeAppTabId,
+  activeAppTab, activeAppTabId, allowsAutomaticLocalSetup,
   appTabs,
   attachInstanceTab,
   closeInstanceTab,
   detachInstanceTab,
   setAppTabOrder,
+  selectAppTab,
   selectInstanceTab,
+  openBlankTab, closeBlankTab, replaceBlankTab,
 } from "./app-tabs.ts"
 import {
   createRestorableSessionPreservation,
@@ -30,6 +32,7 @@ import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
 import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events.ts"
 import { createTextAttachment } from "../types/attachment.ts"
+import { captureState } from "../lib/hooks/use-app-session-capture"
 import { getAttachments, hydrateSessionAttachments } from "./attachments.ts"
 import {
   activeSessionId,
@@ -60,10 +63,12 @@ function workspace(folder: string): RestorableWorkspaceTabState {
 }
 
 function captureTabs(): RestorableSessionState {
-  const tabs = appTabs().map((tab) => tab.kind === "instance"
+  const restorable = appTabs()
+  const tabs = restorable.map((tab) => tab.kind === "instance"
     ? workspace(tab.instance.folder)
-    : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
-  return { tabs, activeTabIndex: appTabs().findIndex((tab) => tab.id === activeAppTabId()) }
+    : tab.kind === "remote-restore" ? tab.snapshot
+    : tab.kind === "blank" ? { kind: "blank" as const } : { kind: "sidecar" as const, sidecarId: tab.sidecarTab.sidecarId })
+  return { tabs, activeTabIndex: restorable.findIndex((tab) => tab.id === activeAppTabId()) }
 }
 
 describe("renderer-local workspace tabs", () => {
@@ -76,6 +81,72 @@ describe("renderer-local workspace tabs", () => {
     toast.custom = () => "test-toast"
   })
   afterEach(() => { serverApi.deleteWorkspace = originalDelete; toast.custom = originalToast })
+  it("allows automatic local setup only in a blank tab not browsing a saved server", () => {
+    openBlankTab()
+    const tab = activeAppTab()!
+    try {
+      assert.equal(allowsAutomaticLocalSetup(tab), true)
+      openBlankTab({ id: "remote", baseUrl: "https://server.example", skipTlsVerify: false })
+      assert.equal(activeAppTab()?.id, tab.id)
+      assert.equal(allowsAutomaticLocalSetup(activeAppTab()!), false)
+    } finally { closeBlankTab(tab.id) }
+  })
+  it("opens a saved server in the first empty tab when a project is active", () => {
+    const existing = instance("server-open-fallback")
+    addInstance(existing)
+    openBlankTab()
+    const first = activeAppTabId()!
+    openBlankTab()
+    const second = activeAppTabId()!
+    try {
+      selectInstanceTab(existing.id)
+      const server = { id: "remote", baseUrl: "https://server.example", skipTlsVerify: false }
+      openBlankTab(server)
+      assert.equal(activeAppTabId(), first)
+      assert.deepEqual(appTabs().filter(tab => tab.kind === "blank").map(tab => [tab.id, tab.server]), [
+        [first, server], [second, undefined],
+      ])
+    } finally {
+      closeBlankTab(first)
+      closeBlankTab(second)
+      removeInstance(existing.id, { authoritative: false })
+    }
+  })
+  it("creates, captures, fills and closes empty tabs independently", () => {
+    const existing = instance("before-blank")
+    const chosen = instance("blank-choice")
+    addInstance(existing)
+    addInstance(chosen)
+    let deletes = 0
+    serverApi.deleteWorkspace = async () => { deletes++ }
+    selectInstanceTab(existing.id)
+    openBlankTab()
+    const first = activeAppTabId()!
+    let second: string | undefined
+    try {
+      openBlankTab()
+      second = activeAppTabId()!
+      assert.notEqual(second, first)
+      const captured = captureState(new Map())
+      assert.deepEqual(captured.tabIds, [`instance:${existing.id}`, first, second])
+      assert.deepEqual(captured.state.tabs.map(tab => tab.kind), ["workspace", "blank", "blank"])
+      assert.equal(captured.state.activeTabIndex, 2)
+      selectInstanceTab(chosen.id)
+      replaceBlankTab(first, `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`, second])
+      replaceBlankTab(first, `instance:${existing.id}`)
+      selectAppTab(second)
+      closeBlankTab(second)
+      assert.equal(activeAppTabId(), `instance:${chosen.id}`)
+      assert.deepEqual(appTabs().map(tab => tab.id), [`instance:${existing.id}`, `instance:${chosen.id}`])
+      assert.equal(deletes, 0)
+    } finally {
+      closeBlankTab(first)
+      if (second) closeBlankTab(second)
+      removeInstance(chosen.id, { authoritative: false })
+      removeInstance(existing.id, { authoritative: false })
+    }
+  })
   it("keeps catalog additions and updates closed until explicitly attached", () => {
     const first = instance("catalog-first")
     const second = instance("catalog-second")

@@ -259,6 +259,12 @@ mod tests {
             assert!(authority
                 .resolve_access("owned_webview_zoom", label, label, &origin)
                 .is_some());
+            assert_eq!(
+                authority
+                    .resolve_access("start_native_window_drag", label, label, &origin)
+                    .is_some(),
+                !label.starts_with("remote-")
+            );
             assert!(
                 authority
                     .resolve_access("plugin:webview|set_webview_zoom", label, label, &origin)

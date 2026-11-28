@@ -68,7 +68,7 @@ const provider = createServer(async (request, response) => {
         const child = result(id)?.match(/working in the background \(sessionID: (ses_[A-Za-z0-9]+)\)/)?.[1]
         if (!child) return undefined
         const reports = body.messages.map(message => typeof message.content === "string" ? message.content : (message.content ?? []).map(part => part.text ?? "").join(""))
-          .flatMap(value => [...value.matchAll(/<subagent sessionID="(ses_[A-Za-z0-9]+)" state="(\w+)"[^>]*>\n([\s\S]*?)\n<\/subagent>/g)])
+          .flatMap(value => [...value.matchAll(/<(subagent|background-result) (?:kind="subagent" )?sessionID="(ses_[A-Za-z0-9]+)" state="(\w+)"[^>]*>\n([\s\S]*?)\n<\/\1>/g)].map(match => [match[0], ...match.slice(2)]))
           .filter(match => match[1] === child)
         // A report tagged running is intermediate: the child still owns background work.
         const final = reports.findLast(match => match[2] !== "running")

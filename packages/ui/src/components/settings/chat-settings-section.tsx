@@ -7,6 +7,7 @@ import { useConfig, type VisibilityPreference } from "../../stores/preferences"
 import { getMessageContentIcon } from "../message-content-icons"
 import {
   TRANSCRIPT_PRESETS,
+  transcriptCustomAvailable,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -21,23 +22,13 @@ export const ChatSettingsSection: Component = () => {
   const { t } = useI18n()
   const { preferences, updatePreferences } = useConfig()
 
-  const visibilityOptions = createMemo<SelectOption[]>(() => [
-    { value: "hidden", label: t("commands.common.hidden") },
-    { value: "collapsed", label: t("commands.common.collapsed") },
-    { value: "expanded", label: t("commands.common.expanded") },
-  ])
-
   const visibilityRows = createMemo(() => transcriptVisibilityRows(t))
   const currentPreset = createMemo(() => transcriptPreset(preferences()))
+  const presets = createMemo(() => transcriptCustomAvailable(preferences()) ? [...TRANSCRIPT_PRESETS, "custom" as const] : TRANSCRIPT_PRESETS)
 
   const setVisibilityRowMode = (row: VisibilityRow, mode: VisibilityPreference) => {
     updatePreferences(transcriptVisibilityPatch(preferences(), row, mode))
   }
-
-  const rowMode = (row: VisibilityRow) => transcriptVisibility(preferences(), row)
-
-  const selectedVisibilityOption = (mode: VisibilityPreference) =>
-    visibilityOptions().find((option) => option.value === mode)
 
   return (
     <div class="settings-section-stack chat-settings">
@@ -49,14 +40,14 @@ export const ChatSettingsSection: Component = () => {
         </div>
 
         <div class="settings-expansion-presets" aria-label={t("settings.behavior.expansionPresets.ariaLabel")}>
-          <For each={TRANSCRIPT_PRESETS}>
+          <For each={presets()}>
             {(preset) => (
               <button
                 type="button"
                 class="settings-expansion-preset"
                 data-selected={currentPreset() === preset ? "true" : "false"}
                 aria-pressed={currentPreset() === preset}
-                onClick={() => updatePreferences(transcriptPresetPatch(preset))}
+                onClick={() => { if (preset !== "custom" || currentPreset() !== "custom") updatePreferences(transcriptPresetPatch(preset, preferences())) }}
               >
                 <span class="settings-expansion-preset-title">{t(`settings.behavior.expansionPreset.${preset}.title`)}</span>
               </button>
@@ -71,7 +62,12 @@ export const ChatSettingsSection: Component = () => {
           </div>
           <For each={visibilityRows()}>
             {(row) => {
-              const selected = createMemo(() => selectedVisibilityOption(rowMode(row)))
+              const options = createMemo<SelectOption[]>(() => [
+                { value: "hidden", label: t(row.kind === "toolGroups" ? "commands.common.disabled" : "commands.common.hidden") },
+                { value: "collapsed", label: t("commands.common.collapsed") },
+                { value: "expanded", label: t("commands.common.expanded") },
+              ])
+              const selected = createMemo(() => options().find((option) => option.value === transcriptVisibility(preferences(), row)))
               return (
                 <div class="settings-expansion-row" role="row">
                   <div class="settings-expansion-row-label flex items-center gap-2" role="cell">
@@ -82,7 +78,7 @@ export const ChatSettingsSection: Component = () => {
                     <Select<SelectOption>
                       value={selected()}
                       onChange={(option) => option && setVisibilityRowMode(row, option.value)}
-                      options={visibilityOptions()}
+                      options={options()}
                       optionValue="value"
                       optionTextValue="label"
                       itemComponent={(itemProps) => (

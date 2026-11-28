@@ -9,15 +9,31 @@ Uzaktan Kontrol, eşleştirilmiş bir tarayıcının veya masaüstü istemcisini
 3. **Başka bir cihaz bağla** altında, QR kodunu tarayın veya **Bağlantıyı kopyala** öğesini seçin, ardından amaçlanan cihazda o tek kullanımlık bağlantıyı açın.
 4. Eşleştirilen tarayıcının site verilerini saklayın. Arka uç çalışırken yeniden bağlanmak için tünel adresini yeniden açın.
 
-Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Durdurma, arka uç kapatma ve tünel arızası, bekleyen eşleştirme bağlantılarını iptal eder.
+Bağlantı **beş dakika** süreyle geçerlidir ve **bir kez** başarılı olur. Bunu bir kimlik bilgisi olarak değerlendirin: Bunu tüketen herkes eşleştirilmiş bir cihaz haline gelebilir. Kod, sorgu dizesinde değil, URL parçasında bulunur. **Yeni eşleştirme bağlantısı oluştur**, önceki kullanılmayan bağlantıyı anında geçersiz kılar. Arka uç kapatma bekleyen eşleştirme bağlantısını iptal eder; durdurma ve tünel arızası bir tünel bağlantısını iptal eder.
 
-Başka masaüstü CodeNomad istemcisini eşleştirmek için onun ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin, bağlantıyı **Sunucu URL'si** alanına yapıştırıp **Bağlan** eylemini seçin. Eşleştirme bağlantısı **Kaydet** ile bile penceresini açar, çünkü bağlantıyı açmak kodu tüketir. Yer imi yalnızca tünelin origin adresini saklar; kod saklanmaz. Eşleştirme bağlantılarında TLS doğrulaması etkin kalır.
+Başka bir masaüstü CodeNomad uygulamasında eşleştirme bağlantısını şu alana yapıştırın: **Ayarlar → Sunucular → Sunucu adresi veya bağlantısı**.
+
+Yeniden eşleştirmek için yeni bağlantıyı sunucunun veya projenin bağlantı formuna yapıştırın.
+
+## Doğrudan HTTPS ile eşleştirin {#direct-https}
+
+Tünel engellendiğinde ama arka uca güvenilir HTTPS ile ulaşılabildiğinde, örneğin gerçek sertifikalı bir ters proxy üzerinden, cihazlar bu adreste eşleştirilebilir. Uygun adresler bu arka ucun kendi HTTPS adresleri ve `CODENOMAD_ALLOWED_ORIGINS` içindeki HTTPS origin adresleridir (bkz. [İzin verilen kaynaklar](remote-access.md#upgrading)); geri döngü adları ve düz HTTP asla eşleştirmez. Uzaktan Kontrolün başlatılması gerekmez.
+
+1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesini açın.
+2. **Doğrudan HTTPS eşleştirme** altında, birden fazlaysa **HTTPS adresi** seçin, ardından **HTTPS eşleştirme bağlantısı oluştur** öğesini seçin.
+3. Bağlantıyı, tünel bağlantısında olduğu gibi cihazda açın. Bağlantıya başka bir sayfadan tıklayabilirsiniz.
+
+Bağlantı aynı beş dakika ve tek kullanım kurallarına uyar ve kullanılmayan bağlantının yerini alır; tekrarlanan yanlış kodlar sınırlandırılır. Ters proxy güvenilir TLS'yi sonlandırmalı, özgün `Host` ve `Origin` başlıklarını iletmeli ve arka uca geri döngü veya korumalı bir ağ üzerinden ulaşmalıdır.
+
+Böyle bir cihaz yalnızca HTTPS adresi üzerinden bağlanır, asla tünel üzerinden bağlanmaz; **Eşleştirilmiş cihazlar** bu adresi adının altında gösterir. Uzaktan Kontrolü durdurmak bağlantıyı iptal etmez ve bu cihazların bağlantısını kesmez; **İptal et**, 30 gün kullanılmama, 32 cihaz sınırı veya adresin yapılandırmadan kaldırılması erişimlerini sonlandırır. Bu adreste iptal edilmiş veya süresi dolmuş bir cihaz kimlik bilgisi sunan tarayıcı sunucu parolasına geri dönemez: yeniden eşleştirin veya parolayla oturum açmak için site verilerini temizleyin.
+
+SideCar içeriğinin doğrudan HTTPS istisnası için [kullanılabilir özelliklere](#remote-surface) bakın. Eşleştirme, ana bilgisayardaki bir proxy üzerinden bile loopback ayrıcalığı vermez.
 
 ## Eşleştirilmiş cihazları yönetin {#paired-devices}
 
 1. Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** öğesine dönün.
 2. **Eşleştirilmiş cihazlar** ve **Son görülme** zamanlarını inceleyin. Her cihaz, onu eşleştiren platform ve tarayıcıya göre adlandırılır; örneğin `iPhone · Safari`.
-3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin.
+3. Artık bağlanmaması gereken cihaz için **İptal et** eylemini seçin. **İptal beklemede** görünüyorsa ana makineyi yeniden başlatmadan önce tekrar **İptal et** seçeneğini kullanın.
 
 İptal, cihazın mevcut HTTP/SSE bağlantılarını ve gelecekteki erişimini sonlandırır. Yeniden erişim için yeni bağlantıyla eşleştirin. Cihazın süresi **30 gün kullanılmadığında** dolar. **32 cihaz sınırında**, yeni eşleştirme en uzun süredir görülmeyen cihazın yerini alır ve bağlantılarını kapatır.
 
@@ -28,7 +44,7 @@ Doğrudan erişim parolasını değiştirmek cihazları **iptal etmez**. **Uzakt
 ### Yerinizi kaybetmeden yeniden eşleştirin {#re-pair}
 
 1. İstemci **Bu cihazı yeniden eşleştirin** gösterirse bu sayfayı açık bırakın.
-2. Ana bilgisayarda **Yeni eşleştirme bağlantısı oluştur** öğesini seçin ve **aynı istemci tarayıcısında/profilinde** açın. Kaydedilmiş bir masaüstü sunucusu için, yeni eşleştirme bağlantısını kullanarak yeniden bağlanın, böylece mevcut uzak pencere depolama alanı yeniden kullanılabilir.
+2. Ana bilgisayarda ilk bağlantı için yeni bir bağlantı oluşturun: tünel için **Yeni eşleştirme bağlantısı oluştur** öğesini seçin veya **Doğrudan HTTPS eşleştirme** bölümünde ilk **HTTPS adresi** değerini seçip **HTTPS eşleştirme bağlantısı oluştur** öğesini kullanın. Bağlantıyı aynı istemci tarayıcısında veya profilinde açın. Ayrı bir uzak pencere mevcut depolama alanını yeniden kullanır.
 3. Bekleme sayfasına dönün ve **Bağlantıyı kontrol et** öğesini seçin; sayfa yeniden odak kazandığında da kontrol tekrarlanır.
 
 Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarlamaz. Yeniden denemeden önce bir gönderme, yanıtlama veya silme işleminin etkili olup olmadığını kontrol edin. Doğrudan erişim parolası Uzaktan Kontrol eşleştirmesini kurtaramaz.
@@ -39,7 +55,7 @@ Kurtarma, açık sayfayı ve taslakları korur; başarısız bir eylemi tekrarla
 | --- | --- |
 | Uzaktan Kontrolü başlat | Bu arka ucu bağlar ve sonraki başlatmalar için seçimi hatırlar. |
 | Uzak tarayıcıyı kapatın | Ana bilgisayar arka ucunu durdurmaz veya cihazı iptal etmez. |
-| Uzaktan Kontrolü durdur | Erişimi keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
+| Uzaktan Kontrolü durdur | Tünel erişimini keser ve başlangıçta otomatik sürdürme tercihini temizler; cihaz kayıtlarını korur. |
 | Arka uç kapatma / son masaüstü penceresi kapatılır ve uygulama sonlandırılır | Uzaktan Kontrol çevrimdışı oluyor. OpenCode'un paylaşılan hizmeti çalışmaya devam edebilir ancak bu kullanıcı arayüzüne durdurulmuş bir arka uç aracılığıyla hizmet veremez. |
 | Uzaktan Kontrol başlatıldıktan sonra başlat | Yeni bir eşleştirme bağlantısı vermeden arka planda yeniden bağlanır. Hiç başlatılmayan kurulumlar kendilerini etkinleştirmez. |
 
@@ -54,13 +70,15 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Normal kimlik doğrulamalı kullanıcı arayüzü, çalışma alanları, konuşmalar ve SSE | Eşleştirilmiş bir cihazda kullanılabilir. |
 | Parolayla giriş/çıkış, parola değişiklikleri, yerel belirteç önyüklemesi | Mevcut değil; doğrudan kimlik doğrulama devre dışı bırakılsa bile cihaz kimlik bilgileri gereklidir. |
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
-| Masaüstü uzak pencere/sunucu yönetimi ve proxy rotaları | Kullanılamıyor (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| SideCar **içerik proxy'si** | SideCar WebSocket'leri gibi loopback gerektirir (`/sidecars/`). `/api/sidecars` kayıt API'leri, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. |
-| Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
+| Kayıtlı sunucular ve arka uç aktarımı | Özellik ve ana bilgisayar yetenekleri izin verdiğinde kimliği doğrulanmış uzak istemciler tüm kayıtlı sunucuları kullanabilir/yönetebilir. Yeni sunucu parolaları/eşleştirme bağlantıları düz LAN HTTP yerine Uzaktan Kontrol veya HTTPS gerektirir. [Kayıtlı sunuculara](remote-access.md#saved-servers) bakın. |
+| Masaüstü uzak pencereleri ve pencere proxy'si | Yalnızca ana bilgisayarda (`/api/remote-proxy/`). |
+| SideCar içeriği ve WebSocket'leri (`/sidecars/`) | Tünel üzerinden kullanılamaz. Loopback kullanın veya ana bilgisayarda [SideCar için doğrudan HTTPS erişimini](browser-sidecars.md#register-sidecar) etkinleştirin. |
+| SideCar kaydı (`/api/sidecars`) | Eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan istemciler için kullanılabilir. |
+| Web önizleme içeriği | [Bir oturum tarayıcısı açın](browser-sidecars.md#session-browser) |
 | Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
-| WebSocket yükseltmeleri | Yalnızca web önizlemeleri için kullanılabilir. |
+| WebSocket yükseltmeleri | Web önizlemelerinde ve eşleştirilmiş cihazlarda [canlı sesli konuşmalarda](voice.md#conversation) kullanılabilir. |
 
-Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [Yükseltme](remote-access.md#upgrading). Uzaktan Kontrol web önizlemeleri, adreslerindeki yetenek belirtecini kullanır ve ana bilgisayarda etkin oldukları sürece kullanılabilir kalır; bu adresi gizli tutun.
+Ana bilgisayara özel proxy/WebSocket yüzeyleri ve Uzaktan Kontrol yönetimi (`/api/remote-control/`) için ana bilgisayarda loopback bağlantısı kullanın. Doğrudan LAN erişiminde de bu işlemler loopback gerektirir; bkz. [İzin verilen kaynaklar](remote-access.md#upgrading).
 
 ## Aktarma ve gizlilik {#relay-privacy}
 

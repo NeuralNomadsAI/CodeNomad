@@ -1,21 +1,24 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { captureBackendOperation } from "../../../lib/backend-operation"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
 import { getDefaultToolAction, getToolName, hasVisibleText, limitToolTitleForRender, readToolStatePayload } from "../utils"
-import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
+import { TASK_PANE_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
-import { setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
-import { waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
+import { sessionTranscriptBinding, setSessionTranscriptVisible } from "../../../stores/session-transcript-memory"
+import { instances, waitForInstanceWorkspaceMetadataHydration } from "../../../stores/instances"
 import { useActiveSessionMessageLoad } from "../../../lib/hooks/use-active-session-message-load"
 import { getMessageContentIcon } from "../../message-content-icons"
 import { getTaskToolSearchText } from "../search-text"
 import { copyTextChunksToClipboard, copyToClipboard } from "../../../lib/clipboard"
 import LoadErrorState from "../../load-error-state"
-import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { collectChildTaskSteps, getLegacyTaskSummary, getTaskOutputCopyText, getTruncatedTaskStepTitleCopyText, isTaskScanTruncated, isTaskStepListTruncated, resolveTaskStepTruncation, stringifyLegacyTaskSummary, TASK_STEP_MOUNT_LIMIT, TASK_STEP_REVEAL_STEP, TASK_STEP_RENDER_LIMIT } from "./task-summary"
+import { getRevealedRecordText, revealHiddenRecordText } from "../../../stores/message-v2/record-display-cache"
+import { useI18n } from "../../../lib/i18n"
 import { getMessageWindowPageKey } from "../../message-history-pagination"
 import { useTaskStepCopy } from "./task-copy"
 import { getCanonicalToolName } from "../tool-presentation"
@@ -206,6 +209,21 @@ function describeToolTitle(item: TaskSummaryItem): string {
   return getDefaultToolAction(item.tool)
 }
 
+/** Placeholder at the steps gap: the list mounts its newest window, the reveal owns the rest in place. */
+function TaskStepsGap(props: { hidden: number; onReveal: () => void }) {
+  const { t } = useI18n()
+  return (
+    <div class="message-hidden-parts">
+      <span class="message-hidden-parts-label">
+        {t(props.hidden === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", { count: props.hidden })}
+      </span>
+      <button type="button" class="button-secondary message-hidden-parts-button" onClick={props.onReveal}>
+        {t("messageBlock.hiddenParts.show", { count: Math.min(props.hidden, TASK_STEP_REVEAL_STEP) })}
+      </button>
+    </div>
+  )
+}
+
 export const taskRenderer: ToolRenderer = {
   tools: ["task"],
   getSearchText: getTaskToolSearchText,
@@ -222,7 +240,7 @@ export const taskRenderer: ToolRenderer = {
     const { input } = readToolStatePayload(state)
     return describeTaskTitle(input, toolName())
   },
-  renderBody({ toolState, toolCall, sessionId, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, t, onContentRendered }) {
+  renderBody({ toolState, toolCall, sessionId, instanceId, isActive, renderToolCall, messageVersion, partVersion, scrollHelpers, renderMarkdown, textRevealTarget, t, onContentRendered }) {
     const store = messageStoreBus.getOrCreate(instanceId)
 
     const childSessionId = createMemo(() => {
@@ -245,10 +263,13 @@ export const taskRenderer: ToolRenderer = {
     function retryChildSessionLoad() {
       const id = childSessionId()
       if (!id || isActive?.() === false) return
-      void loadMessages(instanceId, id, { force: true }).catch(() => {})
+      const operation = captureBackendOperation(instanceId)
+      if (!operation.current()) return
+      void loadMessages(instanceId, id, { force: true, signal: operation.signal }).catch(() => {})
     }
 
     useActiveSessionMessageLoad({
+      captureOperation: captureBackendOperation,
       isActive: () => Boolean(childSessionId()) && isActive?.() !== false,
       instanceId: () => instanceId,
       session: () => {
@@ -268,11 +289,14 @@ export const taskRenderer: ToolRenderer = {
       waitForHydration: waitForInstanceWorkspaceMetadataHydration,
     })
 
+    const childTranscriptBinding = createMemo(() => sessionTranscriptBinding(instanceId, childSessionId()))
+    const childOwner = createMemo(() => instances().get(instanceId)?.client)
     createEffect(() => {
       const id = childSessionId()
-      if (!id || isActive?.() === false) return
-      untrack(() => setSessionTranscriptVisible(instanceId, id, true))
-      onCleanup(() => setSessionTranscriptVisible(instanceId, id, false))
+      const client = childOwner()
+      if (!id || !client || !childTranscriptBinding() || isActive?.() === false) return
+      const operation = captureBackendOperation(instanceId, undefined, () => instances().get(instanceId)?.client === client)
+      onCleanup(untrack(() => setSessionTranscriptVisible(instanceId, id, operation)))
     })
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
@@ -438,6 +462,77 @@ export const taskRenderer: ToolRenderer = {
         return { id, tool, input: fallbackInput, metadata: metadataFromEntry, state: stateValue, status: statusValue, title }
       })
     })
+    // The steps list mounts only its newest window: its nested scroller pays
+    // layout per mounted row, so the omitted rows stay in the store until the
+    // gap's reveal mounts them. Reveal state lives in the record display
+    // cache, so a recycled card keeps what its reader expanded. The window's
+    // start may slide forward only up to the boundary of what the reader is
+    // actually reading — the first row still in sight, or nearer still a row
+    // holding focus or the selection, wherever it sits. The boundary is read
+    // from the DOM on each window change, so it survives the scan bound
+    // dropping older rows and never depends on a remembered anchor; the scan
+    // bound itself caps what a held window can mount.
+    let stepsContainerEl: HTMLDivElement | undefined
+    const registerStepsContainer = (element: HTMLDivElement) => {
+      stepsContainerEl = element
+      scrollHelpers?.registerContainer(element)
+    }
+    const stepsBoundaryIndex = (rowIndexOf: (row: HTMLElement) => number) => {
+      const container = stepsContainerEl
+      if (!container) return Number.POSITIVE_INFINITY
+      const rows = Array.from(container.querySelectorAll<HTMLElement>(".tool-call-task-summary > .tool-call, .tool-call-task-summary > .tool-call-task-item"))
+      if (rows.length === 0) return Number.POSITIVE_INFINITY
+      const top = container.getBoundingClientRect().top
+      let boundaryRow: HTMLElement | undefined
+      for (const row of rows) {
+        if (row.getBoundingClientRect().bottom > top) { boundaryRow = row; break }
+      }
+      const doc = container.ownerDocument
+      for (const node of [doc.activeElement, doc.getSelection()?.anchorNode ?? null]) {
+        for (let element = node; element && element !== container; element = element.parentElement) {
+          if (element instanceof HTMLElement && element.matches(".tool-call, .tool-call-task-item")) {
+            // Only rows of this pane count: a focus elsewhere in the parent
+            // card resolves to no row here, never to a negative index.
+            const index = rows.indexOf(element)
+            if (index >= 0 && (!boundaryRow || index < rows.indexOf(boundaryRow))) boundaryRow = element
+            break
+          }
+        }
+      }
+      if (!boundaryRow) return Number.POSITIVE_INFINITY
+      return Math.max(rowIndexOf(boundaryRow), 0)
+    }
+    const stepsRevealTarget = () => textRevealTarget("task:steps")
+    const revealSteps = () => revealHiddenRecordText(stepsRevealTarget())
+    const mountedStepLimit = createMemo(() => TASK_STEP_MOUNT_LIMIT + getRevealedRecordText(stepsRevealTarget()) * TASK_STEP_REVEAL_STEP)
+    const windowStart = (total: number, rowIndexOf: (row: HTMLElement) => number) => {
+      const desired = Math.max(0, total - mountedStepLimit())
+      return Math.min(desired, stepsBoundaryIndex(rowIndexOf))
+    }
+    const visibleChildToolKeys = createMemo((previous?: { keys: string[]; hidden: number }) => {
+      const keys = childToolKeys()
+      const rowIndexOf = (row: HTMLElement) => {
+        const partId = row.getAttribute("data-part-id")
+        return partId ? keys.findIndex(key => splitToolKey(key)?.partId === partId) : -1
+      }
+      const start = windowStart(keys.length, rowIndexOf)
+      const next = { keys: keys.slice(start), hidden: start }
+      if (previous && previous.hidden === next.hidden && previous.keys.length === next.keys.length
+        && previous.keys.every((key, index) => key === next.keys[index])) return previous
+      return next
+    })
+    const visibleLegacyItems = createMemo((previous?: { items: TaskSummaryItem[]; hidden: number }) => {
+      const items = legacyItems()
+      const rowIndexOf = (row: HTMLElement) => {
+        const id = row.getAttribute("data-task-id")
+        return id ? items.findIndex(item => item.id === id) : -1
+      }
+      const start = windowStart(items.length, rowIndexOf)
+      const next = { items: items.slice(start), hidden: start }
+      if (previous && previous.hidden === next.hidden && previous.items.length === next.items.length
+        && previous.items.every((item, index) => item === next.items[index])) return previous
+      return next
+    })
     // Coverage controls full-copy traversal, not a claim about omitted tool
     // rows. Native cursors can point to an empty boundary page; scan budgets
     // and historical windows likewise cannot prove render-limit overflow.
@@ -451,6 +546,7 @@ export const taskRenderer: ToolRenderer = {
     const stepCount = () => stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length
 
     const childTaskCopy = useTaskStepCopy({
+      captureOperation: signal => captureBackendOperation(instanceId, signal),
       childSessionId,
       isActive: () => isActive?.() ?? true,
       beginTraversal: id => beginMessageHistoryTraversal(instanceId, id),
@@ -483,7 +579,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: promptContent()!,
-                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+                renderLimit: TASK_PANE_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:prompt",
                 disableScrollTracking: true,
                 // Always use the normal markdown render path for prompt (even while running)
@@ -535,13 +631,16 @@ export const taskRenderer: ToolRenderer = {
                 fallback={
                   <div
                     class="message-text tool-call-markdown tool-call-task-container"
-                    ref={scrollHelpers?.registerContainer}
+                    ref={registerStepsContainer}
                     onScroll={
                       scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                     }
                   >
                     <div class="tool-call-task-summary">
-                      <For each={legacyItems()}>
+                      <Show when={visibleLegacyItems().hidden > 0}>
+                        <TaskStepsGap hidden={visibleLegacyItems().hidden} onReveal={revealSteps} />
+                      </Show>
+                      <For each={visibleLegacyItems().items}>
                         {(item) => {
                           const icon = getMessageContentIcon(item.tool)
                           const fullDescription = describeToolTitle(item)
@@ -586,13 +685,16 @@ export const taskRenderer: ToolRenderer = {
               >
                 <div
                   class="message-text tool-call-markdown tool-call-task-container"
-                  ref={scrollHelpers?.registerContainer}
+                  ref={registerStepsContainer}
                   onScroll={
                     scrollHelpers ? (event) => scrollHelpers.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined
                   }
                 >
                     <div class="tool-call-task-summary">
-                     <For each={childToolKeys()}>
+                      <Show when={visibleChildToolKeys().hidden > 0}>
+                        <TaskStepsGap hidden={visibleChildToolKeys().hidden} onReveal={revealSteps} />
+                      </Show>
+                      <For each={visibleChildToolKeys().keys}>
                       {(key) => (
                         <Show when={renderToolCall}>
                           {(render) => (
@@ -633,7 +735,7 @@ export const taskRenderer: ToolRenderer = {
               <div class="tool-call-task-section-body">
                 {renderMarkdown({
                   content: outputContent()!,
-                  renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
+                  renderLimit: TASK_PANE_RENDER_CHARACTER_LIMIT,
                   cacheKey: "task:output",
                   disableScrollTracking: true,
                 })}

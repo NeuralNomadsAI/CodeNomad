@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { NativeParent } from "../../../server/src/native-parent"
@@ -8,16 +9,31 @@ const parent = new NativeParent(process.stdout, true)
 installShutdownStdinHandler(process.stdin, async () => { throw new Error("Unexpected fixture shutdown command") }, line => parent.handleLine(line))
 const [base, output] = process.argv.slice(2)
 const request = <T = unknown>(method: string, params: unknown = {}, timeout = 15_000) => parent.request<T>(method, { sessionID: "fixture-session", ...params as object }, timeout)
-const execute = <T = {url: string}>(action: string, url?: string, timeout?: number) => request<T>("browser.execute", { command: { action, url } }, timeout)
+const execute = async <T = {url: string}>(action: string, url?: string, timeout?: number) =>
+  request<T>("browser.execute", { command: { action, url }, ...(action === "open" ? { workspaceIDs: ["fixture-tab"] } : { target: await probe() }) }, timeout)
+const probe = async () => {
+  const { available, target } = await request<{ available: boolean; target: string }>("browser.probe")
+  assert.equal(available, true)
+  assert.ok(typeof target === "string" && target.length > 0 && target.length <= 128)
+  return target
+}
+const stale = /Browser target is stale/
+async function rejectTarget(target: string | undefined, error: RegExp) {
+  await assert.rejects(request("browser.page.begin", { operationID: randomUUID(), target }), error)
+  await assert.rejects(request("browser.execute", { target, command: { action: "screenshot" } }), error)
+  await assert.rejects(request("browser.execute", { target, command: { action: "navigate", url: `${base}/redirect` } }), error)
+}
 const checks: string[] = []
 async function check(name: string, run: () => Promise<void>) { await run(); checks.push(name); console.error(`PASS ${name}`) }
 try {
   assert.equal(parent.browserAutomationUnavailable, false, "native browser automation is available")
   await check("no preview", async () => { await assert.rejects(request("browser.probe"), /No visible/ ) })
-  await check("autonomous open and redirect", async () => {
-    assert.equal((await execute("open", `${base}/redirect`)).url, `${base}/ok`)
-    assert.deepEqual(await request("browser.probe"), { available: true })
+  await check("autonomous open uses the load budget and follows the redirect", async () => {
+    assert.equal((await execute("open", `${base}/open-slow`, 30_000)).url, `${base}/ok`)
+    await probe()
   })
+  await check("native channel requires a target", () =>
+    rejectTarget(undefined, /A current browser target is required/))
   await check("visible PNG", async () => {
     const screenshot = await execute<{ image: {mime: string; data: string}; url: string }>("screenshot")
     assert.equal(screenshot.image.mime, "image/png")
@@ -29,26 +45,54 @@ try {
   await check("fragment navigation", async () => { assert.equal((await execute("navigate", `${base}/ok#fragment`)).url, `${base}/ok#fragment`) })
   await check("cross-document redirect", async () => { assert.equal((await execute("navigate", `${base}/redirect`)).url, `${base}/ok`) })
   await check("failed load", async () => { await assert.rejects(execute("navigate", "http://127.0.0.1:1/unavailable"), /failed|load|navigation/i) })
-  await execute("navigate", `${base}/ok`)
+  await execute("open", `${base}/ok`)
   await check("TLS failure", async () => {
     assert.ok(process.env.CN_FIXTURE_TLS_URL)
     await assert.rejects(execute("navigate", process.env.CN_FIXTURE_TLS_URL), /failed|load|navigation/i)
   })
-  await execute("navigate", `${base}/ok`)
+  await execute("open", `${base}/ok`)
   await check("navigation deadline", async () => {
     await assert.rejects(execute("navigate", `${base}/slow`, 30), /timed out|expired/i)
   })
-  await execute("navigate", `${base}/ok`)
+  await execute("open", `${base}/ok`)
   await check("hidden target", async () => {
+    const target = await probe()
     await request("fixture.hide")
     await assert.rejects(request("browser.probe"), /No visible/)
-    await assert.rejects(execute("screenshot"), /No visible/)
+    await rejectTarget(target, stale)
     await request("fixture.show")
+    assert.notEqual(await probe(), target)
+    await rejectTarget(target, stale)
+  })
+  await check("hidden renderer retires the witness after reshow", async () => {
+    const target = await probe()
+    await request("fixture.window-hide")
+    await assert.rejects(request("browser.probe"), /No visible/)
+    await request("fixture.window-show")
+    assert.notEqual(await probe(), target)
+    await rejectTarget(target, stale)
   })
   await check("overlay hides authority", async () => {
     await request("fixture.overlay")
     await assert.rejects(execute("screenshot"), /No visible/)
     await request("fixture.show")
+  })
+  await check("document recreation without native navigation retires the witness", async () => {
+    const before = await probe()
+    await request("fixture.read-mutation", { kind: "recreate" })
+    await rejectTarget(before, stale)
+    const target = await probe()
+    assert.notEqual(target, before)
+    const operationID = randomUUID()
+    const { generation, url } = await request<{generation: string; url: string}>("browser.page.begin", { operationID, target })
+    try {
+      assert.equal(url, `${base}/ok`)
+      const tree = await request<{ nodes: unknown[] }>("browser.page.send", { operationID, generation, operation: { op: "tree" } })
+      assert.match(JSON.stringify(tree.nodes), /Recreated document/)
+    } finally {
+      await request("browser.page.end", { operationID })
+    }
+    await execute("navigate", `${base}/ok`)
   })
   await check("duplicate target", async () => {
     await request("fixture.duplicate")
@@ -65,7 +109,7 @@ try {
   })
   await check("late reply is discarded", async () => {
     await assert.rejects(request("fixture.late", {}, 20), /timed out/)
-    assert.deepEqual(await request("browser.probe"), { available: true })
+    await probe()
   })
   await check("close and reopen", async () => {
     await request("fixture.close")

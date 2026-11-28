@@ -86,6 +86,9 @@ bun run build:win-arm64
 
 ### Linux
 
+Tauri source builds require `libgstreamer-plugins-base1.0-dev` on Debian/Ubuntu.
+Linux remote dictation uses the GStreamer Good plugins and PulseAudio (or PipeWire's PulseAudio service).
+
 ```bash
 # Electron Debian package (x64)
 npm run build:linux --workspace @neuralnomads/codenomad-electron-app

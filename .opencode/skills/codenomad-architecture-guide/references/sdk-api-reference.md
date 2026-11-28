@@ -2,9 +2,9 @@
 
 ## Package
 
-CodeNomad server and UI pin `@opencode/client@2.3.0`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/info`, then (only to identify an outdated daemon) `/api/status`, then `/api/health`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport forwards canonical `server.info()` unchanged. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
+CodeNomad server and UI pin the same `@opencode/client`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/info`, then (only to identify an outdated daemon) `/api/status`, then `/api/health`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport forwards canonical `server.info()` unchanged. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
-Runtime requirements live in `packages/server/src/opencode/runtime-support.ts`: minimum 2.3.0 (the background subagent report contract, the `experimental_image_generate` image tool contract, Code Mode JavaScript job ordering and the `native`/`metadata.keepID` replay contract), with the recommendation (also 2.3.0) tracked separately. Native builds share the daemon's Effect/public SDK instead of bundling a second runtime. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Admission precedes functional requests/plugin provisioning; unlisted custom/prerelease/future labels require authenticated bounded API recognition. Never add operation-specific retry fallbacks. See `dev-docs/OPENCODE_COMPATIBILITY.md` for the version boundaries and `dev-docs/OPENCODE_RUNTIME_SETUP.md` for admission.
+The minimum and recommendation live in `packages/server/src/opencode/runtime-support.ts`. Native builds share the daemon's Effect/public SDK. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Admission precedes functional requests/plugin provisioning; unlisted custom/prerelease/future labels require authenticated bounded API recognition. Never add operation-specific retry fallbacks. See `dev-docs/OPENCODE_COMPATIBILITY.md` for the consumed contracts and `dev-docs/OPENCODE_RUNTIME_SETUP.md` for admission.
 
 The Promise client preserves the full `baseUrl` path prefix. Forward its generated URL unchanged through `createInstanceFetch`; remove the proxy prefix only when classifying reads for scheduling. Declared API errors are `Error` instances retaining their native `_tag`/data fields. Client errors retain structured `reason`/`cause`, and their `message` may add status, content type or cause detail: classify by structured fields, never exact message text.
 
@@ -25,7 +25,7 @@ Do not replace the shared network service with `@opencode-ai/sdk` unless CodeNom
 | Sessions | `list/get/create/fork/remove/update/prompt/command/shell/interrupt` | UI session stores |
 | Session environment | `client.session.environment({ sessionID, variables })` replaces a complete snapshot before prompt/command/shell admission | guarded server proxy; `workspaces/session-environment.ts` builds host/WSL values |
 | Instructions | `client.session.instructions.entry.put/remove` | conversation-mode prompt setup |
-| Permissions | `permission.request.list`, `permission.reply` | UI and server Yolo replier |
+| Permissions | `permission.request.list`, `permission.reply`, session `permissions` on create/get/update | UI, guarded permission mode and receipts routes |
 | Forms | `client.form.list`, `client.session.form.reply`, `client.session.form.cancel` | `packages/ui/src/stores/instances.ts`, `forms.ts` |
 
 Native methods return decoded Promise values. Follow the installed declarations and existing callers; never wrap calls in response-unwrapping helpers.
@@ -50,7 +50,7 @@ Do not look for these in the OpenCode client:
 
 - Workspace create/delete and worktree workflow routes (native OpenCode owns worktree discovery/create/remove; CodeNomad supplies directory/branch policy and verified session-family moves)
 - Git status/diff/stage/unstage/commit
-- Yolo toggle, persistence and auto-accept policy
+- Conversation permission mode and ownership of appended session rules
 - Authentication, storage, speech, sidecars and previews
 - Multiplexed browser SSE at `/api/events`
 

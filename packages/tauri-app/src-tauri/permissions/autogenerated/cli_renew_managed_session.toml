@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cli-renew-managed-session"
+description = "Enables the cli_renew_managed_session command without any pre-configured scope."
+commands.allow = ["cli_renew_managed_session"]
+
+[[permission]]
+identifier = "deny-cli-renew-managed-session"
+description = "Denies the cli_renew_managed_session command without any pre-configured scope."
+commands.deny = ["cli_renew_managed_session"]

@@ -1,6 +1,6 @@
 import type { MissionMap } from "../../../server/src/missions/model"
-import type { UserMissionModel } from "../../../server/src/missions/model-library"
-export { MAX_MISSION_MODELS, parseMissionModel, normalizeMissionModels, validMissionModels, missionConfigurationTitle, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../../../server/src/missions/model-library"
+import { parseMissionModel, type UserMissionModel } from "../../../server/src/missions/model-library"
+export { MAX_MISSION_MODELS, parseMissionModel, normalizeMissionModels, validMissionModels, missionConfigurationTitle, saveMissionModelRecord, removeMissionModelRecord, sameMissionModel, type UserMissionModel } from "../../../server/src/missions/model-library"
 
 /** The reusable inputs recorded on an existing one-time Mission, in any status: its
  * current objective and verbatim notes (read from one snapshot, `useRecordedBriefInputs`),
@@ -15,10 +15,10 @@ export function missionRecordedBrief(mission: Pick<MissionMap, "template" | "pro
 
 // Window-memory provenance for the existing uncertain-creation hold. Never sent as
 // authority, never persisted, and never looked up again from mutable preferences.
-const submittedModels = new Map<string, Readonly<Pick<UserMissionModel, "id" | "name">>>()
-export function retainSubmittedMissionModel(requestId: string, model?: Pick<UserMissionModel, "id" | "name">): void {
-  if (model && !submittedModels.has(requestId)) submittedModels.set(requestId, Object.freeze({ id: model.id, name: model.name }))
+const submittedModels = new Map<string, Readonly<UserMissionModel>>()
+export function retainSubmittedMissionModel(requestId: string, model?: UserMissionModel): void {
+  if (model && !submittedModels.has(requestId)) submittedModels.set(requestId, Object.freeze(parseMissionModel(model)))
 }
-export function submittedMissionModel(requestId: string): Readonly<Pick<UserMissionModel, "id" | "name">> | undefined {
+export function submittedMissionModel(requestId: string): Readonly<UserMissionModel> | undefined {
   return submittedModels.get(requestId)
 }

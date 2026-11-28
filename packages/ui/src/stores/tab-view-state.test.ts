@@ -3,7 +3,7 @@ import { it } from "node:test"
 import { normalizeRestorableSession, type RestorableWorkspaceTabState } from "./client-state-codec.ts"
 import { canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, sha256 } from "./client-state-partitions.ts"
 import { normalizeTabViewState, MAX_TAB_PREVIEW_STORAGE, type RestorableTabViewState } from "./tab-view-state-codec.ts"
-import { migrateLegacyTabPreviews } from "./tab-view-state-migration.ts"
+import { compactMissionKey, migrateLegacyTabPreviews } from "./tab-view-state-migration.ts"
 import { captureTabViewState, clearTabViewState, getTabViewState, seedTabViewState, updateTabViewState } from "./tab-view-state.ts"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority.ts"
 import {
@@ -26,9 +26,7 @@ it("restores occurrence views on recreated UUIDs; repeated hydration and sibling
   const a = "new-backend-a", b = "new-backend-b"
   assert.equal(captureTabViewState(a), undefined)
   seedTabViewState(a, view("a"))
-  seedTabViewState(b, { ...view("b"), missions: { reader: { missionId: "mission", kind: "recurrence",
-    instanceId: "old-backend", projectID: "project" } } })
-  assert.equal(getTabViewState(b).missions?.reader?.instanceId, b)
+  seedTabViewState(b, view("b"))
   updateTabViewState(a, { previews: { session: { ...preview("a"), mode: "chat" } } })
   seedTabViewState(a, view("stale"))
   assert.equal(getTabViewState(a).previews?.session.mode, "chat")
@@ -94,26 +92,54 @@ it("validates optional fields and trims history before previews within the share
   for (const p of Object.values(previews)) assert.equal(p.history?.urls[p.history.index], p.targetUrl)
 })
 
+it("legacy migration binds qualified backend/folder identities without local or case-folded backend fallback", () => {
+  const tabs = [
+    { ...workspace(0), folder: "C:/Same", backendId: "ServerA" },
+    { ...workspace(1), folder: "c:/same/", backendId: "ServerA" },
+    { ...workspace(0), folder: "C:/Same", backendId: "servera" },
+    { ...workspace(0), folder: "C:/Same" },
+    { ...workspace(0), folder: "C:/OnlyLocal", backendId: "ServerA" },
+  ]
+  const layout = new Map([
+    [`mission-project-${compactMissionKey("ServerA~C:/Same")}`, JSON.stringify({ selected: "remote" })],
+    [`mission-project-${compactMissionKey("C:/Same")}`, JSON.stringify({ selected: "local" })],
+    [`mission-project-${compactMissionKey("C:/OnlyLocal")}`, JSON.stringify({ selected: "must-not-import" })],
+  ])
+  const migration = migrateLegacyTabPreviews(session(tabs), JSON.stringify({
+    [JSON.stringify(["ServerA~c:\\Same", "session"])]: preview("remote"),
+    [JSON.stringify(["servera~C:/Same", "session"])]: preview("case-sensitive-backend"),
+    [JSON.stringify(["C:/Same", "session"])]: preview("local"),
+    "C:/OnlyLocal": preview("must-not-import"),
+  }), key => layout.get(key) ?? null)!
+  const restored = migration.state.tabs as RestorableWorkspaceTabState[]
+  assert.deepEqual(restored.slice(0, 4).map(tab => tab.viewState?.previews?.session.targetUrl),
+    ["remote", "remote", "case-sensitive-backend", "local"].map(path => preview(path).targetUrl))
+  assert.deepEqual(restored.map(tab => tab.viewState?.missions?.selected), ["remote", undefined, undefined, "local", undefined])
+  assert.equal(restored[4].viewState, undefined)
+  assert.deepEqual(Object.keys(JSON.parse(migration.remaining)), ["C:/OnlyLocal"])
+  assert.equal(migration.missions.length, 2)
+})
+
 it("round trips distinct descriptor envelopes through strict partitions and degrades corrupt optional view data", async () => {
   const source = { version: 1 as const, revision: 1, savedAt: 2, layout: {}, session: session([workspace(1, view("b")), workspace(0, view("a"))]) }
   const encoded = await encodeClientSnapshotV2(source)
   const loaded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
   assert.equal(canonicalJson(loaded), canonicalJson(source))
-  const manifest = JSON.parse(encoded.partitions[encoded.root.sessionPartition])
+  const partitions: Record<string, string> = { ...encoded.partitions }
+  const manifest = JSON.parse(partitions[encoded.root.sessionPartition])
   const shell = manifest.session.tabs[0]
   const oldWorkspace = shell.workspacePartition
-  const changed = JSON.parse(encoded.partitions[oldWorkspace])
+  const changed = JSON.parse(partitions[oldWorkspace])
   changed.viewState = { version: 99 }
   const text = canonicalJson(changed), changedKey = await sha256(text)
-  encoded.partitions[changedKey] = text
-  delete encoded.partitions[oldWorkspace]
+  partitions[changedKey] = text
+  delete partitions[oldWorkspace]
   shell.workspacePartition = changedKey
   const rootText = canonicalJson(manifest), rootKey = await sha256(rootText)
-  delete encoded.partitions[encoded.root.sessionPartition]
-  encoded.partitions[rootKey] = rootText
-  encoded.root.sessionPartition = rootKey
-  encoded.root.partitionKeys = Object.keys(encoded.partitions).sort()
-  const degraded = await decodeClientSnapshotV2(encoded.root, 1, async key => encoded.partitions[key] ?? null)
+  delete partitions[encoded.root.sessionPartition]
+  partitions[rootKey] = rootText
+  const degradedRoot = { ...encoded.root, sessionPartition: rootKey, partitionKeys: Object.keys(partitions).sort() }
+  const degraded = await decodeClientSnapshotV2(degradedRoot, 1, async key => partitions[key] ?? null)
   assert.equal((degraded?.session?.tabs[0] as RestorableWorkspaceTabState)?.viewState, undefined)
   assert.deepEqual((degraded?.session?.tabs[1] as RestorableWorkspaceTabState)?.viewState, view("a"))
 })

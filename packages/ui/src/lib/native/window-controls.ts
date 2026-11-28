@@ -18,7 +18,7 @@ export async function runNativeWindowAction(action: NativeWindowAction): Promise
 }
 
 export async function startNativeWindowDrag(): Promise<void> {
-  if (runtimeEnv.host === "tauri") await invoke("window_control", { action: "drag" })
+  if (runtimeEnv.host === "tauri") await invoke("start_native_window_drag")
 }
 
 export async function showNativeTitlebarMenu(menu: NativeTitlebarMenu, element: HTMLElement): Promise<void> {

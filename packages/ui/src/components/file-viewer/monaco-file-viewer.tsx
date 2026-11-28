@@ -114,7 +114,7 @@ export function MonacoFileViewer(props: MonacoFileViewerProps) {
 
   createEffect(() => {
     if (!ready() || !editor) return
-    editor.updateOptions({ wordWrap: props.wordWrap === "on" ? "on" : "off" })
+    editor.updateOptions({ wordWrap: props.wordWrap === "on" ? "on" : "off", readOnly: props.readOnly ?? false })
   })
 
   createEffect(() => {

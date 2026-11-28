@@ -131,7 +131,7 @@ export async function moveProjectSessionFamily(params: {
     const target = await resolveProjectLocation(context, params.targetDirectory, params.resolveExactDirectory)
     const move = async () => {
       await assertInactive(context.client, family[1])
-      for (const session of family[1]) await assertOrdinaryMissionScheduleSession(context.client, session)
+      for (const session of family[1]) assertOrdinaryMissionScheduleSession(session)
       if (params.validateTarget && !await params.validateTarget()) {
         throw new ProjectSessionError("Worktree changed before the session move", 409)
       }
@@ -175,7 +175,7 @@ export async function removeProjectWorktree(params: {
       )
       for (const family of families) assertWorkspaceFamily(family, context.workspaceID)
       await assertInactive(context.client, families.flat())
-      for (const session of families.flat()) await assertOrdinaryMissionScheduleSession(context.client, session)
+      for (const session of families.flat()) assertOrdinaryMissionScheduleSession(session)
       await params.validateBeforeRemove?.(context.project.id)
       const original = new Map(families.flat().map((session) => [session.id, session.location]))
       const moved: string[] = []
@@ -322,11 +322,30 @@ async function moveMembers(
   target: LocationRef,
   moved: string[],
 ): Promise<void> {
-  for (const session of members) {
-    await assertInactive(context.client, [session])
-    moved.push(session.id)
-    await moveSessionToLocation(context.client, session.id, target)
-    await waitForSessionLocation(context, session.id, target, `Session move verification failed: ${session.id}`)
+  // OpenCode 2.4.2+ moves same-location descendants with their parent. Trigger a move only for
+  // each subtree root whose parent is absent or sits at a different location, then verify every member.
+  const byId = new Map(members.map((session) => [session.id, session]))
+  const roots = members.filter((session) => {
+    const parent = session.parentID ? byId.get(session.parentID) : undefined
+    return !parent || !sameLocation(session.location, parent.location)
+  })
+  const covered = (root: SessionInfo): SessionInfo[] => {
+    const group = new Set([root.id])
+    for (const member of members) {
+      if (member.parentID && group.has(member.parentID) && sameLocation(member.location, root.location)) {
+        group.add(member.id)
+      }
+    }
+    return members.filter((member) => group.has(member.id))
+  }
+  for (const root of roots) {
+    const group = covered(root)
+    await assertInactive(context.client, group)
+    for (const session of group) moved.push(session.id)
+    await moveSessionToLocation(context.client, root.id, target)
+    for (const session of group) {
+      await waitForSessionLocation(context, session.id, target, `Session move verification failed: ${session.id}`)
+    }
   }
 }
 

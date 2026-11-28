@@ -23,6 +23,14 @@ test("the shared fixed registry matches the qualified program hashes", () => {
   assert.deepEqual(json("./functions.generated.json"), nativeFunctionRegistry(), "regenerate the checked-in native resource when programs change")
 })
 
+test("the native WebKit header embeds the same generated reader", () => {
+  const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8").replace(/\r\n/g, "\n")
+  const header = read("../../../../tauri-app/src-tauri/src/embedded_view/page_read.generated.h")
+  const program = /^static const char CN_PAGE_READ\[\] = (".*");$/m.exec(header)?.[1]
+  assert.ok(program)
+  assert.equal(JSON.parse(program.replace(/\\\?/g, "?")), read("./webkit/read.generated.js"))
+})
+
 test("closed driver contract refuses unknown operations, params, programs and malformed arguments", () => {
   const corpus = json("./contract.cases.json")
   for (const operation of corpus.valid) assert.deepEqual(parsePageOperation(operation), operation)

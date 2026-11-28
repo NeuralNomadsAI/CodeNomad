@@ -9,6 +9,8 @@ app.setPath("userData", join(scratch, "profile"))
 const errors = []
 const windows = []
 const inspect = `({
+  copyAllowed: window.dispatchEvent(new Event("copy", { cancelable: true })),
+  printConfigurable: Object.getOwnPropertyDescriptor(window, "print")?.configurable,
   prompt: typeof window.prompt, appBridge: typeof window.electronAPI,
   node: typeof window.require
 })`
@@ -36,10 +38,12 @@ app.whenReady().then(async () => {
     } })
     owner.contentView.addChildView(guest)
     watch(guest.webContents)
-    await guest.webContents.loadURL(`http://127.0.0.1:${port}/`)
-    result.preview = await guest.webContents.executeJavaScript("window.atDocumentStart")
-    result.preview.promptResult = await guest.webContents.executeJavaScript(
-      'Object.getOwnPropertyDescriptor(window, "prompt")?.configurable === false ? window.prompt("fixture") : "unavailable"')
+    for (const [name, host] of [["remote", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.preview.localhost"], ["local", "127.0.0.1"]]) {
+      await guest.webContents.loadURL(`http://${host}:${port}/`)
+      result[name] = await guest.webContents.executeJavaScript("window.atDocumentStart")
+      result[name].promptResult = await guest.webContents.executeJavaScript(
+        'Object.getOwnPropertyDescriptor(window, "prompt")?.configurable === false ? window.prompt("fixture") : "unavailable"')
+    }
     for (const context of ["local", "preferences", "remote"]) {
       const window = new BrowserWindow({ show: false, webPreferences: {
         preload: join(preloads, "index.js"), sandbox: true, contextIsolation: true, nodeIntegration: false,
@@ -53,6 +57,7 @@ app.whenReady().then(async () => {
         bridge: typeof window.electronAPI, node: typeof window.require,
         localAction: typeof window.electronAPI?.newWindow,
         preferencesAction: typeof window.electronAPI?.preferencesReady,
+        managedSessionAction: typeof window.electronAPI?.renewManagedSession,
         remoteAction: typeof window.electronAPI?.retryRemoteWindow
       })`))
     }

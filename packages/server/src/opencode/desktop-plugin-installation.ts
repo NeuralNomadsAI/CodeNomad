@@ -13,10 +13,7 @@ import { isLegacyAutomationPlugin } from "./automation-plugin"
 import { type DesktopPluginNativePath } from "./desktop-plugin-wsl-paths"
 import { installDesktopPluginArtifact } from "./desktop-plugin-artifact"
 import { parseManagedDesktopPluginEntry } from "./desktop-plugin-managed"
-import type { NativeScheduleCarrierInstallation } from "./missions/native-schedule-carrier-binding"
 import { ownReadiness } from "./desktop-plugin-readiness"
-
-export type DesktopMissionArtifacts = Readonly<Pick<NativeScheduleCarrierInstallation, "provider" | "runtime">>
 
 export interface DesktopPluginPaths {
   config: string
@@ -64,10 +61,8 @@ export async function installDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void = () => {},
   leaseContent: () => string = () => "",
-  providerBundle?: Uint8Array,
 ) {
   assertCurrent()
-  if (providerBundle && feature !== "missions") throw new Error("Local carrier provider requires Missions")
   const marker = `// Managed by CodeNomad: ${feature.replaceAll("-", " ")} lifecycle v1\n`
   const hash = createHash("sha256").update(bundle).digest("hex")
   const entry = path.join(paths.config, "plugins", `codenomad-${feature}.ts`)
@@ -92,13 +87,7 @@ export async function installDesktopPluginPresence(
     ? pathToFileURL(`${nativeDirectory}/${hash}.mjs`, { windows: false }).href
     : pathToFileURL(plugin).href
   const presenceDirectories = [...new Set([nativeLeases, ...(storage?.presenceDirectories ?? [])])]
-  const providerHash = providerBundle && createHash("sha256").update(providerBundle).digest("hex")
-  const nativePlugin = paths.nativeData ? path.posix.join(nativeDirectory, `${hash}.mjs`) : plugin
-  const artifacts: DesktopMissionArtifacts | undefined = providerHash ? Object.freeze({
-    provider: Object.freeze({ file: (paths.nativeData ? path.posix : path).join(nativeDirectory, `${providerHash}.provider.mjs`), sha256: providerHash }),
-    runtime: Object.freeze({ file: nativePlugin, sha256: hash }),
-  }) : undefined
-  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)}${artifacts ? `, ${JSON.stringify(artifacts)}` : ""})\n`
+  const source = `${marker}import { desktopPlugin } from ${JSON.stringify(pluginUrl)}\nexport default desktopPlugin(${JSON.stringify(presenceDirectories.length === 1 ? nativeLeases : presenceDirectories)})\n`
   await mkdir(leases, { recursive: true })
   assertCurrent()
   await mkdir(path.dirname(entry), { recursive: true })
@@ -106,11 +95,7 @@ export async function installDesktopPluginPresence(
   // Immutable, content-addressed payloads keep running instances independent of upgrades.
   const assertRuntimePath = await installDesktopPluginArtifact(plugin, bundle, hash, assertCurrent)
   assertCurrent()
-  const assertProviderPath = providerBundle && providerHash
-    ? await installDesktopPluginArtifact(path.join(directory, `${providerHash}.provider.mjs`), providerBundle, providerHash, assertCurrent)
-    : undefined
-  const assertBundlePath = async () => { await assertRuntimePath(); await assertProviderPath?.() }
-  await assertBundlePath()
+  await assertRuntimePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
   const readiness = ownReadiness(lease)
@@ -123,7 +108,7 @@ export async function installDesktopPluginPresence(
       try {
         await writeFile(temporary, source)
         assertCurrent()
-        await assertBundlePath()
+        await assertRuntimePath()
         assertCurrent()
         await rename(temporary, entry)
       } finally { await rm(temporary, { force: true }) }

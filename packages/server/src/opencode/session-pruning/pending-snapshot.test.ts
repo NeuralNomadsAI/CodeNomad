@@ -1,3 +1,4 @@
+import { syncBuiltinESMExports } from "node:module"
 import assert from "node:assert/strict"
 import path from "node:path"
 import test from "node:test"
@@ -188,6 +189,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
       await close()
     } finally {
       t.mock.restoreAll()
+      syncBuiltinESMExports()
       t.mock.timers.reset()
       await fs.rm(directory, { recursive: true, force: true })
     }
@@ -196,6 +198,13 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   let monotonic = 0
   t.mock.method(performance, "now", () => monotonic)
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() })
+  const completedWrites = new Set<string>()
+  const writeFile = fs.writeFile
+  t.mock.method(fs, "writeFile", async (...args: Parameters<typeof fs.writeFile>) => {
+    await writeFile(...args)
+    completedWrites.add(String(args[0]))
+  })
+  syncBuiltinESMExports()
   const entries: Array<{ id: string; methods: string[]; closed: boolean }> = []
   const tools: Array<{ closed: boolean }> = []
   let rejectNew = false
@@ -241,7 +250,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   }
   await fs.writeFile(a, "")
   const presenceRpcs = ["codenomad.session-pruning", "codenomad.pending-requests", "codenomad.plugin-versions"]
-  await tick(() => entries.length === 3)
+  await tick(() => entries.length === presenceRpcs.length && completedWrites.has(`${a}.ready`))
   assert.deepEqual(entries.map(entry => entry.id), presenceRpcs)
   assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "historyRanked", "imageRead", "imageReference", "images", "imagesConversation", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
   assert.deepEqual(entries[1].methods, ["snapshot"])
@@ -249,10 +258,9 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   assert.equal(tools.length, 1)
   await fs.writeFile(b, "")
   await fs.unlink(a)
-  await tick(() => true)
-  await delay(20)
-  assert.equal(entries.length, 3)
-  assert(entries.every(entry => !entry.closed), "Another backend lease retains both registrations")
+  await tick(() => completedWrites.has(`${b}.ready`))
+  assert.equal(entries.length, presenceRpcs.length)
+  assert(entries.every(entry => !entry.closed), "Another backend lease retains the registrations")
   assert(tools.every(entry => !entry.closed))
   const expired = new Date(Date.now() - PRESENCE_EXPIRY_MS - 1000)
   await fs.utimes(b, expired, expired)

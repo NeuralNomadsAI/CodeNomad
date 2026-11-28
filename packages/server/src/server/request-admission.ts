@@ -13,24 +13,25 @@ export function requestAdmission(request: FastifyRequest, reply: FastifyReply) {
   if (request.raw.aborted || reply.raw.destroyed) abort()
   return {
     signal: controller.signal,
-    async wait<T>(pending: Promise<T>): Promise<T> {
-      if (controller.signal.aborted) {
+    // A supplied signal combines this request's lifetime with its own deadline.
+    async wait<T>(pending: Promise<T>, signal = controller.signal): Promise<T> {
+      if (signal.aborted) {
         // A caller may already have allocated the Promise. Observe its rejection
         // even when admission was revoked immediately before this boundary.
         void pending.catch(() => undefined)
-        controller.signal.throwIfAborted()
+        signal.throwIfAborted()
       }
       let rejectAbort!: () => void
       const aborted = new Promise<never>((_resolve, reject) => {
-        rejectAbort = () => reject(controller.signal.reason)
-        controller.signal.addEventListener("abort", rejectAbort, { once: true })
+        rejectAbort = () => reject(signal.reason)
+        signal.addEventListener("abort", rejectAbort, { once: true })
       })
       try {
         const result = await Promise.race([pending, aborted])
-        controller.signal.throwIfAborted()
+        signal.throwIfAborted()
         return result
       } finally {
-        controller.signal.removeEventListener("abort", rejectAbort)
+        signal.removeEventListener("abort", rejectAbort)
       }
     },
     dispose() {

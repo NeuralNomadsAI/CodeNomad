@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify"
 import fs from "fs"
 import { z } from "zod"
 import type { AuthManager } from "../../auth/manager"
-import { isRemoteRequest } from "../../remote-control/request-origin"
+import { deviceCookie } from "../../remote-control/gate"
+import { isRefusedDeviceRequest, isRemoteRequest } from "../../remote-control/request-origin"
 
 interface RouteDeps {
   authManager: AuthManager
@@ -91,7 +92,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     const session = deps.authManager.getSessionFromRequest(request)
     if (!session) {
       // Remote Control devices recover by pairing again; password login is host-only.
-      reply.send(isRemoteRequest(request) ? { authenticated: false, pairingRequired: true } : { authenticated: false })
+      reply.send(isRemoteRequest(request) || isRefusedDeviceRequest(request) ? { authenticated: false, pairingRequired: true } : { authenticated: false })
       return
     }
     reply.send({ authenticated: true, ...deps.authManager.getStatus() })
@@ -122,21 +123,24 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     const body = TokenSchema.parse(request.body ?? {})
-    const ok = deps.authManager.consumeBootstrapToken(body.token)
-    if (!ok) {
+    const session = deps.authManager.createBootstrapSession(body.token)
+    if (!session) {
       reply.code(401).send({ error: "Invalid token" })
       return
     }
 
-    const username = deps.authManager.getStatus().username
-    const session = deps.authManager.createSession(username)
     deps.authManager.setSessionCookieWithOptions(reply, session.id, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 
   app.post("/api/auth/logout", async (request, reply) => {
-    deps.authManager.revokeSession(request)
-    deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
+    try {
+      deps.authManager.revokeSession(request)
+    } catch {
+      return reply.code(503).send({ error: "Logout unavailable" })
+    }
+    if (isRemoteRequest(request)) reply.header("Set-Cookie", deviceCookie("", 0))
+    else deps.authManager.clearSessionCookieWithOptions(reply, { secure: isSecureRequest(request) })
     reply.send({ ok: true })
   })
 

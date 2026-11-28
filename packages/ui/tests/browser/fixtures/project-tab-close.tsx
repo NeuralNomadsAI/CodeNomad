@@ -31,8 +31,8 @@ function Fixture() {
     if (tab?.kind === "instance") closeInstanceTab(tab.instance.id)
   }
   useAppLifecycle({ setEscapeInDebounce() {}, handleNewInstanceRequest() {}, handleCloseActiveTab: close,
-    handleNewSession: async () => {}, handleCloseSession: async () => {}, showFolderSelection: () => false,
-    setShowFolderSelection() {}, getActiveInstance: () => null, getActiveSessionIdForInstance: () => null })
+    handleNewSession: async () => {}, handleCloseSession: async () => {},
+    getActiveInstance: () => null, getActiveSessionIdForInstance: () => null })
   return <InstanceTabs tabs={appTabs()} activeTabId={activeAppTabId()} onSelect={selectAppTab}
     onClose={id => { if (id.startsWith("instance:")) closeInstanceTab(id.slice("instance:".length)) }} onNew={() => {}} />
 }

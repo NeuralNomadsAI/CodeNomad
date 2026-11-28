@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import { normalizeToolCallExpansionDefaults, type Preferences } from "../stores/preferences"
 import {
   TRANSCRIPT_PRESETS,
+  transcriptCustomAvailable,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -16,6 +17,7 @@ const current = () => ({
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
   toolInputsVisibility: "hidden",
+  toolGroupVisibility: "collapsed",
   showUsageMetrics: true,
   usageMetricsExpansion: "collapsed",
   toolCallExpansionDefaults: { preset: "balanced", tools: {} },
@@ -31,14 +33,15 @@ describe("shared transcript visibility controls", () => {
     }
   })
   it("uses dev's order and label keys in both preferences and the popup", () => {
-    assert.deepEqual(rows.slice(0, 5), [
+    assert.deepEqual(rows.slice(0, 6), [
       { kind: "thinking", key: "thinking", label: "settings.behavior.expansionDefaults.thinking" },
       { kind: "diagnostics", key: "diagnostics", label: "settings.behavior.diagnosticsDefault.title" },
       { kind: "inputs", key: "inputs", label: "settings.behavior.toolInputsVisibility.title" },
       { kind: "usage", key: "usage", label: "settings.behavior.usageMetrics.title" },
       { kind: "system", key: "system", label: "transcriptFilters.systemMessages" },
+      { kind: "toolGroups", key: "toolGroups", label: "transcriptFilters.toolGroups" },
     ])
-    assert.ok(rows.slice(5).every((item) => item.kind === "tool"))
+    assert.ok(rows.slice(6).every((item) => item.kind === "tool"))
   })
   it("preserves every other effective tool setting when customizing one tool", () => {
     const before = current()
@@ -104,9 +107,35 @@ describe("shared transcript visibility controls", () => {
       }
     }
   })
-  it("hides every message-content row with Nothing", () => {
+  it("keeps the Custom rows a preset replaces and applies them again with Custom", () => {
+    const balanced = { ...current(), ...transcriptPresetPatch("balanced") }
+    assert.equal(transcriptCustomAvailable(balanced), false)
+    assert.deepEqual(transcriptPresetPatch("custom", balanced), {})
+    // A detail row alone leaves the saved tool preset in place; the kept rows are explicit either way.
+    for (const changes of [["read", "diagnostics"], ["diagnostics"]]) {
+      let custom = balanced
+      for (const key of changes) custom = { ...custom, ...transcriptVisibilityPatch(custom, row(key), "hidden") }
+      const replaced = { ...custom, ...transcriptPresetPatch("everything", custom) }
+      assert.equal(transcriptPreset(replaced), "everything")
+      assert.equal(transcriptCustomAvailable(replaced), true)
+      assert.equal(replaced.transcriptCustomPreset?.toolCallExpansionDefaults.preset, "custom")
+      // Another preset leaves the kept rows alone.
+      assert.equal("transcriptCustomPreset" in transcriptPresetPatch("minimal", replaced), false)
+      const restored = { ...replaced, ...transcriptPresetPatch("custom", replaced) }
+      assert.equal(transcriptPreset(restored), "custom")
+      for (const item of rows) assert.equal(transcriptVisibility(restored, item), transcriptVisibility(custom, item), item.key)
+      assert.deepEqual(transcriptPresetPatch("custom", restored), {})
+    }
+  })
+  it("hides every content row with Nothing and expands groups only with Everything", () => {
     const applied = { ...current(), ...transcriptPresetPatch("nothing") }
-    for (const item of rows) assert.equal(transcriptVisibility(applied, item), "hidden", item.key)
+    for (const item of rows.filter((item) => item.kind !== "toolGroups")) {
+      assert.equal(transcriptVisibility(applied, item), "hidden", item.key)
+    }
+    for (const preset of TRANSCRIPT_PRESETS) {
+      const settings = { ...current(), ...transcriptPresetPatch(preset) }
+      assert.equal(transcriptVisibility(settings, row("toolGroups")), preset === "everything" ? "expanded" : "collapsed")
+    }
   })
   it("keeps a saved Detailed choice as Custom with the same effective tools", () => {
     const saved = { preset: "detailed", thinking: "expanded", tools: { bash: "expanded", read: "collapsed", other: "expanded" } }

@@ -40,6 +40,21 @@ function workspaceAt(state: RestorableSessionState, index = 0): RestorableWorksp
 }
 
 describe("app session snapshot merge", () => {
+  it("keeps the old installation's drafts apart even if the replacement reuses the runtime key", () => {
+    const old = workspace("/same", 0, {
+      backendId: "remote", serverId: "old", workspaceId: "remote~record",
+      drafts: { session: "unsubmitted" }, attachments: { session: [attachment("file")] },
+    })
+    const preservation = createRestorableSessionPreservation(session([old]))
+    const runtimeTabId = "instance:remote~record"
+    recordRestoredTab(preservation, 0, runtimeTabId)
+    const current = workspace("/same", 0, { backendId: "remote", serverId: "new", workspaceId: old.workspaceId })
+    assert.equal(getPreservedWorkspaceReopenTarget(preservation, {
+      runtimeTabId, folder: current.folder, occurrence: 0, backendId: current.backendId, serverId: current.serverId,
+    }), null)
+    const merged = mergeRestorableSessionState(session([current]), preservation, { currentTabIds: [runtimeTabId] })
+    assert.deepEqual(merged.tabs, [current, old])
+  })
   it("preserves a live workspace opened after the startup snapshot when the backend loses it", () => {
     const preservation = createRestorableSessionPreservation(session([workspace("/old")]))
     const current = workspace("/new", 0, { drafts: { prompt: "fresh draft" }, attachments: { prompt: [attachment("file")] } })
@@ -137,13 +152,21 @@ describe("app session snapshot merge", () => {
   })
 
   it("keeps seen interruptions of unloaded sessions and drops owned or deleted ones", () => {
-    const saved = session([workspace("/work", 0, { seenInterruptions: { unloaded: 5, settled: 6, deleted: 7 } })])
+    const saved = session([workspace("/work", 0, {
+      seenInterruptions: { unloaded: 5, settled: 6, deleted: 7 },
+      unseenIdleSince: { unloaded: 1, settled: 2, deleted: 3 },
+      generationRecovery: { unloaded: "interrupted", settled: "working", deleted: "interrupted" },
+    })])
     const current = session([workspace("/work", 0, { seenInterruptions: { loaded: 8 } })])
+    const rows = new Map([["loaded", {}], ["settled", {}]])
     const merged = mergeRestorableSessionState(current, createRestorableSessionPreservation(saved), {
       currentTabIds: ["instance:work"],
-      currentTabAuthorities: [{ generationRecovery: new Set(["loaded", "settled"]), deletedSessions: new Set(["deleted"]) }],
+      currentTabAuthorities: [{ idleMarkers: rows, generationRecovery: rows, deletedSessions: new Set(["deleted"]) }],
     })
-    assert.deepEqual(workspaceAt(merged).seenInterruptions, { unloaded: 5, loaded: 8 })
+    const tab = workspaceAt(merged)
+    assert.deepEqual(tab.seenInterruptions, { unloaded: 5, loaded: 8 })
+    assert.deepEqual(tab.unseenIdleSince, { unloaded: 1 })
+    assert.deepEqual(tab.generationRecovery, { unloaded: "interrupted" })
   })
 
   it("rejects a late restore commit after close and reopen", () => {

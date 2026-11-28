@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "サーバーが見つかりません",
+  "remoteRestore.confirmChange": "このサーバー接続を変更しますか？他のウィンドウの保存済みタブを利用できなくなる場合があります。",
+  "remoteRestore.idle": "待機中",
+  "remoteRestore.admitting": "接続中…",
+  "remoteRestore.compatible": "プロジェクトを利用できません",
+  "remoteRestore.refused": "サーバーに互換性がありません",
+  "remoteRestore.unreachable": "サーバーを利用できません",
+  "remoteRestore.inUse": "このサーバーのアドレスを変更する前に、そのタブを閉じ、別のプロジェクトから設定を開き直してください。",
   "authRecovery.title": "CodeNomad に再ログイン",
   "authRecovery.pairing": "ホストで 設定 → リモートアクセス を開き、ペアリングリンクを作成してこのデバイスで開いてから、接続を確認してください。",
   "authRecovery.pairingTitle": "このデバイスを再ペアリング",

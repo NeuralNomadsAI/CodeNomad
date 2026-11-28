@@ -2,6 +2,7 @@ import { createSignal, onCleanup } from "solid-js"
 import Switch from "@suid/material/Switch"
 import type { PluginActivationControl, PluginControlLocation, PluginControlScope } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
@@ -50,7 +51,7 @@ export function PluginActivationSwitch(props: {
   active?: boolean
   /** Shown but not writable here, with this reason as its tooltip; it stays focusable. */
   lockedReason?: string
-  /** An integration's switch: the accent switch of Yolo and the settings, where a plain plugin's is the green variant. */
+  /** Integrations use the settings accent; plain plugins use the green variant. */
   integration?: boolean
 }) {
   const { t } = useI18n()
@@ -59,6 +60,8 @@ export function PluginActivationSwitch(props: {
   const isPending = () => Boolean(props.control && isPluginActivationPending(props.instanceId, props.location, props.scope, props.control.id))
   const toggle = async (control: PluginActivationControl, enabled: boolean) => {
     const instanceId = props.instanceId, location = { directory: props.location.directory }, scope = props.scope
+    const operation = captureBackendOperation(instanceId)
+    if (!operation.current()) return
     const key = pendingKey(instanceId, location, scope, control.id)
     if (pending().has(key)) return
     setPending(current => new Set(current).add(key))
@@ -66,7 +69,7 @@ export function PluginActivationSwitch(props: {
       await pluginControlsCache.mutate(instanceId, location, control.id, scope, enabled)
     } catch (error) {
       log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
-      if (!disposed && props.active !== false && props.instanceId === instanceId && props.location.directory === location.directory) {
+      if (operation.current() && !disposed && props.active !== false && props.instanceId === instanceId && props.location.directory === location.directory) {
         showToastNotification({ category: "opencode", variant: "error",
           message: t(errorMessageKey(error), { name: props.name ?? control.id, scope: t(`instanceServiceStatus.plugins.scope.${scope}`) }) })
       }

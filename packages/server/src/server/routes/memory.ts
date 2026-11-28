@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from "fastify"
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 import { MemoryContextSchema, MemoryOperationSchema, type MemoryApiError } from "../../memory/api"
 import { MemoryError } from "../../memory/model"
@@ -11,18 +11,19 @@ export function memoryErrorReply(reply: FastifyReply, error: unknown) {
   return reply.code({ disabled: 403, full: 409, conflict: 409, invalid: 400, unreadable: 503, malformed: 422, git_unavailable: 503 }[code]).send(payload)
 }
 
-export function registerMemoryRoutes(app: FastifyInstance, memory: MemoryService): void {
+export function registerMemoryRoutes(app: FastifyInstance, memory: MemoryService,
+  principalSignal: (request: FastifyRequest) => AbortSignal | undefined = () => undefined): void {
   app.get("/api/memory/settings", async (_request, reply) => {
     try { return memory.getSettings() } catch (error) { return memoryErrorReply(reply, error) }
   })
   app.put("/api/memory/settings", async (request, reply) => {
     const body = z.object({ enabled: z.boolean() }).strict().safeParse(request.body)
     if (!body.success) return memoryErrorReply(reply, new MemoryError("invalid", "Invalid memory preference"))
-    try { return await memory.setEnabled(body.data.enabled) } catch (error) { return memoryErrorReply(reply, error) }
+    try { return await memory.setEnabled(body.data.enabled, principalSignal(request)) } catch (error) { return memoryErrorReply(reply, error) }
   })
   app.post("/api/memory", { bodyLimit: 32 * 1024 }, async (request, reply) => {
     const body = z.object({ operation: MemoryOperationSchema, context: MemoryContextSchema.optional() }).strict().safeParse(request.body)
     if (!body.success) return memoryErrorReply(reply, new MemoryError("invalid", "Invalid memory request"))
-    try { return await memory.executeUI(body.data.operation, body.data.context) } catch (error) { return memoryErrorReply(reply, error) }
+    try { return await memory.executeUI(body.data.operation, body.data.context, principalSignal(request)) } catch (error) { return memoryErrorReply(reply, error) }
   })
 }

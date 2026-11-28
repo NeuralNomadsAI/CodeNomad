@@ -31,7 +31,7 @@ async function setup(page: Page, host = "web", context = "remote") {
     w.failOpen = false
     w.holdOpen = false
     window.open = (...args) => { w.attempts++; if (w.failOpen) throw new Error("opener failure"); w.opened.push(args); return null }
-    w.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+    w.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } }, invoke: async (command, args) => {
       if (command === "open_external_url") {
         w.attempts++
         if (w.holdOpen) await new Promise(resolve => { w.releaseOpen = resolve })
@@ -134,7 +134,7 @@ test("core Status info icons link to their specific help; capture the real compo
   try {
     const links = page.locator("[data-status-tips] [role=link]")
     for (const link of await links.all()) await link.click()
-    assert.deepEqual(await opened(page), ["providers.html#usage", "permissions.html#yolo-mode", "providers.html#usage", "index.html#monitor-work", "integrations.html#mcp", "integrations.html#plugins"].map(path => `${base}en/${path}`))
+    assert.deepEqual(await opened(page), ["providers.html#usage", "providers.html#usage", "index.html#monitor-work", "integrations.html#mcp", "integrations.html#plugins"].map(path => `${base}en/${path}`))
     if (process.env.CODENOMAD_HELP_CAPTURE) {
       await mkdir(process.env.CODENOMAD_HELP_CAPTURE, { recursive: true })
       await page.locator("#opencode-login-start [role=link]").hover()

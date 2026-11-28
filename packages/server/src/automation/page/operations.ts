@@ -21,7 +21,7 @@ export function parsePageOperation(raw: unknown, allowApplication = false): Page
   try { if (new TextEncoder().encode(JSON.stringify(value)).length > 256 * 1024) fail() } catch { fail() }
   if (!Object.hasOwn(value, "op") || typeof value.op !== "string") fail()
   switch (value.op) {
-    case "tree": case "viewport": case "release-handles": case "checkpoint": keys(value, ["op"]); break
+    case "tree": case "viewport": case "release-handles": case "checkpoint": case "history": keys(value, ["op"]); break
     case "resolve": case "geometry": case "scroll-into-view":
       keys(value, ["op", "node"], ["node"])
       if (!integer(value.node, 1, Number.MAX_SAFE_INTEGER)) fail()
@@ -77,13 +77,20 @@ export function parsePageOperation(raw: unknown, allowApplication = false): Page
       break
     }
     case "insert-text": keys(value, ["op", "text"], ["text"]); if (typeof value.text !== "string") fail(); break
+    case "diagnostics": keys(value, ["op", "after"], ["after"]); if (!integer(value.after, 0, Number.MAX_SAFE_INTEGER)) fail(); break
+    case "response-body":
+      keys(value, ["op", "request", "session"], ["request"])
+      if (!string(value.request, 256) || (Object.hasOwn(value, "session") && !string(value.session, 256))) fail()
+      break
     default: fail()
   }
   return value as unknown as PageOperation
 }
 
 export function pageEnvelope(method: string, input: Record<string, unknown>): void {
-  keys(input, ["sessionID", "operationID", ...(method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" || method === "browser.page.end" ? ["generation"] : [])],
+  keys(input, ["sessionID", "operationID", ...(method === "browser.page.begin" ? ["target"] : method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" || method === "browser.page.end" ? ["generation"] : [])],
     ["sessionID", "operationID", ...(method === "browser.page.send" ? ["generation", "operation"] : method === "browser.page.check" ? ["generation"] : [])])
   if (Object.hasOwn(input, "generation") && !string(input.generation)) fail()
+  if (Object.hasOwn(input, "target") && !isBrowserTarget(input.target)) fail()
 }
+import { isBrowserTarget } from "../browser-target"

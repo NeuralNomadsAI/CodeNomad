@@ -1,6 +1,7 @@
-import { createMemo, createSignal } from "solid-js"
+import { batch, createMemo, createSignal } from "solid-js"
 import type { Instance } from "../types/instance"
-import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId } from "./instances"
+import { activeInstanceId, claimRestoreCreatedInstanceForUser, closeWorkspace, instances, setActiveInstanceId, waitForInstanceInitialSessionHydration, type WorkspaceCreationOwnership } from "./instances"
+import { restoreClosedWorkspaceDrafts } from "./closed-workspace-drafts"
 import { activeSidecarToken, setActiveSidecarToken, sidecarTabs, type SideCarTabRecord } from "./sidecars"
 import { appSessionRestoreGateActive } from "./app-session-restore-gate"
 import {
@@ -9,8 +10,12 @@ import {
   onInstanceTabCloseRequested,
   openInstanceTabIds,
 } from "./app-tab-membership"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { workspaceIdentity } from "./app-session-reconciliation"
 import { publishInstanceLifecycleAuthority } from "./instance-lifecycle-authority"
+import { remoteRestoreTabs, type RemoteRestoreTab } from "./remote-restore-tabs"
+import { generateUUID } from "../lib/client-identity"
+import { sameServerSelection, type ServerSelectionIntent } from "../lib/native/server-selection-intent"
+import { parseInstanceKey } from "../lib/backend-identity"
 
 export interface InstanceAppTab {
   id: string
@@ -24,7 +29,72 @@ export interface SideCarAppTab {
   sidecarTab: SideCarTabRecord
 }
 
-export type AppTabRecord = InstanceAppTab | SideCarAppTab
+interface BlankAppTab {
+  id: string
+  kind: "blank"
+  server?: ServerSelectionIntent
+  setServer: (server: ServerSelectionIntent) => void
+}
+export type AppTabRecord = InstanceAppTab | SideCarAppTab | RemoteRestoreTab | BlankAppTab
+
+export function allowsAutomaticLocalSetup(tab: AppTabRecord): boolean {
+  if (tab.kind === "instance") return parseInstanceKey(tab.instance.id).backendId === "local"
+  return tab.kind !== "remote-restore" && (tab.kind !== "blank" || !tab.server)
+}
+
+const [blankTabs, setBlankTabs] = createSignal<BlankAppTab[]>([])
+
+export function appendBlankTab(server?: ServerSelectionIntent): string {
+  const id = `blank:${generateUUID()}`
+  const [selection, setSelection] = createSignal(server && { ...server })
+  const tab: BlankAppTab = {
+    id, kind: "blank",
+    get server() { return selection() },
+    setServer: intent => setSelection({ ...intent }),
+  }
+  setBlankTabs(tabs => [...tabs, tab])
+  return id
+}
+
+export function openBlankTab(server?: ServerSelectionIntent): void {
+  batch(() => {
+    if (server) {
+      const active = activeAppTab()
+      const existing = active?.kind === "blank" ? active : appTabs().find(tab => tab.kind === "blank")
+      if (existing) {
+        const alreadySelected = existing === active && existing.server && sameServerSelection(server, existing.server)
+        existing.setServer(server)
+        if (!alreadySelected) selectAppTab(existing.id)
+        return
+      }
+    }
+    selectAppTab(appendBlankTab(server))
+  })
+}
+
+export function closeBlankTab(id: string): void {
+  if (!blankTabs().some(tab => tab.id === id)) return
+  const fallback = getAdjacentAppTabId(id)
+  batch(() => {
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== id))
+    setTabOrder(ids => ids.filter(entry => entry !== id))
+    setAppTabOrderRevision(revision => revision + 1)
+    if (activeAppTabId() === id) selectAppTab(fallback)
+  })
+}
+
+/** A successful choice occupies its originating blank tab's position. */
+export function replaceBlankTab(blankId: string | undefined, chosenId: string): void {
+  if (!blankId || !blankTabs().some(tab => tab.id === blankId) || !getAppTabById(chosenId)) return
+  const ids = appTabs().map(tab => tab.id).filter(id => id !== chosenId)
+  batch(() => {
+    setBlankTabs(tabs => tabs.filter(tab => tab.id !== blankId))
+    setAppTabOrder(ids.map(id => id === blankId ? chosenId : id))
+    setAppTabOrderRevision(revision => revision + 1)
+  })
+}
+
+export const activeBlankTabId = () => activeAppTab()?.kind === "blank" ? activeAppTabId() ?? undefined : undefined
 
 function getInstanceAppTabId(instanceId: string): string {
   return `instance:${instanceId}`
@@ -69,6 +139,8 @@ const appTabs = createMemo<AppTabRecord[]>((previous = []) => {
   // project must not remount every shell (and restart their Git/status reads).
   const previousById = new Map(previous.map((tab) => [tab.id, tab]))
   const currentTabs = [
+    ...blankTabs(),
+    ...remoteRestoreTabs(),
     ...Array.from(instances().values())
       .filter((instance) => openInstanceTabIds().has(instance.id))
       .map((instance) => previousById.get(getInstanceAppTabId(instance.id)) ?? ({
@@ -97,7 +169,7 @@ function getAppTabById(tabId: string | null): AppTabRecord | null {
   return appTabs().find((tab) => tab.id === tabId) ?? null
 }
 
-function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
+function selectAppTab(tabId: string | null, options?: { source?: "restore"; creation?: WorkspaceCreationOwnership }) {
   if (options?.source !== "restore") setAppTabSelectionRevision((revision) => revision + 1)
   if (!tabId) {
     setActiveAppTabId(null)
@@ -112,48 +184,62 @@ function selectAppTab(tabId: string | null, options?: { source?: "restore" }) {
   }
 
   const tab = appTabs().find((entry) => entry.id === tabId)
-  if (!tab) return
+  if (!tab || options?.creation && (tab.kind !== "instance" || !options.creation.current(tab.instance.id))) return false
 
   rememberTabOrder(tab.id)
   setActiveAppTabId(tab.id)
 
   if (tab.kind === "instance") {
-    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id)
+    if (options?.source !== "restore") claimRestoreCreatedInstanceForUser(tab.instance.id, options?.creation)
     setActiveSidecarToken(null)
     setActiveInstanceId(tab.instance.id)
-    return
+    return true
   }
 
   setActiveInstanceId(null)
-  setActiveSidecarToken(tab.sidecarTab.token)
+  setActiveSidecarToken(tab.kind === "sidecar" ? tab.sidecarTab.token : null)
+  return true
 }
 
-function selectInstanceTab(instanceId: string) {
-  if (!instances().has(instanceId)) return
-  attachInstanceTab(instanceId)
-  selectAppTab(getInstanceAppTabId(instanceId))
+function selectInstanceTab(instanceId: string, creation?: WorkspaceCreationOwnership): boolean {
+  if (!instances().has(instanceId) || creation && !creation.current(instanceId)) return false
+  // Publish membership and explicit selection together so the opening transfers
+  // before automatic tab selection can run.
+  return batch(() => {
+    attachInstanceTab(instanceId)
+    return selectAppTab(getInstanceAppTabId(instanceId), creation ? { creation } : undefined) === true
+  })
 }
 
 function publishLocalInstanceTabLifecycle(type: "opened" | "removed", instanceId: string): void {
   const instance = instances().get(instanceId)
   if (!instance) return
-  const folder = normalizeWorkspacePath(instance.folder)
+  const project = workspaceIdentity(instance.folder, instance.backendId)
   const occurrence = Array.from(instances().values())
-    .filter((candidate) => normalizeWorkspacePath(candidate.folder) === folder)
+    .filter((candidate) => workspaceIdentity(candidate.folder, candidate.backendId) === project)
     .findIndex((candidate) => candidate.id === instanceId)
-  if (occurrence >= 0) publishInstanceLifecycleAuthority({ type, instanceId, folder: instance.folder, occurrence })
+  if (occurrence >= 0) publishInstanceLifecycleAuthority({
+    type, instanceId, folder: instance.folder, occurrence, projectTab: true,
+    ...(instance.backendId ? { backendId: instance.backendId } : {}),
+    ...(instance.serverId ? { serverId: instance.serverId } : {}),
+  })
 }
 
 function attachInstanceTab(instanceId: string, options?: { source?: "restore" }): void {
-  if (!instances().has(instanceId) || openInstanceTabIds().has(instanceId)) return
+  const instance = instances().get(instanceId)
+  if (!instance || openInstanceTabIds().has(instanceId)) return
+  if (options?.source !== "restore") {
+    // Capture can bind a saved occurrence synchronously; otherwise this is a plain opening.
+    publishLocalInstanceTabLifecycle("opened", instanceId)
+    void restoreClosedWorkspaceDrafts(instanceId, instance.folder, () => waitForInstanceInitialSessionHydration(instanceId))
+  }
   attachInstanceTabMembership(instanceId)
-  if (options?.source !== "restore") publishLocalInstanceTabLifecycle("opened", instanceId)
 }
 
 function closeInstanceTab(instanceId: string): void {
   if (!openInstanceTabIds().has(instanceId)) return
   detachInstanceTab(instanceId)
-  void closeWorkspace(instanceId).catch(() => {})
+  void closeWorkspace(instanceId, { keepalive: true }).catch(() => {})
 }
 
 /** Local-only removal for server stops, temporary discard and disconnected-dialog dismissal. */
@@ -217,6 +303,14 @@ function setAppTabOrder(tabIds: string[]) {
   }
 
   setTabOrder(orderedIds)
+}
+
+export function replaceRestoredAppTab(tabId: string, replacementId: string, replace: () => void) {
+  const order = appTabs().map(tab => tab.id === tabId ? replacementId : tab.id)
+  const selected = activeAppTabId() === tabId
+  replace()
+  setAppTabOrder(order)
+  if (selected) selectAppTab(replacementId, { source: "restore" })
 }
 
 function selectNextAppTab() {

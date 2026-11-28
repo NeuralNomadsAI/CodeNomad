@@ -44,7 +44,7 @@ export const commandMessages = {
   "commands.closeSession.description": "Mevcut üst session'ı kapat",
   "commands.closeSession.keywords": "kapat, durdur",
   "commands.scrubSessions.label": "Session'ları Temizle",
-  "commands.scrubSessions.description": "Boş session'ları, birincil görevini tamamlamış subagent session'larını ve gereksiz fork edilmiş session'ları kaldır.",
+  "commands.scrubSessions.description": "Boş ve etkin olmadığı doğrulanan oturumları kaldırın.",
   "commands.scrubSessions.keywords": "temizlik, boş, session'lar, kaldır, sil, arındır",
   "commands.instanceInfo.label": "Instance Bilgisi",
   "commands.instanceInfo.description": "Log'ları ve durumu görmek için instance genel bakışını aç",

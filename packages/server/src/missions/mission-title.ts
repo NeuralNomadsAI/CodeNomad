@@ -1,4 +1,5 @@
 // Dependency-free: shared by the native plugin, HTTP schemas and the renderer.
+import { truncateMissionText } from "./truncate-text"
 
 /** Short human label for a Mission; the objective remains the authoritative text. */
 export const MISSION_TITLE_MAX = 60
@@ -16,11 +17,11 @@ export function deriveMissionTitle(text: string): string {
   const line = text.split(/\r?\n/).map(item => item.replace(/\s+/g, " ").trim()).find(Boolean) ?? ""
   const clause = line.split(/(?<=[.!?;:])\s/)[0]!.replace(/[.;:]$/, "").trim()
   if (clause.length <= MISSION_TITLE_MAX) return clause
-  const cut = clause.slice(0, MISSION_TITLE_MAX - 1)
+  const cut = truncateMissionText(clause, MISSION_TITLE_MAX - 1)
   const space = cut.lastIndexOf(" ")
   return `${(space > MISSION_TITLE_MAX / 2 ? cut.slice(0, space) : cut).trimEnd()}…`
 }
 
 export function missionCoordinatorTitle(title: string | undefined, objective: string): string {
-  return `Mission · ${title ?? (deriveMissionTitle(objective) || "untitled")}`.slice(0, 160)
+  return truncateMissionText(`Mission · ${title ?? (deriveMissionTitle(objective) || "untitled")}`, 160)
 }

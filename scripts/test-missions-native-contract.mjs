@@ -136,28 +136,27 @@ try {
   const offered = requests.find(request => request.tools.some(name => /^mission[._]/.test(name)))?.tools.filter(name => /^mission[._]/.test(name))
   receipt.offeredTools = offered
   assert.deepEqual(offered?.map(name => name.replace(/^mission[._]/, "")).sort(),
-    ["briefing", "configure", "control", "delegate", "delete", "inspect", "interrupt", "prepare", "report", "revise", "schedule", "settings"])
+    ["briefing", "configure", "control", "delegate", "delete", "inspect", "interrupt", "prepare", "program", "report", "revise", "settings"])
   const started = await missions.snapshot({}, { location })
   assert.equal(started.missions.length, 1, "The native tool call recorded exactly one mission")
   assert.equal(started.missions[0].coordinatorSessionId, coordinator.id)
   assert.equal(started.missions[0].objective, "Minimum contract qualification")
   gate("tool transform, context hook and mission inspect execute through the native model loop")
 
-  // Recurrence RPC is registered without presence and qualifies the private
-  // native graph on demand. Both minimum and latest must support this contract;
-  // do not let authentication, storage or plugin failures masquerade as support.
-  stage = "recurrence capability qualification"
+  // The schedules the recurring engine left are read from the plugin's own storage. Both minimum and latest
+  // must support this reading; do not let authentication, storage or plugin failures masquerade as support.
+  stage = "stored schedule reading"
   const sessionsBefore = (await client.session.list({ location, limit: 64 })).data.map(value => value.id).sort()
-  const recurrence = await settle(missions.recurrenceSnapshot({}, { location }))
-  receipt.recurrence = recurrence.ok ? { supported: true, schedules: recurrence.value.schedules?.length }
-    : { supported: false, error: { type: recurrence.error?.type, message: recurrence.error?.message } }
-  assert(recurrence.ok, `Recurrence contract unavailable: ${recurrence.error?.type ?? ""}: ${recurrence.error?.message ?? ""}`)
-  assert.deepEqual(recurrence.value.schedules, [], "A fresh isolated store has no schedules")
+  const stored = await settle(missions.legacySchedules({}, { location }))
+  receipt.storedSchedules = stored.ok ? { supported: true, schedules: stored.value.schedules?.length }
+    : { supported: false, error: { type: stored.error?.type, message: stored.error?.message } }
+  assert(stored.ok, `Stored schedule reading unavailable: ${stored.error?.type ?? ""}: ${stored.error?.message ?? ""}`)
+  assert.deepEqual(stored.value.schedules, [], "A fresh isolated store has no schedules")
   assert.deepEqual((await client.session.list({ location, limit: 64 })).data.map(value => value.id).sort(), sessionsBefore,
-    "Recurrence qualification creates no native sessions")
+    "Reading stored schedules creates no native sessions")
   assert.deepEqual((await missions.snapshot({}, { location })).missions, started.missions,
-    "Recurrence qualification leaves the one-time journal unchanged")
-  gate("native recurrence graph available with an empty isolated schedule store")
+    "Reading stored schedules leaves the one-time journal unchanged")
+  gate("stored schedules read from an empty isolated store")
   receipt.status = "passed"
   console.log(`PASS ${version}: Missions plugin native contract (${receipt.gates.length} gates); ${root}`)
 } catch (error) {

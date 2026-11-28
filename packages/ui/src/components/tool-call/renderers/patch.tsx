@@ -1,25 +1,33 @@
+import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
 import { extractDiffPayload, getRelativePath, getToolName, hasVisibleText, isToolStateCompleted, readToolStatePayload } from "../utils"
-import { tGlobal } from "../../../lib/i18n"
+import { applyPatchRenderer } from "./apply-patch"
+import { getApplyPatchFiles } from "./apply-patch-data"
 import { getDiffToolSearchText } from "../search-text"
+
+function hasMultiplePatchFiles(state: ToolState): boolean {
+  return getApplyPatchFiles(readToolStatePayload(state).metadata).length > 1
+}
 
 export const patchRenderer: ToolRenderer = {
   tools: ["patch"],
   getSearchText: getDiffToolSearchText,
-  getAction: () => tGlobal("toolCall.renderer.action.preparingPatch"),
-  getTitle({ toolState }) {
-    const state = toolState()
+  getAction: applyPatchRenderer.getAction,
+  getTitle(context) {
+    const state = context.toolState()
     if (!state) return undefined
+    if (hasMultiplePatchFiles(state)) return applyPatchRenderer.getTitle!(context)
     const { input } = readToolStatePayload(state)
     const filePath = typeof input.filePath === "string" ? input.filePath : ""
     if (!filePath) return getToolName("patch")
     return `${getToolName("patch")} ${getRelativePath(filePath)}`
   },
-  getOutputChrome({ toolState, toolName }) {
-    const state = toolState()
+  getOutputChrome(context) {
+    const state = context.toolState()
     if (!state || state.status === "pending") return undefined
+    if (hasMultiplePatchFiles(state)) return applyPatchRenderer.getOutputChrome!(context)
 
-    const diffPayload = extractDiffPayload(toolName(), state)
+    const diffPayload = extractDiffPayload(context.toolName(), state)
     if (diffPayload) {
       return { language: "diff", getCopyText: () => diffPayload.diffText, suppressInnerHeader: false }
     }
@@ -31,9 +39,11 @@ export const patchRenderer: ToolRenderer = {
     if (!copyText) return undefined
     return { language: "diff", getCopyText: () => copyText, wrapToggle: true, suppressInnerHeader: true }
   },
-  renderBody({ toolState, toolName, renderDiff, renderMarkdown }) {
+  renderBody(context) {
+    const { toolState, toolName, renderDiff, renderMarkdown } = context
     const state = toolState()
     if (!state || state.status === "pending") return null
+    if (hasMultiplePatchFiles(state)) return applyPatchRenderer.renderBody(context)
 
     const diffPayload = extractDiffPayload(toolName(), state)
     if (diffPayload) {

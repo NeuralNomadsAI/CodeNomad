@@ -1,4 +1,5 @@
 import type { OpenCodeEvent } from "@opencode/client"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 type CompactionDelta = Extract<OpenCodeEvent, { type: "session.compaction.delta" }>
 const INTERVAL_MS = 250
@@ -9,6 +10,7 @@ export function createCompactionDeltaBuffer<Context>(reduce: (event: CompactionD
   const pending = new Map<string, {
     event: CompactionDelta
     context: Context
+    operation: ReturnType<typeof captureBackendOperation>
     timeout: ReturnType<typeof setTimeout>
   }>()
   const keyFor = (instanceId: string, sessionId: string) => `${instanceId}\0${sessionId}`
@@ -19,22 +21,28 @@ export function createCompactionDeltaBuffer<Context>(reduce: (event: CompactionD
     if (!item) return
     clearTimeout(item.timeout)
     pending.delete(key)
-    reduce(item.event, item.context)
+    if (item.operation.current()) reduce(item.event, item.context)
   }
   return {
     flush,
     push(instanceId: string, sessionId: string, event: CompactionDelta, context: Context) {
+      const operation = captureBackendOperation(instanceId)
+      if (!operation.current()) return
       const key = keyFor(instanceId, sessionId)
       const item = pending.get(key)
-      if (item) {
+      if (item && item.operation.signal === operation.signal) {
         item.event = { ...event, data: { ...event.data, text: item.event.data.text + event.data.text } }
         item.context = context
         return
       }
+      if (item) clearTimeout(item.timeout)
       pending.set(key, {
         event,
         context,
-        timeout: setTimeout(() => flush(instanceId, sessionId), INTERVAL_MS),
+        operation,
+        timeout: setTimeout(() => {
+          if (pending.get(key)?.operation === operation) flush(instanceId, sessionId)
+        }, INTERVAL_MS),
       })
     },
     cancel(instanceId: string, sessionId: string) {

@@ -13,11 +13,13 @@ const parent=new NativeParent(process.stdout,true)
 installShutdownStdinHandler(process.stdin,async()=>{},line=>parent.handleLine(line))
 const [base,output]=process.argv.slice(2), checks:string[]=[]
 const request=<T=Record<string,unknown>>(method:string,params:object={})=>parent.request<T>(method,{sessionID:"fixture-session",...params},20_000)
-const navigate=(url:string)=>request("browser.execute",{command:{action:"navigate",url}})
+const probe=async()=>(await request<{target:string}>("browser.probe")).target
+const navigate=async(url:string)=>request("browser.execute",{target:await probe(),command:{action:"navigate",url}})
 const browser=new BrowserPage(parent)
+const execute=async(action:Parameters<BrowserPage["execute"]>[1])=>browser.execute("fixture-session",action,undefined,await probe())
 async function lease() {
   const operationID=randomUUID()
-  const target=await request<{generation:string;driver:string}>("browser.page.begin",{operationID})
+  const target=await request<{generation:string;driver:string}>("browser.page.begin",{operationID,target:await probe()})
   assert.equal(target.driver,"webkit")
   return {
     generation:target.generation,
@@ -28,10 +30,10 @@ async function lease() {
 }
 async function main() {
    assert.equal(parent.browserAutomationUnavailable,false)
-  await request("browser.execute",{command:{action:"open",url:`${base}/read/preview`}})
+  await request("browser.execute",{workspaceIDs:["fixture-tab"],command:{action:"open",url:`${base}/read/preview`}})
   for(const name of ["preview","forms","edges","inputs","advanced"]) {
     await navigate(`${base}/read/${name}`)
-    if(name === 'inputs') await browser.execute('fixture-session',{action:'wait',text:'Ready now',gone:false,timeout:5000})
+    if(name === 'inputs') await execute({action:'wait',text:'Ready now',gone:false,timeout:5000})
     const current=await lease()
     const {nodes}=await current.send<{nodes:SemanticNode[]}>({op:"tree"})
     assert.ok(nodes.length)
@@ -67,15 +69,15 @@ async function main() {
     checks.push(`${name}: real native semantic tree`)
   }
   await navigate(`${base}/read/advanced`)
-  const snapshot=await browser.execute("fixture-session",{action:"snapshot"})
+  const snapshot=await execute({action:"snapshot"})
   const ref=/button "First choice" \[([^\]]+)\]/.exec(snapshot.snapshot as string)![1]
-  assert.match((await browser.execute("fixture-session",{action:"snapshot",ref})).snapshot as string,/Detailed help/)
-  assert.match((await browser.execute("fixture-session",{action:"snapshot",query:"Detailed help"})).snapshot as string,/First choice/)
+  assert.match((await execute({action:"snapshot",ref})).snapshot as string,/Detailed help/)
+  assert.match((await execute({action:"snapshot",query:"Detailed help"})).snapshot as string,/First choice/)
   const current=await lease()
   await navigate(`${base}/read/preview`)
   await assert.rejects(current.check(),/document changed|no longer current/i)
   await current.end()
-  await assert.rejects(browser.execute("fixture-session",{action:"snapshot",ref}),/snapshot|page/i)
+  await assert.rejects(execute({action:"snapshot",ref}),/snapshot|page/i)
   const hidden=await lease()
   await request("fixture.hide")
   await assert.rejects(hidden.check(),/current|visible/i)

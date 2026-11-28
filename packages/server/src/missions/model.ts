@@ -8,11 +8,12 @@ import type { MissionBodyDescriptors } from "./mission-content-wire"
 import type { MissionPanelMap } from "./mission-panel-map"
 export type { MissionSummary } from "./mission-summary"
 export type { MissionPanelBriefing, MissionPanelExecutionMode, MissionPanelMap, MissionPanelPlanChange, MissionPanelReport, MissionPanelTask } from "./mission-panel-map"
-import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
+import { controlReceiptID, hasInvalidControlHistory, isReportReceipt, reportNotificationID } from "./receipt-identity"
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
 import { hasUnsettledNativeExecution, parseNativeCallObservation, projectNativeCallObservation, type MissionNativeExecution, type NativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
 import { projectLifecycle, type MissionControlRequestedEvent, type MissionControlAppliedEvent, type MissionRunState, type MissionLifecycleOperation } from "./lifecycle-model"
+import { orderedLifecycle, type ReadRangeEvent } from "./ordered-lifecycle"
 
 export const MISSION_SCHEMA_VERSION = 1 as const
 /** Stored entries of one mission's journal range, receipts and tombstone included,
@@ -193,6 +194,8 @@ export interface MissionMap {
   template: MissionTemplateId
   profiles?: import("./playbook-profiles").MissionProfiles
   taskMode?: import("./task-execution-mode").MissionTaskMode
+  /** Keep the coordinator active with OpenCode's `/goal` across turns and restarts. */
+  coordinatorGoal?: boolean
   status: MissionStatus
   runState?: MissionRunState
   control?: MissionLifecycleOperation
@@ -308,6 +311,7 @@ interface MissionEventBase {
 
 export interface MissionCreatedEvent extends MissionEventBase {
   startOnCreation?: boolean
+  coordinatorGoal?: boolean
   creationDefaults?: import("./creation-defaults").MissionCreationMetadata
   type: "mission.created"
   projectCanonical: string
@@ -559,9 +563,143 @@ export function missionPlanChanges(events: readonly MissionEvent[], missionID: s
   return live ? changes : []
 }
 
-/** `changes`, when given, receives every plan change, before the map keeps its last ones. */
+interface OrderedMissionSource {
+  /** First creation in the range, including when it follows other events. */
+  created?: MissionCreatedEvent
+  /** Read by unique event key; undefined means confirmed absence, errors reject the fold. */
+  readEvent: ReadRangeEvent
+  /** Latest reported event in the range with this logical report ID. A legacy
+   * report's ID need not be its event key. Required only for notification integrity. */
+  readReport: (id: string) => MissionTaskReportedEvent | undefined
+  /** Stream plan changes and the source keys of any before/after text. Use only
+   * if finish returns a live map. Resolve old text by point-reading those keys. */
+  onChange?: (change: MissionPlanChange, source: MissionChangeSource) => void
+  onTask?: (key: string, eventID: string) => void
+  onReport?: (id: string, eventID: string) => void
+}
+
+interface MissionChangeSource {
+  eventID: string
+  objective?: { before: string; after: string }
+  notes?: { before: string; after: string }
+}
+
+/** Superset of lookups append can need, for adapters that prefetch in the
+ * transaction before visiting a batch. IDs are scoped to that batch's range. */
+export function orderedMissionLookups(batch: readonly MissionEvent[]) {
+  const events = new Set<string>(), reports = new Set<string>()
+  for (const event of batch) {
+    if (event.type === "mission.control-requested") {
+      for (const target of event.targets) events.add(controlReceiptID(event.id, target.sessionID))
+    }
+    if (event.type === "mission.control-applied") events.add(event.operationID)
+    if (event.type === "task.reported") events.add(reportNotificationID(event.missionID, event.report.id))
+    if (event.type === "report.notified") reports.add(event.reportID)
+  }
+  return { events, reports }
+}
+
+/** Cold-open reducer for one validated, immutable mission range with unique event
+ * keys, in compareEvents order. `append` and its lookups are synchronous so
+ * the source can prefetch per batch within the observation (including lookahead).
+ * A failed append invalidates the fold. After interruption, replay the source;
+ * position alone is insufficient to resume without the correlated reducer state. */
+export function createOrderedMissionFold(source: OrderedMissionSource) {
+  const { created, readEvent, readReport, onChange, onTask, onReport } = source
+  const creationID = created?.id
+  const scope = created && { missionID: created.missionID, projectID: created.projectID }
+  const lifecycle = orderedLifecycle(readEvent)
+  const discarded = { count: 0 }
+  const admitted = new Set<string>()
+  let cursor: Pick<MissionEvent, "id" | "createdAt"> | undefined
+  let notificationUnavailable = false
+  let observedCreation = false, deleted = false, closed = false, busy = false, revision = 0
+  let objectiveSource = creationID, notesSource = creationID
+  let reducer = created && missionMapReducer(created, discarded, lifecycle.project, (change, event) => {
+    if (!onChange) return
+    const source: MissionChangeSource = { eventID: event.id }
+    if (change.objective) {
+      source.objective = { before: objectiveSource!, after: event.id }
+      objectiveSource = event.id
+    }
+    // An update can reset notes even when its history row omits the notes pair.
+    if (change.notes) source.notes = { before: notesSource!, after: event.id }
+    if (event.type !== "mission.revised" || event.notesSpecified) notesSource = event.id
+    onChange(change, source)
+  }, onTask)
+
+  function append(batch: readonly MissionEvent[]) {
+    if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
+    busy = true
+    try {
+      for (const event of batch) {
+        if (scope && (event.projectID !== scope.projectID || event.missionID !== scope.missionID)) {
+          throw new Error("Event outside the ordered mission range")
+        }
+        if (cursor && compareEvents(cursor, event) >= 0) throw new Error("Unordered mission range")
+        cursor = { id: event.id, createdAt: event.createdAt }
+        revision++
+        if (!observedCreation && event.type === "mission.created") {
+          if (event.id !== creationID) throw new Error("Mismatched ordered mission range creation")
+          observedCreation = true
+        }
+        if (event.type === "mission.deleted") {
+          deleted = true
+          reducer = undefined
+          admitted.clear()
+        }
+        if (event.type === "mission.created" || event.type === "mission.control-requested" || event.type === "mission.control-applied") {
+          lifecycle.apply(event, revision)
+        }
+        if (event.type === "report.notified" && !notificationUnavailable) {
+          const report = readReport(event.reportID)
+          if (!report || !isReportReceipt(event, report, event.reportID)) notificationUnavailable = true
+        }
+        reducer?.apply(event)
+        if (event.type === "task.reported") {
+          const id = event.report.id
+          const accepted = reducer?.lastReport() === event.report
+          if (accepted) onReport?.(id, event.id)
+          if (!notificationUnavailable || (accepted && isCoordinatorNotificationReport(event.report))) {
+            const slot = readEvent(reportNotificationID(event.missionID, id))
+            if (slot) {
+              if (!isReportReceipt(slot, event, id) || !isCoordinatorNotificationReport(event.report)) notificationUnavailable = true
+              else if (accepted) admitted.add(id)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      closed = true
+      throw error
+    } finally {
+      busy = false
+    }
+  }
+  function project() {
+    if (closed || busy) throw new Error("Ordered mission fold is closed or busy")
+    if (creationID !== undefined && !observedCreation) throw new Error("Missing ordered mission range creation")
+    const control = lifecycle.project()
+    const mission = reducer?.finish(control, id => admitted.has(id), notificationUnavailable)
+    return {
+      mission,
+      discardedEvents: !scope ? revision : deleted ? 0 : discarded.count,
+      ...(control.controlUnavailable ? { controlUnavailable: true } : {}),
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+    }
+  }
+  function finish() {
+    const result = project()
+    closed = true
+    reducer = undefined
+    admitted.clear()
+    return result
+  }
+  return { append, finish, project, inputSources: () => ({ objective: objectiveSource, notes: notesSource }) }
+}
+
 function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
-  let created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
+  const created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
   if (!created) {
     discarded.count += events.length
     return undefined
@@ -569,6 +707,27 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   if (events.some((event) => event.type === "mission.deleted")) return undefined
 
+  let prefixLifecycle: ReturnType<typeof projectLifecycle> | undefined
+  const lifecycleEvents: MissionEvent[] = []
+  const reducer = missionMapReducer(created, discarded, () => prefixLifecycle ??= projectLifecycle(lifecycleEvents),
+    change => { changes?.push(change) })
+  for (const event of events) {
+    reducer.apply(event)
+    if (event.type === "mission.created" || event.type === "mission.control-requested" || event.type === "mission.control-applied") {
+      lifecycleEvents.push(event)
+      prefixLifecycle = undefined
+    }
+  }
+  return reducer.finish(projectLifecycle(events),
+    id => events.some(event => isReportReceipt(event, created, id)), hasInvalidReportNotificationHistory(events))
+}
+
+/** Shared transitions for array and ordered range reads. Presentation mutates the
+ * derived tasks, so `finish` consumes this reducer. */
+function missionMapReducer({ objective: initialObjective, notes: initialNotes, ...created }: MissionCreatedEvent, discarded: { count: number },
+  lifecycleBefore: () => ReturnType<typeof projectLifecycle>,
+  onChange: (change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) => void,
+  onTask?: (key: string, eventID: string) => void) {
   const tasks = new Map<string, MissionTask>()
   const nativeCallHistory = new Map<string, { toolCalls: Set<string>; messages: Set<string>; calls: MissionNativeBinding[] }>()
   // An old completed report cannot settle a later explicitly started call.
@@ -576,12 +735,21 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   const actors = new Map<string, MissionActor>()
   const reports: MissionReport[] = []
   const history: MissionPlanChange[] = []
+  let historyTruncated = false
+  function recordChange(change: MissionPlanChange, event: MissionPreparedEvent | MissionUpdatedEvent | MissionRevisedEvent) {
+    onChange(change, event)
+    history.push(change)
+    if (history.length > MISSION_MAX_HISTORY) {
+      history.shift()
+      historyTruncated = true
+    }
+  }
   let status: MissionStatus = "active"
-  let objective = created.objective
-  let notes = created.notes
+  let objective = initialObjective
+  let notes = initialNotes
   let briefing: MissionBriefing | undefined
   const briefingResponses: MissionBriefingResponse[] = []
-  let updatedAt = created.createdAt
+  let updatedAt = -Infinity
 
   actors.set(created.coordinator.sessionID, {
     sessionId: created.coordinator.sessionID,
@@ -595,20 +763,23 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   let stoppedForReports = false
   // Index of the finish in effect: a resumed failure no longer finishes the mission.
-  let finishIndex = -1
-  for (const event of events) {
+  let finish: Pick<MissionFinishedEvent, "summary" | "sequence"> | undefined
+  let finishIndex = -1, firstStop = -1, revision = 0
+  function apply(event: MissionEvent) {
+    const index = revision++
+    const beforeUpdatedAt = updatedAt
     updatedAt = Math.max(updatedAt, event.createdAt)
+    if (firstStop < 0 && event.type === "mission.control-requested" && event.action === "stop") firstStop = index
     if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
       discarded.count += 1
-      continue
+      return
     }
     if (event.type === "mission.control-requested" && event.action === "stop") stoppedForReports = true
     if (event.type === "mission.prepared") {
-      const prefix = events.slice(0, events.indexOf(event))
-      if (event.expectedRevision !== prefix.length || tasks.size || status !== "active"
-        || projectLifecycle(prefix).runState !== "prepared") { discarded.count++; continue }
+      if (event.expectedRevision !== index || tasks.size || status !== "active"
+        || lifecycleBefore().runState !== "prepared") { discarded.count++; return }
       created = { ...created, title: event.title, template: event.template, profiles: event.profiles,
-        taskMode: event.taskMode, coordinator: event.coordinator }
+        taskMode: event.taskMode, coordinatorGoal: event.coordinatorGoal, coordinator: event.coordinator }
       actors.clear()
       actors.set(event.coordinator.sessionID, { sessionId: event.coordinator.sessionID, kind: "coordinator", managed: false,
         title: event.coordinator.title, roles: ["coordinator"], location: event.coordinator.location, joinedAt: event.createdAt })
@@ -618,7 +789,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       const previousNotes = notes
       objective = event.objective
       notes = event.notes
-      history.push({
+      recordChange({
         revision: event.expectedRevision + 1,
         source: "user",
         requestID: event.requestID,
@@ -628,24 +799,23 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         retiredTasks: [],
         dependencyUpdates: [],
         createdAt: event.createdAt,
-      })
-      continue
+      }, event)
+      return
     }
-    if (event.type === "mission.deleted") continue
+    if (event.type === "mission.deleted") return
     if (event.type === "mission.briefed") {
       const value = parseMissionBriefing(event.briefing)
-      const index = events.indexOf(event)
-      const lifecycle = projectLifecycle(events.slice(0, index))
+      const lifecycle = lifecycleBefore()
       if (!value || event.actorSessionID !== created.coordinator.sessionID || status !== "active" || stoppedForReports
         || value.id !== event.id || value.createdAt !== event.createdAt || value.basedOnRevision !== index
-        || value.basedOnUpdatedAt !== Math.max(...events.slice(0, index).map(item => item.createdAt))
+        || value.basedOnUpdatedAt !== beforeUpdatedAt
         || ["prepared", "paused", "stopped"].includes(lifecycle.runState ?? "running") || lifecycle.control?.pending.length
-        || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; continue }
+        || !briefingSourcesExist({ tasks: [...tasks.values()] }, value)) { discarded.count++; return }
       briefing = value
-      if (isAutomaticBriefing(value)) continue
+      if (isAutomaticBriefing(value)) return
       briefingResponses.push({ requestID: value.requestID, briefingID: value.id })
       if (briefingResponses.length > MISSION_BRIEFING_RESPONSES_MAX) briefingResponses.shift()
-      continue
+      return
     }
     if (event.type === "mission.revised") {
       const previousObjective = objective
@@ -687,8 +857,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           createdAt: event.createdAt,
           updatedAt: event.createdAt,
         })
+        onTask?.(added.key, event.id)
       }
-      history.push({
+      recordChange({
         revision: event.expectedRevision + 1,
         source: "coordinator",
         actorSessionId: event.actorSessionID,
@@ -699,13 +870,13 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         retiredTasks: event.retiredTasks.map((task) => ({ ...task })),
         dependencyUpdates: dependencyChanges,
         createdAt: event.createdAt,
-      })
-      continue
+      }, event)
+      return
     }
     if (event.type === "task.created") {
       if (tasks.has(event.task.key)) {
         discarded.count += 1
-        continue
+        return
       }
       tasks.set(event.task.key, {
         ...event.task,
@@ -716,7 +887,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         createdAt: event.createdAt,
         updatedAt: event.createdAt,
       })
-      continue
+      onTask?.(event.task.key, event.id)
+      return
     }
     if (event.type === "task.native-bound") {
       const task = tasks.get(event.taskKey)
@@ -730,7 +902,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           || existing.title !== event.actor.title || existing.location.directory !== event.actor.location.directory
           || existing.location.workspaceID !== event.actor.location.workspaceID))) {
         discarded.count += 1
-        continue
+        return
       }
       task.actorSessionId = event.actor.sessionID
       task.nativeBinding = { ...event.binding }
@@ -748,7 +920,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           title: event.actor.title, roles: [task.role], location: event.actor.location, joinedAt: event.createdAt,
         })
       }
-      continue
+      return
     }
     if (event.type === "task.native-call-started") {
       const task = tasks.get(event.taskKey)
@@ -761,7 +933,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || event.binding.parentSessionID !== original.parentSessionID
         || history.toolCalls.has(event.binding.toolCallID) || history.messages.has(event.binding.parentMessageID)) {
         discarded.count += 1
-        continue
+        return
       }
       task.nativeExecution = { binding: { ...event.binding } }
       history.toolCalls.add(event.binding.toolCallID)
@@ -769,7 +941,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       history.calls.push({ ...event.binding })
       nativeReportedExecutions.delete(task.key)
       task.updatedAt = event.createdAt
-      continue
+      return
     }
     if (event.type === "task.native-returned" || event.type === "task.native-call-ended") {
       const task = tasks.get(event.taskKey)
@@ -780,13 +952,13 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || (event.type === "task.native-returned" && !sameNativeCall(binding, event.binding))
         || (execution.launch && execution.launch.mode !== "foreground")) {
         discarded.count += 1
-        continue
+        return
       }
       // Error is an observed executor termination, not OS descendant suspension.
       execution.ended = event.type === "task.native-returned" ? "returned" : event.outcome
       if (execution.ended === "returned" && sameNativeCall(binding, event.binding)) binding.nativeReturned = true
       task.updatedAt = event.createdAt
-      continue
+      return
     }
     if (event.type === "task.native-call-observed") {
       const task = tasks.get(event.taskKey), execution = task?.nativeExecution
@@ -795,19 +967,19 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || task.actorSessionId !== event.childSessionID || event.binding.generation !== task.contractGeneration
         || !sameNativeCall(execution.binding, event.binding)
         || observation.source.sessionID !== (observation.kind === "child-uncorrelated" ? event.childSessionID : event.binding.parentSessionID)) {
-        discarded.count += 1; continue
+        discarded.count += 1; return
       }
       task.nativeExecution = projectNativeCallObservation(execution, observation)
       if (!task.nativeExecution.observationConflict && task.nativeExecution.launch?.mode === "foreground"
         && task.nativeExecution.ended === "returned" && task.nativeBinding && sameNativeCall(task.nativeBinding, event.binding)) task.nativeBinding.nativeReturned = true
       task.updatedAt = event.createdAt
-      continue
+      return
     }
     if (event.type === "task.dispatching") {
       const task = tasks.get(event.taskKey)
       if (!task || task.report || task.nativeBinding) {
         discarded.count += 1
-        continue
+        return
       }
       task.actorSessionId = event.actor.sessionID
       task.admissionId = event.admissionID
@@ -828,17 +1000,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           joinedAt: event.createdAt,
         })
       }
-      continue
+      return
     }
     if (event.type === "task.dispatched") {
       const task = tasks.get(event.taskKey)
       if (!task || !task.actorSessionId || task.report || task.nativeBinding) {
         discarded.count += 1
-        continue
+        return
       }
       task.status = "queued"
       task.updatedAt = event.createdAt
-      continue
+      return
     }
     if (event.type === "task.reported") {
       const task = tasks.get(event.report.taskKey)
@@ -856,7 +1028,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           || (!historical && !sameNativeCall(task.nativeExecution?.binding, call))
           || reports.some(report => report.id === event.report.id)))) {
         discarded.count += 1
-        continue
+        return
       }
       // Historical invocation evidence cannot settle a different pending call.
       const reportsCurrentCall = !readout && task.nativeBinding && (!call || sameNativeCall(task.nativeExecution?.binding, call))
@@ -865,11 +1037,11 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         task.lateReports = [...(task.lateReports ?? []), event.report]
         task.updatedAt = event.createdAt
         reports.push(event.report)
-        continue
+        return
       }
       if (task.report || task.status === "withdrawn" || event.report.late) {
         discarded.count += 1
-        continue
+        return
       }
       task.report = event.report
       if (reportsCurrentCall) nativeReportedExecutions.add(task.key)
@@ -878,100 +1050,104 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         : event.report.outcome === "blocked" ? "needs-input" : "failed"
       task.updatedAt = event.createdAt
       reports.push(event.report)
-      continue
+      return
     }
     if (event.type === "report.notified") {
       const report = reports.find(report => report.id === event.reportID)
       if (report && !isCoordinatorNotificationReport(report)) discarded.count += 1
-      continue
+      return
     }
     if (event.type === "mission.finished") {
       status = event.outcome
-      finishIndex = events.indexOf(event)
-      continue
+      finishIndex = index
+      finish = { summary: event.summary, sequence: event.sequence }
+      return
     }
     if (event.type === "mission.reopened") {
       // Only a failure can be resumed, at the exact revision the user saw.
-      if (status !== "failed" || event.expectedRevision !== events.indexOf(event)) { discarded.count += 1; continue }
+      if (status !== "failed" || event.expectedRevision !== index) { discarded.count += 1; return }
       status = "active"
       finishIndex = -1
+      finish = undefined
     }
   }
 
-  for (const task of tasks.values()) {
-    task.outstandingExecution = task.status === "withdrawn" && Boolean(task.nativeBinding
-      ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
-        : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
-      : task.admissionId && !task.report && (task.lateReports?.length ?? 0) === 0)
-    if (task.status === "ready") {
-      const waiting = task.blockedBy.some((key) => tasks.get(key)?.status !== "completed")
-      task.status = waiting ? "blocked" : "ready"
-    }
-  }
-
-  const lifecycle = projectLifecycle(events)
-  const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
-  // Denial receipts in the normal final-report/native-settlement interval do
-  // not rewrite the already recorded terminal result. A prior Stop remains terminal.
-  const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
-  if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
-    status = "stopped"
-    for (const task of tasks.values()) {
-      if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"
-      task.outstandingExecution = Boolean(task.nativeBinding
+  function project(lifecycle: ReturnType<typeof projectLifecycle>, admitted: (reportID: string) => boolean,
+    notificationUnavailable: boolean): MissionMap {
+    const projectedTasks = [...tasks.values()].map(task => ({ ...task }))
+    let projectedStatus = status
+    for (const task of projectedTasks) {
+      task.outstandingExecution = task.status === "withdrawn" && Boolean(task.nativeBinding
         ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
           : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
-        : task.actorSessionId && lifecycle.control?.pending.includes(task.actorSessionId) && task.admissionId
-          && !task.report && !task.lateReports?.length)
+        : task.admissionId && !task.report && (task.lateReports?.length ?? 0) === 0)
+      if (task.status === "ready") {
+        const waiting = task.blockedBy.some((key) => tasks.get(key)?.status !== "completed")
+        task.status = waiting ? "blocked" : "ready"
+      }
+    }
+
+    // Denial receipts in the normal final-report/native-settlement interval do
+    // not rewrite the already recorded terminal result. A prior Stop remains terminal.
+    const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
+    if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
+      projectedStatus = "stopped"
+      for (const task of projectedTasks) {
+        if (["ready", "blocked", "queued", "dispatching"].includes(task.status)) task.status = "withdrawn"
+        task.outstandingExecution = Boolean(task.nativeBinding
+          ? task.nativeExecution?.observationConflict || task.nativeExecution?.launch && task.nativeExecution.launch.mode !== "foreground" ? hasUnsettledNativeExecution(task)
+            : !task.nativeExecution?.ended && !nativeReportedExecutions.has(task.key)
+          : task.actorSessionId && lifecycle.control?.pending.includes(task.actorSessionId) && task.admissionId
+            && !task.report && !task.lateReports?.length)
+      }
+    }
+    const taskList = projectedTasks.sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
+    const notificationStatus = (report: MissionReport): MissionReport => report.delivery === "coordinator-readout" ? { ...report } : ({
+      ...report,
+      notificationStatus: isCoordinatorNotificationReport(report)
+        && admitted(report.id) ? "admitted" : "pending",
+    })
+    for (const task of taskList) {
+      if (task.report) task.report = notificationStatus(task.report)
+      if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
+    }
+    return {
+      version: MISSION_SCHEMA_VERSION,
+      id: created.missionID,
+      projectID: created.projectID,
+      projectCanonical: created.projectCanonical,
+      ...(created.title === undefined ? {} : { title: created.title }),
+      ...(created.preparedBy === undefined ? {} : { preparedBy: {
+        ...(created.preparedBy.missionID === undefined ? {} : { missionId: created.preparedBy.missionID }),
+        coordinatorSessionId: created.preparedBy.coordinatorSessionID } }),
+      objective,
+      notes,
+      ...(briefing ? { briefing } : {}),
+      ...(briefingResponses.length ? { briefingResponses } : {}),
+      template: created.template,
+      taskMode: created.taskMode ?? "native",
+      ...(created.coordinatorGoal ? { coordinatorGoal: true } : {}),
+      ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
+      ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
+      status: projectedStatus,
+      ...lifecycle,
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+      summary: finish?.summary,
+      ...(finish?.sequence !== undefined ? { finishSequence: finish.sequence } : {}),
+      coordinatorSessionId: created.coordinator.sessionID,
+      actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
+      tasks: taskList,
+      reports: reports.slice().sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
+      frontier: taskList.filter((task) => task.status === "ready").map((task) => task.key),
+      claims: taskList.filter((task) => task.status === "dispatching" || task.status === "queued").map((task) => task.key),
+      createdAt: created.createdAt,
+      updatedAt,
+      revision,
+      history,
+      historyTruncated,
     }
   }
-  const taskList = [...tasks.values()].sort((left, right) => left.createdAt - right.createdAt || left.key.localeCompare(right.key))
-  const notificationStatus = (report: MissionReport): MissionReport => report.delivery === "coordinator-readout" ? { ...report } : ({
-    ...report,
-    // ponytail: scan the bounded 2,000-event journal; index only if profiling warrants it.
-    notificationStatus: isCoordinatorNotificationReport(report)
-      && events.some(event => isReportReceipt(event, created, report.id)) ? "admitted" : "pending",
-  })
-  for (const task of taskList) {
-    if (task.report) task.report = notificationStatus(task.report)
-    if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
-  }
-  changes?.push(...history)
-  return {
-    version: MISSION_SCHEMA_VERSION,
-    id: created.missionID,
-    projectID: created.projectID,
-    projectCanonical: created.projectCanonical,
-    ...(created.title === undefined ? {} : { title: created.title }),
-    ...(created.preparedBy === undefined ? {} : { preparedBy: {
-      ...(created.preparedBy.missionID === undefined ? {} : { missionId: created.preparedBy.missionID }),
-      coordinatorSessionId: created.preparedBy.coordinatorSessionID } }),
-    objective,
-    notes,
-    ...(briefing ? { briefing } : {}),
-    ...(briefingResponses.length ? { briefingResponses } : {}),
-    template: created.template,
-    taskMode: created.taskMode ?? "native",
-    ...(created.profiles === undefined ? {} : { profiles: structuredClone(created.profiles) }),
-    ...(created.creationDefaults === undefined ? {} : { creationDefaults: structuredClone(created.creationDefaults) }),
-    status,
-    ...lifecycle,
-    ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
-    summary: finishIndex >= 0 ? (events[finishIndex] as MissionFinishedEvent).summary : undefined,
-    ...(finishIndex >= 0 && (events[finishIndex] as MissionFinishedEvent).sequence !== undefined
-      ? { finishSequence: (events[finishIndex] as MissionFinishedEvent).sequence } : {}),
-    coordinatorSessionId: created.coordinator.sessionID,
-    actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
-    tasks: taskList,
-    reports: reports.sort((left, right) => left.createdAt - right.createdAt).map(notificationStatus),
-    frontier: taskList.filter((task) => task.status === "ready").map((task) => task.key),
-    claims: taskList.filter((task) => task.status === "dispatching" || task.status === "queued").map((task) => task.key),
-    createdAt: created.createdAt,
-    updatedAt,
-    revision: events.length,
-    history: history.slice(-MISSION_MAX_HISTORY),
-    historyTruncated: history.length > MISSION_MAX_HISTORY,
-  }
+  return { apply, finish: project, lastReport: () => reports.at(-1) }
 }
 
 export function compareEvents(left: Pick<MissionEvent, "createdAt" | "id">, right: Pick<MissionEvent, "createdAt" | "id">): number {

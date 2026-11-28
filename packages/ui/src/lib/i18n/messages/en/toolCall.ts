@@ -164,4 +164,8 @@ export const toolCallMessages = {
   "toolCall.applyPatch.title.withFileCount.one": "{tool} ({count} file)",
   "toolCall.applyPatch.title.withFileCount.other": "{tool} ({count} files)",
   "toolCall.applyPatch.fileFallback": "File {number}",
+  "toolCall.applyPatch.added": "Added · {path}",
+  "toolCall.applyPatch.deleted": "Deleted · {path}",
+  "toolCall.applyPatch.modified": "Modified · {path}",
+  "toolCall.applyPatch.renamed": "Renamed · {path}",
 } as const

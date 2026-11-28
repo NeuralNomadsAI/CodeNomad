@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { normalizeSessionMessage } from "../stores/message-v2/normalizers"
 import type { SessionMessageInfo, ToolContent } from "@opencode/client"
-import { isToolImageContent, toolImageSource } from "./tool-content"
+import { isToolImageContent, toolImageReference } from "./tool-content"
 import { defaultRenderer } from "../components/tool-call/renderers/default"
 import { buildToolSpeechText } from "../components/tool-call/utils"
 import type { ToolRendererContext } from "../components/tool-call/types"
@@ -44,21 +44,20 @@ test("native images survive normalization without entering copy, local search or
 })
 
 test("image loading permits image data and HTTP sources but rejects local/executable and mismatched data URLs", () => {
-  assert.equal(toolImageSource(file), file.uri)
+  assert.equal(toolImageReference(file), file.uri)
   for (const uri of ["https://example.com/image.png", "http://localhost:1234/image.png"]) {
-    assert.equal(toolImageSource({ ...file, uri }), uri)
+    assert.equal(toolImageReference({ ...file, uri }), uri)
   }
   for (const uri of ["file:///etc/image.png", "javascript:alert(1)", "data:text/html;base64,AA==", "data:image/jpeg;base64,AA==", "https://user:secret@example.com/image.png"]) {
-    assert.equal(toolImageSource({ ...file, uri }), undefined)
+    assert.equal(toolImageReference({ ...file, uri }), undefined)
   }
   assert.equal(isToolImageContent({ type: "text", text: file.uri }), false)
 })
 
-test("a deferred tool image loads from CodeNomad's session-media route on the API base", () => {
+test("a deferred tool image keeps its validated session-media reference", () => {
   const uri = `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(64)}`
-  assert.equal(toolImageSource({ ...file, uri }, "https://codenomad.example/"), `https://codenomad.example${uri}`)
-  assert.equal(toolImageSource({ ...file, uri }, undefined), uri)
+  assert.equal(toolImageReference({ ...file, uri }), uri)
   for (const forged of [`${uri}?x=1`, uri.replace("session-media", "panel-extensions"), `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(63)}`, `//evil.example${uri}`]) {
-    assert.equal(toolImageSource({ ...file, uri: forged }, "https://codenomad.example"), undefined)
+    assert.equal(toolImageReference({ ...file, uri: forged }), undefined)
   }
 })

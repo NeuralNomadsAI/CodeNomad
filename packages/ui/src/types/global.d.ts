@@ -43,6 +43,7 @@ declare global {
     onCliError?: (callback: (data: unknown) => void) => () => void
     getCliStatus?: () => Promise<unknown>
     restartCli?: () => Promise<unknown>
+    renewManagedSession?: () => Promise<boolean>
     openDialog?: (options: ElectronDialogOptions) => Promise<ElectronDialogResult>
     getDirectoryPaths?: (paths: string[]) => Promise<string[]>
     openWorkspaceTarget?: (payload: {
@@ -52,6 +53,7 @@ declare global {
       path?: string
       editor?: "vscode" | "cursor" | "zed" | "vscodium"
     }) => Promise<{ ok: true }>
+    openLocalPath?: (payload: { path: string; keep: import("../lib/workspace-open").LocalPathKeep }) => Promise<{ result: import("../lib/workspace-open").LocalPathResult }>
     setWorkspaceMenuEnabled?: (enabled: boolean, viewState?: import("../lib/native/view-menu").ViewMenuState) => Promise<{ ok: true }>
     newWindow?: () => Promise<{ ok: true }>
     nextPendingFolder?: () => Promise<string | null>
@@ -65,11 +67,17 @@ declare global {
     getZoomFactor?: () => number
     getPathForFile?: (file: File) => string | null
     requestMicrophoneAccess?: () => Promise<{ granted: boolean }>
+    deviceSpeech?: (request: import("../../../desktop-speech/contract").DeviceSpeechRequest) => Promise<unknown>
+    remoteMicrophoneLease?: true
+    remoteDictation?: (request: import("../../../desktop-speech/remote-contract").RemoteDictationRequest) => Promise<unknown>
+    settleRemoteDictation?: (request: import("../../../desktop-speech/remote-contract").SettleRemoteDictation) => Promise<unknown>
     setWakeLock?: (enabled: boolean) => Promise<{ enabled: boolean }>
     setNotificationBadge?: (count: number) => Promise<unknown>
     claimClientStateAccess?: (accessToken: string) => Promise<boolean>
     loadClientState?: (accessToken: string) => Promise<ElectronClientStateLoadResult>
     saveClientState?: (accessToken: string, snapshot: unknown) => Promise<boolean>
+    loadFileDrafts?: (accessToken: string, key?: string) => Promise<import("../stores/workspace-file-drafts-codec").WorkspaceFileDraft[]>
+    saveFileDraft?: (accessToken: string, change: import("../lib/native/client-state").FileDraftChange) => Promise<boolean>
     commitClientStatePartitions?: (accessToken: string, payload: ClientStatePartitionCommit) => Promise<boolean>
     loadClientStatePartition?: (accessToken: string, key: string) => Promise<string | null>
     setClientStateRestoreEnabled?: (accessToken: string, enabled: boolean) => Promise<boolean>
@@ -78,15 +86,21 @@ declare global {
     deleteOtherDataProfiles?: (ids: string[]) => Promise<unknown>
     setNextLaunchDataProfile?: (name: string) => Promise<unknown>
     relaunchIntoNextDataProfile?: () => Promise<unknown>
-    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number }) => Promise<{ ok: true }>
+    registerBrowserTarget?: (payload: { sessionId: string; registrationId: string; guestWebContentsId: number; logicalAddress?: string; instanceId?: string }) => Promise<{ ok: true }>
     unregisterBrowserTarget?: (registrationId: string) => Promise<{ ok: true }>
     emulateBrowserTarget?: (registrationId: string, preset: import("../lib/native/browser-emulation").BrowserEmulationPreset) => Promise<void>
     browserTargetHistory?: (guestWebContentsId: number, entryId?: number) => Promise<import("../lib/browser-history").NativeBrowserHistory | undefined>
-    claimBrowserOpen?: (requestID: string) => Promise<boolean>
+    claimBrowserOpen?: (requestID: string, response: import("../lib/native/browser").BrowserOpenResponse) => Promise<boolean>
+    browserPreviewOwnership?: (input: import("../lib/native/browser").BrowserPreviewOwnershipAction) => Promise<import("../lib/native/browser").BrowserPreviewOwnership | undefined>
+    onBrowserPreviewOwnership?: (callback: (payload: import("../lib/native/browser").BrowserPreviewOwnership) => void) => () => void
+    onBrowserPreviewFocus?: (callback: (payload: { sessionId: string; instanceId: string }) => void) => () => void
+    onBrowserOpenSettled?: (callback: (payload: import("../lib/native/browser").BrowserOpenSettled) => void) => () => void
     releaseBrowserOpen?: (requestID: string) => Promise<boolean>
-    onBrowserOpenRequest?: (callback: (payload: { sessionID: string; url: string; requestID: string }) => void) => () => void
+    onBrowserOpenDiscovery?: (callback: (payload: import("../lib/native/browser").BrowserOpenDiscovery) => void) => () => void
+    onBrowserOpenRequest?: (callback: (payload: import("../lib/native/browser").BrowserOpenRequest) => void) => () => void
 
-    showNotification?: (payload: { title: string; body: string }) => Promise<{ ok: boolean; reason?: string }>
+    showNotification?: (payload: { title: string; body: string; actionId?: string }) => Promise<{ ok: boolean; reason?: string }>
+    onNotificationClick?: (callback: (actionId: unknown) => void) => () => void
     openRemoteWindow?: (payload: {
       id: string
       name: string
@@ -96,7 +110,7 @@ declare global {
       skipTlsVerify: boolean
       requireLoad?: boolean
     }) => Promise<{ ok: boolean }>
-    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
+    openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; serverId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>
     getPreferencesSection?: () => Promise<unknown>
     preferencesReady?: () => Promise<unknown>
@@ -104,6 +118,7 @@ declare global {
     resolvePreferencesTransition?: (id: number, approved: boolean) => Promise<unknown>
     openerStartupState?: (command: string, epoch?: number) => Promise<unknown>
     memoryCleanup?: (request: import("../lib/native/memory-cleanup-command").MemoryCleanupRequest) => Promise<unknown>
+    selectServer?: (intent: import("../lib/native/server-selection-intent").ServerSelectionIntent, action?: "remove") => Promise<unknown>
     onPreferencesSection?: (callback: (request: unknown) => void) => () => void
     onPreferencesCloseRequested?: (callback: () => void) => () => void
     onPreferencesTransitionRequested?: (callback: (value: unknown) => void) => () => void
@@ -138,12 +153,17 @@ declare global {
       __CODENOMAD_API_BASE__?: string
       __CODENOMAD_EVENTS_URL__?: string
        __CODENOMAD_RUNTIME_HOST__?: "electron" | "tauri" | "web"
+       __CODENOMAD_NOTIFICATION_ACTIONS__?: boolean
+       __CODENOMAD_NOTIFICATION_PERMISSION__?: boolean
        __CODENOMAD_BROWSER_CAPABILITIES__?: import("../lib/native/browser").BrowserHostCapabilities
+      /** Set by Tauri local windows whose host provides `open_local_path`. */
+      __CODENOMAD_LOCAL_PATHS__?: boolean
        __CODENOMAD_WINDOW_CONTEXT__?: "local" | "remote" | "preferences"
        readonly __CODENOMAD_WINDOW_ID__?: string | null
-       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: () => Promise<void>
+       __CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__?: (phase?: false | "cancel" | "prepare" | "release" | "navigation" | "navigation-cancel") => Promise<void>
        __CODENOMAD_STARTUP_STATE_COMMAND__?: (command: unknown) => Promise<unknown>
        __CODENOMAD_MEMORY_CLEANUP__?: (request: unknown) => Promise<void>
+       __CODENOMAD_SELECT_SERVER__?: (intent: unknown, action?: "remove") => void
        electronAPI?: ElectronAPI
       __TAURI__?: TauriBridge
       codenomadLogger?: LoggerControls

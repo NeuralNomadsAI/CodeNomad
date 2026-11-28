@@ -1,18 +1,20 @@
 import { z } from "zod"
 import { assetTargetSchema, assetReadResultSchema } from "./assets-contract"
+import { sessionPermissionRules } from "./permission-rules-contract"
 
 // Fixed gallery methods over image `read` parts of one session (dev-docs/SESSION_PRUNING_RPC.md#image-gallery).
 const Id = z.string().min(1).max(256)
 const Key = z.string().regex(/^[\w-]{22}$/)
 export const GALLERY_RESPONSE_LIMIT = 1024 * 1024
 export const generationTargetSchema = z.object({ messageID: Id, part: z.number().int().min(0).max(100000),
-  digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+  call: z.number().int().min(0).max(100000).optional(), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 export const imagesInputSchema = z.object({ sessionID: Id, cursor: z.string().max(4096).optional(), prompts: z.boolean().optional() }).strict()
 export const imageReadInputSchema = z.object({ sessionID: Id, target: assetTargetSchema }).strict()
 export const imageReferenceInputSchema = z.object({ sessionID: Id, target: z.union([assetTargetSchema, generationTargetSchema]) }).strict()
 export const imagesConversationInputSchema = z.object({ mode: z.enum(["lookup", "open", "new"]), title: z.string().min(1).max(256).optional(),
   agent: z.string().min(1).max(256).optional(),
   model: z.object({ providerID: Id, id: Id, variant: z.string().min(1).max(256).optional() }).strict().optional() }).strict()
+export const imagesConversationNativeInputSchema = imagesConversationInputSchema.extend({ permissions: sessionPermissionRules.optional() }).strict()
 
 const blocked = z.object({ status: z.literal("blocked"), reason: z.string().max(80) }).strict()
 const annotation = { prompt: z.string().max(8192).optional(), promptTruncated: z.literal(true).optional(), model: z.string().max(256).optional() }
@@ -37,4 +39,5 @@ export type ImagesResult = z.infer<typeof imagesResultSchema>
 export type GalleryEntry = Extract<ImagesResult, { status: "page" }>["entries"][number]
 export type ImageReferenceResult = z.infer<typeof imageReferenceResultSchema>
 export type ImagesConversationInput = z.infer<typeof imagesConversationInputSchema>
+export type ImagesConversationNativeInput = z.infer<typeof imagesConversationNativeInputSchema>
 export type ImagesConversationResult = z.infer<typeof imagesConversationResultSchema>

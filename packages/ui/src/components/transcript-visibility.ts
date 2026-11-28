@@ -1,4 +1,4 @@
-import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, VisibilityPreference } from "../stores/preferences"
+import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, TranscriptDetailSettings, VisibilityPreference } from "../stores/preferences"
 import {
   buildToolExpansionPresetDefaults,
   getConfigurableToolEntries,
@@ -11,6 +11,7 @@ export const TRANSCRIPT_PRESETS: ToolCallExpansionPreset[] = ["nothing", "minima
 
 const transcriptDetailPresets = {
   nothing: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "hidden",
@@ -19,6 +20,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   minimal: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "collapsed",
@@ -27,6 +29,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   balanced: {
+    toolGroupVisibility: "collapsed",
     systemMessagesVisibility: "hidden",
     showThinkingBlocks: false,
     diagnosticsExpansion: "expanded",
@@ -35,6 +38,7 @@ const transcriptDetailPresets = {
     usageMetricsExpansion: "collapsed",
   },
   everything: {
+    toolGroupVisibility: "expanded",
     systemMessagesVisibility: "expanded",
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
@@ -49,6 +53,7 @@ const transcriptDetailPresets = {
     | "showThinkingBlocks"
     | "diagnosticsExpansion"
     | "systemMessagesVisibility"
+    | "toolGroupVisibility"
     | "toolInputsVisibility"
     | "showUsageMetrics"
     | "usageMetricsExpansion"
@@ -64,6 +69,7 @@ export function transcriptPreset(current: Preferences): ToolCallExpansionPresetS
   return transcriptVisibility(current, { kind: "thinking", key: "thinking", label: "" }) === expectedThinking &&
     current.diagnosticsExpansion === detail.diagnosticsExpansion &&
     current.systemMessagesVisibility === detail.systemMessagesVisibility &&
+    current.toolGroupVisibility === detail.toolGroupVisibility &&
     current.toolInputsVisibility === detail.toolInputsVisibility &&
     current.showUsageMetrics === detail.showUsageMetrics &&
     current.usageMetricsExpansion === detail.usageMetricsExpansion
@@ -71,10 +77,38 @@ export function transcriptPreset(current: Preferences): ToolCallExpansionPresetS
     : "custom"
 }
 
-export function transcriptPresetPatch(preset: ToolCallExpansionPreset): Partial<Preferences> {
+const effectiveTools = (current: Preferences) =>
+  Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+
+/** The current rows as explicit choices, independent of any preset's definition. */
+function customPreset(current: Preferences): TranscriptDetailSettings {
+  return {
+    showThinkingBlocks: current.showThinkingBlocks,
+    thinkingBlocksExpansion: current.thinkingBlocksExpansion,
+    toolCallExpansionDefaults: { preset: "custom", thinking: thinkingExpansion(current), tools: effectiveTools(current) },
+    toolOutputExpansion: current.toolOutputExpansion,
+    diagnosticsExpansion: current.diagnosticsExpansion,
+    systemMessagesVisibility: current.systemMessagesVisibility,
+    toolGroupVisibility: current.toolGroupVisibility,
+    toolInputsVisibility: current.toolInputsVisibility,
+    showUsageMetrics: current.showUsageMetrics,
+    usageMetricsExpansion: current.usageMetricsExpansion,
+  }
+}
+
+/** Custom can be chosen while it is shown or once a preset has replaced it. */
+export function transcriptCustomAvailable(current: Preferences): boolean {
+  return transcriptPreset(current) === "custom" || current.transcriptCustomPreset !== undefined
+}
+
+/** With `current`, a preset that replaces Custom rows keeps them for the Custom choice, which applies them again. */
+export function transcriptPresetPatch(preset: ToolCallExpansionPresetSelection, current?: Preferences): Partial<Preferences> {
+  const replaced = current && transcriptPreset(current) === "custom" ? current : undefined
+  if (preset === "custom") return replaced ? {} : { ...current?.transcriptCustomPreset }
   const tools = buildToolExpansionPresetDefaults(preset)
   const thinking = THINKING_EXPANSION_PRESETS[preset]
   return {
+    ...(replaced ? { transcriptCustomPreset: customPreset(replaced) } : {}),
     ...transcriptDetailPresets[preset],
     toolCallExpansionDefaults: { preset, thinking, tools },
     thinkingBlocksExpansion: thinking,
@@ -89,6 +123,7 @@ export type TranscriptVisibilityRow =
   | { kind: "inputs"; key: "inputs"; label: string }
   | { kind: "usage"; key: "usage"; label: string }
   | { kind: "system"; key: "system"; label: string }
+  | { kind: "toolGroups"; key: "toolGroups"; label: string }
 
 export function transcriptVisibilityRows(t: (key: string) => string): TranscriptVisibilityRow[] {
   return [
@@ -97,6 +132,7 @@ export function transcriptVisibilityRows(t: (key: string) => string): Transcript
     { kind: "inputs", key: "inputs", label: t("settings.behavior.toolInputsVisibility.title") },
     { kind: "usage", key: "usage", label: t("settings.behavior.usageMetrics.title") },
     { kind: "system", key: "system", label: t("transcriptFilters.systemMessages") },
+    { kind: "toolGroups", key: "toolGroups", label: t("transcriptFilters.toolGroups") },
     ...getConfigurableToolEntries().map((entry) => ({
       kind: "tool" as const, key: entry.tool, label: entry.labelKey ? t(entry.labelKey) : entry.label,
     })),
@@ -118,11 +154,13 @@ export function transcriptVisibility(current: Preferences, row: TranscriptVisibi
     case "inputs": return current.toolInputsVisibility
     case "usage": return current.showUsageMetrics ? current.usageMetricsExpansion : "hidden"
     case "system": return current.systemMessagesVisibility ?? "hidden"
+    case "toolGroups": return current.toolGroupVisibility
   }
 }
 
 export function transcriptVisibilityPatch(current: Preferences, row: TranscriptVisibilityRow, mode: VisibilityPreference): Partial<Preferences> {
   if (row.kind === "system") return { systemMessagesVisibility: mode }
+  if (row.kind === "toolGroups") return { toolGroupVisibility: mode }
   if (row.kind === "diagnostics") return { diagnosticsExpansion: mode }
   if (row.kind === "inputs") return { toolInputsVisibility: mode }
   if (row.kind === "usage") return {
@@ -131,7 +169,7 @@ export function transcriptVisibilityPatch(current: Preferences, row: TranscriptV
   }
   // Preserve every configurable category before switching to per-type overrides.
   // Retired tools follow "Other tools" and no longer need separate overrides.
-  const tools = Object.fromEntries(getConfigurableToolEntries().map((entry) => [entry.tool, resolveToolVisibility(current, entry.tool)]))
+  const tools = effectiveTools(current)
   if (row.kind === "tool") tools[row.key] = mode
   const thinking = row.kind === "thinking" && mode !== "hidden" ? mode : thinkingExpansion(current)
   return {

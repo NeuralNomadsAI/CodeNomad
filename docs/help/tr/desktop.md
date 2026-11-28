@@ -2,7 +2,7 @@
 
 ## Pencereler, sekmeler ve paylaşılan hizmet {#windows-tabs}
 
-1. Geçerli pencerede başka bir proje/ana sayfa sekmesi açmak için **Yeni instance** öğesini kullanın.
+1. Geçerli pencerede boş bir sekme açmak için **Yeni instance** öğesini kullanıp proje seçin.
 2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
@@ -10,18 +10,21 @@ Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode o
 
 Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar. **Yardım → CodeNomad'i destekleyin**, [CodeNomad'i destekleyin](sponsor.md) sayfasını tarayıcınızda açar.
 
+Pencere değiştirseniz bile masaüstü otomasyonu aracının incelediği pencerede kalır. Aracı, `codenomad.inspect({targets:true})` ile kullanılabilir yerel pencereleri listeleyebilir ve döndürülen kimlikle başka bir pencereyi inceleyebilir.
+Uygulama penceresindeki yerel işaretçi ve klavye girdileri ana sayfayla sınırlıdır. Bir konuşmanın web önizlemesi için ayrı önizleme araçlarını kullanın.
+
 ## Masaüstü başlatma argümanları {#desktop-cli}
 
 Bu argümanları **masaüstü çalıştırılabilir dosyasından** (Tauri veya Electron) sonra, terminalde ya da Windows kısayolunun **Hedef** alanında kullanın. Örnek dosya yollarını kendi dosya yolunuzla değiştirin.
 
 | Argüman | Etki |
 | --- | --- |
-| `--connect-server <server>` | HTTP(S) URL’si, kayıtlı adı veya kayıtlı kimliğiyle uzak CodeNomad sunucusunu açar. [Bağlantı ve oturum açma davranışına](remote-access.md#saved-servers) bakın. |
+| `--connect-server <name-or-url>` | `multiBackend` değerinden bağımsız olarak HTTP(S) URL’si, kayıtlı ad veya kimlikle ayrı bir uzak pencere açar. [Uzak bağlantılara](remote-access.md#connect-server) bakın. |
 | `--folder <path>` | Var olan bir proje klasörünü açar. Birden çok klasör için tekrarlayın; göreli yollar başlatma çalışma klasörüne göredir. |
 | `<path> ...` | `--folder` yazmadan proje klasörlerini açar. **Windows Tauri zaten çalışıyorsa:** her klasör için `--folder` kullanın. Konumsal yolları `--folder` ile karıştırmak da tüm klasör açma isteğini düşürür. |
 | `--new-window` | Yeni başlatmanın normalde mevcut pencereyi odaklayacağı durumda bile yeni bir uygulama penceresi ister. |
 
-`--connect-server=<server>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın; bağlantı başarısız olmadıkça yerel pencereler geri yüklenmez.
+`--connect-server=<name-or-url>` ve `--folder=<path>` da çalışır. Boşluk içeren yol ve adları tırnak içine alın. Yalnızca uzak pencereyi açmak için klasör veya `--new-window` eklemeden `--connect-server` kullanın. Açık bir yerel pencere isteği işler; başlangıçta yerel pencereler yalnızca bağlantı başarısız olursa geri yüklenir.
 
 **PowerShell** içinde:
 
@@ -47,6 +50,8 @@ Her proje sekmesi, aynı konuşma için açılan birden fazla sekme dahil, kendi
 Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Tercihler'i açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, kontroller en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar. Tercihler başlangıçta yeniden açıldığında, bu ayarlar ilgili proje açılmayı bitirince yeniden bağlanır; klasör hâlâ başlatılırken veya birkaç sekmede açıkken, Tercihler'i amaçlanan pencereden açana kadar kullanılamaz kalırlar.
 
 Tarayıcı ve uzak istemciler gömülü ayarları kullanır.
+
+[Uzak sekmeleri geri yükleme](projects.md#restore-remote-tabs).
 
 ## Masaüstü veri profilleri {#data-profiles}
 

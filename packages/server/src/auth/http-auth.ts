@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify"
 
-export function parseCookies(header: string | undefined): Record<string, string> {
-  const result: Record<string, string> = {}
+export function parseCookies(header: string | undefined): Record<string, string> | undefined {
+  const result: Record<string, string> = Object.create(null)
   if (!header) return result
 
   const parts = header.split(";")
@@ -11,7 +11,7 @@ export function parseCookies(header: string | undefined): Record<string, string>
     const key = part.slice(0, index).trim()
     const value = part.slice(index + 1).trim()
     if (!key) continue
-    result[key] = decodeURIComponent(value)
+    try { result[key] = decodeURIComponent(value) } catch { return undefined }
   }
   return result
 }

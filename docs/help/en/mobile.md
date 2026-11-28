@@ -4,11 +4,13 @@ Use the browser UI on a phone or tablet to continue work on the backend host. In
 
 ## Connect from a phone or tablet {#connect}
 
+Saved servers are available from **Browse** in an empty tab and Settings → Servers. [Restore remote tabs](projects.md#restore-remote-tabs).
+
 1. On the host, open **Settings → Remote Access → Remote Control**, then choose **Start Remote Control**.
 2. Scan the pairing QR code with your mobile device and open the link in the browser you intend to keep using.
 3. Alternatively, configure [direct access](remote-access.md), open the host's reachable trusted HTTPS URL, and sign in with its server password.
 
-Remote Control requires device pairing; direct connections require routing, a reachable listener and authentication. Do not use `localhost` on the phone to reach your workstation. Losing site data or switching browser profiles can require sign-in or pairing again; see [Remote Control](remote-control.md).
+Remote Control requires device pairing; direct connections require routing, a reachable listener and authentication. Do not use `localhost` on the phone to reach your workstation. Losing site data or switching browser profiles can require sign-in or pairing again; see [Remote Control](remote-control.md). Where the tunnel is blocked, pair over a trusted HTTPS address instead; see [Pair over direct HTTPS](remote-control.md#direct-https).
 
 ## Install the PWA {#install-pwa}
 
@@ -28,7 +30,7 @@ Do not turn off authentication or TLS verification to fix installation.
 
 Use **Left panel** and **Right panel** controls to open navigation and tools. On narrow layouts, panels overlay the conversation rather than forcing a desktop-width canvas; opening one floating panel closes the other. Choosing a session in the floating session panel closes it to show your choice, even the session already shown; **Back** and **Forward** keep it open. Conversation-header actions move into their overflow menu when space is limited.
 
-The composer keeps Agent, Model and Thinking in its footer. The field resizes with the visible conversation, including the on-screen keyboard; long drafts remain scrollable. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
+The composer keeps Agent, Model and Thinking in its footer. The field is sized relative to the conversation height without the on-screen keyboard. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing your saved height proportion. Long drafts still scroll. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
 
 ## Capability and connectivity limits {#limits}
 
@@ -43,4 +45,4 @@ The composer keeps Agent, Model and Thinking in its footer. The field resizes wi
 
 Keep the backend reachable. Check whether an action completed before retrying it. Closing the PWA does not stop a standalone backend; quitting the host desktop app and its backend makes Remote Control unavailable until the next launch.
 
-Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens on the home page. Turn this off for the tab with **Settings → General → Restore previous state**.
+Each browser tab, including the installed PWA, keeps its open projects, selected conversations, unsent drafts and scroll positions for that tab: when the page reloads, or the mobile OS reloads it after an app switch or screen lock, they come back. A new tab, or a PWA the OS fully closed, opens with an empty tab. Turn this off for the tab with **Settings → General → Restore previous state**.

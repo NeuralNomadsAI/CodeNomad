@@ -9,6 +9,9 @@ import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { addInstance, removeInstance } from "./instances.ts"
+import { setActiveSession, setSessions } from "./session-state.ts"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -389,6 +392,7 @@ describe("OpenCode data projection", () => {
         id: "delta", type: "session.text.delta", created: 262,
         data: { sessionID: sessionId, assistantMessageID: "m0999", ordinal: 0, delta: "still active" },
       } as any)
+      await waitForReplay(() => (data.session.message.get(sessionId, "m0999") as any)?.content?.[0]?.text === "still active")
       assert.equal((data.session.message.get(sessionId, "m0999") as any).content[0].text, "still active")
     } finally {
       destroyOpenCodeData(instanceId)
@@ -1648,6 +1652,274 @@ describe("OpenCode data projection", () => {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
       sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconciles missed reply messages on non-event settlement even without unsettled tools or divergence", async () => {
+    const instanceId = "opencode-data-liveness-missed-reply"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "missed reply" }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [reply, prompt], cursor: {} }
+    })
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, sessionId)
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const normalized = normalizeSessionMessage(sessionId, prompt as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["user-1"])
+
+      assert.equal(observeNonEventSettlement(instanceId, sessionId), true)
+      await waitForReplay(() => store.getSessionMessageIds(sessionId).includes("assistant-1"))
+      assert.equal(reads, 1)
+      const part = Object.values(store.getMessage("assistant-1")?.parts ?? {})[0]?.data as any
+      assert.equal(part?.text, "missed reply")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("publishes an authoritative resynced transcript even when no onResynced callback was registered", async () => {
+    const instanceId = "opencode-data-resync-no-callback"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "resynced reply" }],
+    }
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [reply, prompt], cursor: {} }))
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, sessionId)
+    applyOpenCodeDataEvent(instanceId, "/work", { id: "connected-1", type: "server.connected", created: 1, data: { daemon: "daemon-1" } } as any)
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const normalized = normalizeSessionMessage(sessionId, prompt as any)
+      seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+      store.setMessageWindow(sessionId, emptyLatestWindow())
+      // Trigger same-source reconnect resync on a reducer seeded without an onResynced callback.
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "connected-2", type: "server.connected", created: 10, data: { daemon: "daemon-1" } } as any)
+      await waitForReplay(() => store.getSessionMessageIds(sessionId).includes("assistant-1"))
+      const part = Object.values(store.getMessage("assistant-1")?.parts ?? {})[0]?.data as any
+      assert.equal(part?.text, "resynced reply")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reports unhandled for a diverged unwatched transcript on non-event settlement", async () => {
+    const instanceId = "opencode-data-diverged-unwatched"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setActiveSession(instanceId, "other-session")
+    const prompt = { id: "user-1", type: "user", text: "hello", time: { created: 1, completed: 1 } }
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [prompt as any])
+    try {
+      // Delta for a missing assistant message marks the unwatched reducer diverged.
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "orphan-delta", type: "session.text.delta", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "missing-assistant", ordinal: 0, delta: "x" },
+      } as any)
+      assert.equal(observeNonEventSettlement(instanceId, sessionId), false,
+        "unwatched diverged settlement must return false so the caller invalidates the loaded page")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+})
+
+describe("frame-batched content reduction", () => {
+  const model = { providerID: "provider", id: "model" }
+
+  function setup(instanceId: string) {
+    const sessionId = "session"
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    apply("session.step.started", { ...base, agent: "build", model }, 1)
+    const data = apply("session.text.started", { ...base, ordinal: 0 }, 2)
+    const rowText = () => {
+      const row = data.session.message.get(sessionId, "assistant") as any
+      return (row?.content ?? []).filter((part: any) => part.type === "text").map((part: any) => part.text).join("")
+    }
+    return { apply, data, base, rowText, sessionId }
+  }
+
+  it("reduces a burst of content deltas with one subscriber notification, in order", () => {
+    const instanceId = "content-batch-merge"
+    const { apply, data, base, rowText, sessionId } = setup(instanceId)
+    try {
+      let runs = 0
+      let observed = ""
+      const dispose = createRoot((dispose) => {
+        createEffect(() => {
+          runs += 1
+          observed = rowText()
+        })
+        return dispose
+      })
+      assert.equal(runs, 1)
+      assert.equal(observed, "")
+
+      for (const [index, chunk] of ["a", "b", "c", "d", "e"].entries()) {
+        apply("session.text.delta", { ...base, ordinal: 0, delta: chunk }, 3 + index)
+      }
+
+      assert.equal(runs, 1, "buffered deltas must not notify Solid subscribers per event")
+      assert.equal(observed, "", "buffered deltas are not yet reduced into the store")
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+
+      assert.equal(runs, 2, "the flushed batch notifies subscribers exactly once")
+      assert.equal(observed, "abcde", "the batch reduces in admission order")
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "abcde",
+        "the projection publishes the batched reduction",
+      )
+      dispose()
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("delivers a non-delta event only after buffered deltas have reduced", () => {
+    const instanceId = "content-batch-barrier"
+    const { apply, data, base, rowText, sessionId } = setup(instanceId)
+    try {
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "one " }, 3)
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "two" }, 4)
+
+      apply("session.text.ended", { ...base, ordinal: 0, text: "final text" }, 5)
+
+      assert.equal(rowText(), "final text", "the ending reduces after the buffered deltas, in the same task")
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "final text",
+      )
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("drains buffered deltas on its own wake without an explicit flush", async () => {
+    const instanceId = "content-batch-wake"
+    const { apply, rowText, sessionId, data } = setup(instanceId)
+    try {
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "x" }, 3)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "y" }, 4)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "z" }, 5)
+      assert.equal(rowText(), "", "deltas buffer before the wake")
+
+      await waitForReplay(() => rowText() === "xyz")
+
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      assert.equal(
+        (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts["assistant-text-0"]?.data as any)?.text,
+        "xyz",
+      )
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+    }
+  })
+
+  it("still records divergence at admission for a buffered delta with a missed start", async () => {
+    const instanceId = "content-batch-divergence"
+    const sessionId = "session"
+    const originalFetchWorktrees = serverApi.fetchWorktrees
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] }) as any
+    let reads = 0
+    const client: any = {
+      session: {
+        active: async () => ({}),
+        get: async () => ({ id: sessionId, location: { directory: "/work" }, time: { created: 1, updated: 1 } }),
+        inbox: { list: async () => [] },
+        form: { list: async () => [] },
+      },
+      permission: { list: async () => [] },
+      message: { list: async () => { reads += 1; return { data: [], cursor: {} } } },
+    }
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, title: sessionId, parentId: null, location: { directory: "/work" },
+      status: "working", agent: "build", model: { providerId: "provider", modelId: "model" }, time: { created: 1, updated: 1 },
+    } as any]])))
+    setActiveSession(instanceId, sessionId)
+    try {
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "start", type: "session.step.started", created: 1,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", agent: "build", model },
+      } as any)
+      // No session.text.started: the fragment's start was missed, so the
+      // delta must record its divergence when it is admitted, exactly as the
+      // synchronous path does, and start the repair read before any frame
+      // flush could have run (the wake is a timer in this environment).
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "delta", type: "session.text.delta", created: 2,
+        data: { sessionID: sessionId, assistantMessageID: "assistant", ordinal: 0, delta: "orphan" },
+      } as any)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      assert.ok(reads > 0, "the divergence repair read starts at admission, not at the frame flush")
+    } finally {
+      serverApi.fetchWorktrees = originalFetchWorktrees
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("keeps working after a destroyed transcript leaves buffered deltas behind", async () => {
+    const instanceId = "content-batch-destroy"
+    const { apply, base, sessionId } = setup(instanceId)
+    try {
+      apply("session.text.delta", { ...base, ordinal: 0, delta: "gone" }, 3)
+      apply("session.deleted", { sessionID: sessionId }, 4)
+      await waitForReplay(() => true)
+
+      apply("session.step.started", { sessionID: sessionId, assistantMessageID: "next", agent: "build", model }, 5)
+      const data = apply("session.text.started", { sessionID: sessionId, assistantMessageID: "next", ordinal: 0 }, 6)
+      apply("session.text.delta", { sessionID: sessionId, assistantMessageID: "next", ordinal: 0, delta: "ok" }, 7)
+
+      await waitForReplay(() => {
+        const row = data.session.message.get(sessionId, "next") as any
+        return (row?.content ?? []).some((part: any) => part.type === "text" && part.text === "ok")
+      })
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     }
   })
 })

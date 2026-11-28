@@ -296,20 +296,17 @@ try {
     const preferred = { template: "all", profiles, taskMode: "independent" }
     uiPreferences = { settings: { missionProfileDefaults: [{ ...preferred, profiles: { ...profiles, coordinator: { agent: "reviewer" } } }] } }
     const before = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-    const { DatabaseSync } = await import("node:sqlite")
-    const database = new DatabaseSync(process.env.OPENCODE_DB, { readOnly: true })
-    try {
-      database.exec("PRAGMA busy_timeout = 10000")
-      const rows = () => database.prepare("SELECT key, value FROM kv WHERE key LIKE ? ORDER BY key").all("%codenomad-missions/%")
-      const retained = rows(), reads = preferenceReads, turns = requests.length
-      await assert.rejects(invoke("inspect", { start: { objective: "Refuse coordinator mismatch", template: "custom" } },
-        caller.id, "preferences-mismatch"), /Coordinator differs from the profile selected by Missions preferences\. Pass profiles\.coordinator \(for example \{\}\) to override that preference\./)
+    let adopted
+    {
+      // A conversation on another agent than the preferred coordinator takes that agent and coordinates.
+      const other = await client.session.create({ location, title: "Private preference adoption", agent: "build",
+        model: { providerID: "fixture", id: "fixture" } })
+      const reads = preferenceReads
+      adopted = await invoke("inspect", { start: { objective: "Adopt the preferred coordinator", template: "custom" } }, other.id, "preferences-mismatch")
       assert.ok(preferenceReads > reads, "The mismatch was resolved against nonempty owner preferences")
-      const after = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-      assert.deepEqual({ ...after, generatedAt: before.generatedAt }, before)
-      assert.deepEqual(rows(), retained, "Coordinator mismatch writes no creation event, document or retained intent")
-      assert.equal(requests.length, turns, "Coordinator mismatch admits no provider turn")
-    } finally { database.close() }
+      assert.equal(adopted.selection.profiles.coordinator.agent, "reviewer")
+      assert.equal((await client.session.get({ sessionID: other.id })).agent, "reviewer", "The conversation takes the coordinator's agent")
+    }
     uiPreferences = { settings: { missionProfileDefaults: [preferred] } }
     const start = { objective: "Persist owning-backend preferences", template: "custom" }
     const selected = await invoke("inspect", { start }, caller.id, "preferences-create")
@@ -348,12 +345,12 @@ try {
     const finished = await invoke("report", { missionID: selected.mission.id, outcome: "completed", summary: "Preferences verified", final: true },
       caller.id, "preferences-finish")
     assert.equal(finished.mission.status, "completed")
-    for (const mission of [prepared.mission, finished.mission]) {
+    for (const mission of [adopted.mission, prepared.mission, finished.mission]) {
       const deletion = { missionID: mission.id, requestID: `preferences-delete-${mission.id}`, expectedRevision: mission.revision }
       assertDocumentDeletion(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), deletion, mission.objective)
     }
     assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.length, before.missions.length)
-    gate("nonempty owner preferences: coordinator mismatch has no effects, both creation paths persist profiles/policy/provenance and replay frozen choices")
+    gate("nonempty owner preferences: a conversation on another agent takes the coordinator's, both creation paths persist profiles/policy/provenance and replay frozen choices")
   }
   const inspected = await invoke("inspect", { catalog: true, start: { objective: "Native integration", template: "custom" } })
   assert.equal(inspected.selection.preferences, undefined, "The owning fixture backend supplied readable preferences")
@@ -490,8 +487,8 @@ try {
   assert((await client.session.get({ sessionID: actorID })).id === actorID, "Revision keeps the original actor conversation")
   gate("revision lineage, withdrawn late evidence and busy coordinator report consumption")
 
-  // A durable report must wake its coordinator after transport recovery, without
-  // another report call or human prompt. Exercise both live recovery and reload.
+  // Without a CodeNomad bridge the plugin delivers a report through its own session API. It must wake its
+  // coordinator once, whatever returns afterwards: the bridge, or the plugin after a reload.
   for (const restart of [false, true]) {
     stage = `report outbox recovery (restart=${restart})`
     const taskKey = restart ? "outbox-restart" : "outbox-live"
@@ -501,16 +498,16 @@ try {
     await removeBridge(); removeBridge = undefined
     const savedReport = await invoke("report", { taskKey, outcome: "completed", summary }, actorID)
     assert.equal(savedReport.disposition, "reported", "A missing bridge does not negate a saved durable report")
-    assert.equal(savedReport.mission.reports.find(report => report.taskKey === taskKey)?.notificationStatus, "pending")
-    const pending = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-    assert.equal(pending.tasks.find(task => task.key === taskKey).report.summary, summary)
-    assert.equal(pending.tasks.find(task => task.key === taskKey).report.notificationStatus, "pending")
-    assert(!requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
+    assert.equal(savedReport.mission.reports.find(report => report.taskKey === taskKey)?.notificationStatus, "admitted")
+    const delivered = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
+    assert.equal(delivered.tasks.find(task => task.key === taskKey).report.summary, summary)
+    assert.equal(delivered.tasks.find(task => task.key === taskKey).report.notificationStatus, "admitted")
+    await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
     if (restart) {
       await plugin.stop()
       assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-        .reports.find(report => report.taskKey === taskKey)?.notificationStatus, "pending",
-      "Presence loss retains active Mission executors and the pending report")
+        .reports.find(report => report.taskKey === taskKey)?.notificationStatus, "admitted",
+      "Presence loss retains active Mission executors and the delivered report")
       // Presence loss deliberately retains active work now. Explicitly reload
       // only this owned private daemon to exercise real executor teardown and
       // re-registration; never discover or reload the shared user service.
@@ -520,8 +517,9 @@ try {
     removeBridge = await publishAutomationBridge(registration)
     if (restart) { plugin = new DesktopPluginLifecycle("missions"); await plugin.start(paths) }
     await until(() => requests.some(request => request.session === coordinator.id && request.messages.includes(summary)))
-    await until(async () => (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions[0]
-      .reports.find(report => report.taskKey === taskKey)?.notificationStatus === "admitted")
+    // After a reload Missions registers again with the returning plugin: until then its RPC is unavailable.
+    await until(() => client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }).then(snapshot => snapshot.missions[0]
+      .reports.find(report => report.taskKey === taskKey)?.notificationStatus === "admitted", () => false))
     await client.session.wait({ sessionID: coordinator.id }, { signal: AbortSignal.timeout(20_000) })
     const count = requests.filter(request => request.session === coordinator.id).length
     assert.equal((await invoke("report", { taskKey, outcome: "completed", summary }, actorID)).disposition, "existing")
@@ -992,9 +990,7 @@ try {
     assert.equal(finished.mission.status, "completed")
     history.push(finished.mission)
   }
-  // The journal bound is per mission: the finished missions' own ranges, seeded in
-  // the isolated KV table as an earlier activation left them, take the project past
-  // one mission's 2,000-entry bound while each mission stays far below it.
+  // Include one long range alongside short ranges in this fixture's private database.
   const { DatabaseSync } = await import("node:sqlite")
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
@@ -1011,14 +1007,15 @@ try {
     // One transaction: thousands of autocommits would idle the client's keep-alive connection past the daemon's timeout.
     seeding.exec("BEGIN IMMEDIATE")
     for (const mission of history) {
-      for (let index = 0; index < 22; index++) {
-        const id = `evt_seeded_${String(index).padStart(2, "0")}`
+      const extra = mission.id === history[0].id ? 10_020 : 22
+      for (let index = 0; index < extra; index++) {
+        const id = `evt_seeded_${String(index).padStart(5, "0")}`
         insert.run(`${journalRange}${mission.id}/${id}`, JSON.stringify({ version: 1, id, type: "mission.updated", missionID: mission.id, projectID: mission.projectID,
           createdAt: mission.createdAt + 1 + index, requestID: `seeded-${index}`, expectedRevision: 1, notesSpecified: false, objective: `Seeded ${index}` }), Date.now(), Date.now())
       }
     }
     seeding.exec("COMMIT")
-    assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
+    assert.ok(journalEntries(seeding, `${journalRange}${history[0].id}/`) > 10_000, "One native mission exceeds 10,000 events")
   } finally {
     seeding.close()
     Object.assign(reloadDiagnostics.seed, { finishedAt: new Date().toISOString(), durationMs: performance.now() - seedStarted })
@@ -1038,7 +1035,8 @@ try {
   assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
     liveCoordinator, "history-readout")).disposition, "reported")
   const beforeDelete = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
-  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 22, "Seeded entries read as the mission's own events")
+  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 10_020,
+    "The real plugin reloads one long range and admits work on its neighbour")
   // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
   const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
   assert.equal(settled.length, 20)

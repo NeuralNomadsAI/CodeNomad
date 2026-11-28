@@ -2,22 +2,19 @@ import { Show, createMemo, mapArray } from "solid-js"
 import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { useI18n } from "../lib/i18n"
-import { missionOwnBody } from "../lib/mission-bodies"
 import { missionBodySource, useMissionBodyValue, type MissionBodySource } from "../stores/mission-content"
 
 /** A string body a reader section pages through the content route. */
 export type MissionReaderBody = MissionBodySource
 
-/** A compact display body's descriptor, for a project mission or exact current passage. */
-export function missionReaderBody(instanceId: string, mission: MissionPanelMap | undefined, oneTime: boolean,
-  selector: MissionContentSelector): MissionReaderBody | undefined {
-  return mission && oneTime ? missionBodySource(instanceId, mission, selector) : undefined
+/** A compact display body's descriptor. */
+export function missionReaderBody(instanceId: string, mission: MissionPanelMap | undefined, selector: MissionContentSelector): MissionReaderBody | undefined {
+  return mission && missionBodySource(instanceId, mission, selector)
 }
 
 interface ReaderValueProps {
   instanceId: () => string
   mission: () => MissionPanelMap | undefined
-  oneTime: () => boolean
   /** Where the body is; undefined when the map records none. */
   selector: () => MissionContentSelector | undefined
   /** False while the body is hidden (a closed disclosure): nothing is read and nothing settles. */
@@ -33,16 +30,12 @@ export interface MissionBodyRead { settled: boolean; failed: boolean; onRetry: (
 export function useReaderValue<T>(props: ReaderValueProps) {
   const read = useMissionBodyValue<T | undefined>(() => {
     const selector = props.selector(), mission = props.mission()
-    return selector && mission && props.oneTime() && (props.active?.() ?? true) ? missionBodySource(props.instanceId(), mission, selector) : undefined
+    return selector && mission && (props.active?.() ?? true) ? missionBodySource(props.instanceId(), mission, selector) : undefined
   })
-  const remote = () => props.oneTime() && props.selector() !== undefined
+  const remote = () => props.selector() !== undefined
   const settled = () => !remote() || read.settled(), failed = () => remote() && read.failed()
   return {
-    value: (): T | undefined => {
-      if (remote()) return read.value()
-      const selector = props.selector()
-      return selector && missionOwnBody<T>(props.mission(), selector)
-    },
+    value: (): T | undefined => remote() ? read.value() : undefined,
     settled,
     failed,
     read: (): MissionBodyRead => ({ settled: settled(), failed: failed(), onRetry: read.retry }),

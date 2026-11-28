@@ -1,10 +1,10 @@
 import { lstat, readFile, readlink, realpath, stat } from "node:fs/promises"
 import path from "node:path"
-const LOCATION_ENVIRONMENT = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE"]
-const DISCOVERY_ENVIRONMENT = ["GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_OBJECT_DIRECTORY"]
+const DISCOVERY_ENVIRONMENT = ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE",
+  "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_OBJECT_DIRECTORY"]
 
-export function gitLocationOverridden(): boolean {
-  return LOCATION_ENVIRONMENT.some(key => process.env[key] !== undefined)
+export function gitDiscoveryOverridden(): boolean {
+  return DISCOVERY_ENVIRONMENT.some(key => process.env[key] !== undefined)
 }
 
 // Administrative layout of a checkout root, read from the filesystem only.
@@ -65,19 +65,36 @@ async function findCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?
 
 // Undefined means discovery verified the absence of a checkout. Errors retain
 // ambiguity (permissions, administrative markers, environment and depth bounds).
-export async function discoverCheckoutCommonDirectory(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
-  if (gitLocationOverridden() || DISCOVERY_ENVIRONMENT.some(key => process.env[key] !== undefined)) {
+export async function discoverCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
+  if (gitDiscoveryOverridden()) {
     throw new Error("Git discovery is configured by the environment")
   }
   const root = await findCheckoutRoot(directory, signal, stopAt, maxDepth)
   if (root === undefined) return undefined
-  const { gitDirectory, common } = await readCheckoutIdentity(root)
+  const checkout = await readCheckoutIdentity(root)
+  await validateCheckoutLayout(checkout)
+  if (checkout.root && checkout.root !== root) throw new Error("Linked worktree root mismatch")
+  signal?.throwIfAborted()
+  return root
+}
+
+export async function discoverCheckoutCommonDirectory(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
+  if (gitDiscoveryOverridden()) {
+    throw new Error("Git discovery is configured by the environment")
+  }
+  const root = await findCheckoutRoot(directory, signal, stopAt, maxDepth)
+  if (root === undefined) return undefined
+  const checkout = await readCheckoutIdentity(root)
+  await validateCheckoutLayout(checkout)
+  signal?.throwIfAborted()
+  return checkout.common
+}
+
+export async function validateCheckoutLayout({ gitDirectory, common }: { gitDirectory: string; common: string }): Promise<void> {
   // Mirror Git's repository check before trusting the layout; Git skips an
   // invalid `.git` and keeps walking, which the Git fallback reproduces.
   await Promise.all([stat(path.join(common, "objects")), stat(path.join(common, "refs"))])
   if (!await hasValidHead(gitDirectory)) throw new Error("Git would reject this HEAD")
-  signal?.throwIfAborted()
-  return common
 }
 
 export async function readCheckoutCommonDirectory(directory: string, signal?: AbortSignal): Promise<string> {

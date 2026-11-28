@@ -5,7 +5,8 @@ import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPa
 import { getRootClient } from "../../../../stores/opencode-client"
 import { instances } from "../../../../stores/instances"
 import { getWorktrees } from "../../../../stores/worktrees"
-import { serverApi } from "../../../../lib/api-client"
+import { backendOf } from "../../../../lib/backend-client"
+import type { captureBackendOperation } from "../../../../lib/backend-operation"
 import { showToastNotification } from "../../../../lib/notifications"
 import { adaptSdkGitStatusEntries, buildGitChangeListItemId, buildGitChangeListItems, hideWhitespaceOnlyChanges, reuseUnchanged } from "./git-changes-model"
 import { createGitChangeWindows } from "./git-change-window"
@@ -25,6 +26,7 @@ type UseGitChangesOptions = {
   promptInputApi: Accessor<PromptInputApi | null>
   closeGitList: () => void
   externalDiff?: boolean
+  captureOperation?: typeof captureBackendOperation
 }
 
 export function useGitChanges(options: UseGitChangesOptions) {
@@ -91,7 +93,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
   onCleanup(() => { disposed = true; cancelGitReads() })
   const captureGitContext = () => {
     const generation = lifecycle, slug = options.worktreeSlug()
-    return { slug, current: () => !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() }
+    const operation = options.captureOperation?.(options.instanceId)
+    return { slug, signal: operation?.signal, current: () => !disposed && gitActive() && generation === lifecycle && slug === options.worktreeSlug() && (operation?.current() ?? true) }
   }
 
   const gitLocation = (slug: string) => {
@@ -264,9 +267,11 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const requestVersion = ++gitStatusRequestVersion
     statusController?.abort()
     const controller = statusController = new AbortController()
+    const signal = options.captureOperation?.(options.instanceId, controller.signal).signal ?? controller.signal
+    if (signal.aborted) return false
     const sdkController = new AbortController()
     const abortSdk = () => sdkController.abort()
-    controller.signal.addEventListener("abort", abortSdk, { once: true })
+    signal.addEventListener("abort", abortSdk, { once: true })
     setGitStatusLoading(true)
     setGitStatusError(null)
     try {
@@ -276,12 +281,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
         try { return (await client.vcs.status({ location }, { signal: sdkController.signal })).data }
         finally { clearTimeout(timeout) }
       }, "visible").catch(() => null)
-      const detailList = await backgroundReads.run(controller.signal, () =>
-        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal, { hideWhitespace: hide }),
+      const detailList = await backgroundReads.run(signal, () =>
+        backendOf(options.instanceId).api.fetchWorktreeGitStatus(options.instanceId, slug, signal, { hideWhitespace: hide }),
         "visible",
       )
       // A read made under the other whitespace option is stale; its refresh follows.
-      const stale = () => requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug() || hide !== hideWhitespace()
+      const stale = () => signal.aborted || requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug() || hide !== hideWhitespace()
       if (stale()) return false
       const sdkList = await sdkStatusPromise
       if (stale()) return false
@@ -290,12 +295,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
       setGitStatusEntries(previous => reuseUnchanged(previous, next, entry => entry.path))
       return true
     } catch (error) {
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      if (signal.aborted || requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
       setGitStatusError(error instanceof Error ? error.message : "Failed to load git status")
       return false
     } finally {
       abortSdk()
-      controller.signal.removeEventListener("abort", abortSdk)
+      signal.removeEventListener("abort", abortSdk)
       if (requestVersion === gitStatusRequestVersion && slug === options.worktreeSlug()) setGitStatusLoading(false)
     }
   }
@@ -305,6 +310,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const requestVersion = ++gitDiffRequestVersion
     diffController?.abort()
     const controller = diffController = new AbortController()
+    const signal = options.captureOperation?.(options.instanceId, controller.signal).signal ?? controller.signal
+    if (signal.aborted) return
     setGitSelectedItemId(itemId)
     if (options.externalDiff) return
     setGitSelectedLoading(true)
@@ -323,12 +330,12 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
     try {
       const slug = options.worktreeSlug()
-      const diff = await backgroundReads.run(controller.signal, () => serverApi.fetchWorktreeGitDiff(options.instanceId, slug, {
+      const diff = await backgroundReads.run(signal, () => backendOf(options.instanceId).api.fetchWorktreeGitDiff(options.instanceId, slug, {
         path: item.path,
         originalPath: item.originalPath ?? null,
         scope: item.section,
-      }, controller.signal), "visible")
-      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
+      }, signal), "visible")
+      if (signal.aborted || requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       if (diff.isBinary) {
         setGitSelectedError(options.t("instanceShell.gitChanges.binaryViewer"))
         return
@@ -336,7 +343,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
       setGitSelectedBefore(diff.before)
       setGitSelectedAfter(diff.after)
     } catch (error) {
-      if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
+      if (signal.aborted || requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
       setGitSelectedError(error instanceof Error ? error.message : "Failed to load file changes")
     } finally {
       if (requestVersion !== gitDiffRequestVersion || gitSelectedItemId() !== itemId) return
@@ -346,6 +353,8 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
   const passiveRefreshGitStatus = async (optionsArg?: { forceReloadSelectedDiff?: boolean }) => {
     if (!gitActive()) return
+    const context = captureGitContext()
+    if (!context.current()) return
     if (passiveGitRefresh) {
       pendingGitPassiveRefreshOptions = {
         forceReloadSelectedDiff:
@@ -365,7 +374,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
     try {
       if (!await loadGitStatus(true)) return
-      if (passiveGitRefresh !== refresh || !gitActive()) return
+      if (!context.current() || passiveGitRefresh !== refresh || !gitActive()) return
       const nextSelection = resolveValidGitSelection(previousSelection)
 
       if (!nextSelection) {
@@ -386,7 +395,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     } finally {
       if (passiveGitRefresh !== refresh) return
       passiveGitRefresh = null
-      if (pendingGitPassiveRefreshOptions) {
+      if (context.current() && pendingGitPassiveRefreshOptions) {
         const nextOptions = pendingGitPassiveRefreshOptions
         pendingGitPassiveRefreshOptions = null
         void passiveRefreshGitStatus(nextOptions)
@@ -405,13 +414,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const targetPaths = Array.from(new Set(targetItems.map((candidate) => candidate.path)))
     try {
       if (action === "stage") {
-        await serverApi.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
+        await backendOf(options.instanceId).api.stageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
       } else {
-        await serverApi.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths })
+        await backendOf(options.instanceId).api.unstageWorktreeGitPaths(options.instanceId, context.slug, { paths: targetPaths }, context.signal)
       }
 
-      invalidateFilesystemCaches(options.instanceId)
       if (!context.current()) return
+      invalidateFilesystemCaches(options.instanceId)
       if (!await loadGitStatus(true) || !context.current()) return
       clearGitBulkSelection()
       await reconcileGitSelection(previous)
@@ -455,9 +464,9 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const draft = gitCommitMessage()
     const previous = captureGitSelection()
     try {
-      await serverApi.commitWorktreeGitChanges(options.instanceId, context.slug, { message })
-      invalidateFilesystemCaches(options.instanceId)
+      await backendOf(options.instanceId).api.commitWorktreeGitChanges(options.instanceId, context.slug, { message }, context.signal)
       if (!context.current()) return
+      invalidateFilesystemCaches(options.instanceId)
       if (gitCommitMessage() === draft) setGitCommitMessage("")
       if (!await loadGitStatus(true) || !context.current()) return
       await reconcileGitSelection(previous)
@@ -539,6 +548,10 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }, { defer: true }))
 
   const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
+  createEffect(on(() => options.captureOperation?.(options.instanceId).signal, signal => {
+    cancelGitReads(); filesystemRefresh.cancel()
+    if (signal && !signal.aborted && gitActive()) void passiveRefreshGitStatus({ forceReloadSelectedDiff: true })
+  }, { defer: true }))
   createEffect(() => {
     const version = filesystemInvalidationVersion(options.instanceId)
     if (version === seenFilesystemInvalidation) return

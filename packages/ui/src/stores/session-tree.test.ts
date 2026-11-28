@@ -81,6 +81,53 @@ describe("session tree", () => {
     assert.equal(root.children[0].children[0].depth, 2)
   })
 
+  it("ranks favorites only among siblings at each depth while pending requests still lift their branch", () => {
+    const sessions = sessionMap([
+      ["favorite-parent", null, 1], ["favorite-child", "favorite-parent", 2],
+      ["newer-sibling", "favorite-parent", 9], ["waiting-parent", null, 3],
+      ["waiting-child", "waiting-parent", 4], ["recent", null, 10],
+      ["deep-favorite", "favorite-child", 5], ["deep-recent", "favorite-child", 8],
+      ["pending-sibling", "favorite-parent", 6],
+    ])
+    sessions.get("waiting-child")!.pendingForm = true
+    sessions.get("pending-sibling")!.pendingPermission = true
+    const roots = ["favorite-parent", "waiting-parent", "recent"]
+    const original = buildSessionThreadsFromMap(sessions, roots)
+    const project = (...ids: string[]) => projectSessionFamilies(original, {
+      sort: "activity", getWorktreeLabel: () => "", favoriteIds: new Set(ids),
+    })
+    assert.deepEqual(collectSessionThreadIds(project("deep-favorite")), [
+      "favorite-parent", "pending-sibling", "newer-sibling", "favorite-child", "deep-favorite", "deep-recent",
+      "waiting-parent", "waiting-child", "recent",
+    ])
+    const promoted = project("favorite-child", "deep-favorite")
+    assert.deepEqual(collectSessionThreadIds(promoted), [
+      "favorite-parent", "pending-sibling", "favorite-child", "deep-favorite", "deep-recent", "newer-sibling",
+      "waiting-parent", "waiting-child", "recent",
+    ])
+    sessions.get("pending-sibling")!.pendingPermission = false
+    assert.deepEqual(project("favorite-child").map(row => row.session.id), ["waiting-parent", "recent", "favorite-parent"])
+    assert.deepEqual(project("favorite-parent").map(row => row.session.id), ["waiting-parent", "favorite-parent", "recent"])
+    assert.deepEqual(original.map(row => row.session.id), ["recent", "favorite-parent", "waiting-parent"])
+  })
+
+  it("ranks flat favorite matches without adding ancestors or overriding filters or explicit sorts", () => {
+    const sessions = sessionMap([
+      ["parent", null, 1], ["z-favorite", "parent", 2], ["a-recent", "parent", 3], ["hidden-favorite", "parent", 4],
+    ])
+    for (const value of sessions.values()) value.title = value.id
+    const options = {
+      includeMainSessions: true, includeSubsessions: true, favoriteIds: new Set(["z-favorite", "hidden-favorite"]),
+      getWorktreeLabel: () => "", matchesSession: (session: Session) => ["z-favorite", "a-recent"].includes(session.id),
+    }
+    const project = (sort: "activity" | "name" | "worktree", includeSubsessions = true) =>
+      projectSessionSearchResults(sessions.values(), { ...options, sort, includeSubsessions }).map(row => row.session.id)
+    assert.deepEqual(project("activity"), ["z-favorite", "a-recent"])
+    assert.deepEqual(project("name"), ["a-recent", "z-favorite"])
+    assert.deepEqual(project("worktree"), ["a-recent", "z-favorite"])
+    assert.deepEqual(project("activity", false), [])
+  })
+
   it("includes the complete ancestor path for filtered descendants", () => {
     const sessions = sessionMap([
       ["root", null, 100],
@@ -280,5 +327,24 @@ describe("session tree", () => {
       sort: "worktree", worktreeDirectory: parent.location.directory, includeMainSessions: true, includeSubsessions: true,
       matchesSession: item => item.id === "grandchild", getWorktreeLabel: directory => directory,
     }).length, 0, "text and directory must match the same session")
+  })
+
+  it("backtracks ancestor tracking cleanly across deep sibling trees", () => {
+    const sessions = sessionMap([
+      ["r1", null, 100],
+      ["r1-a", "r1", 200],
+      ["r1-a-1", "r1-a", 300],
+      ["r1-b", "r1", 250],
+      ["r2", null, 400],
+      ["r2-a", "r2", 500],
+      ["r2-a-1", "r2-a", 600],
+    ])
+    const threads = buildSessionThreadsFromMap(sessions, ["r1", "r2"], undefined, undefined, true)
+    assert.deepEqual(
+      collectSessionThreadIds(threads),
+      ["r2", "r2-a", "r2-a-1", "r1", "r1-a", "r1-a-1", "r1-b"],
+    )
+    assert.equal(threads[0].children[0].children[0].depth, 2)
+    assert.equal(threads[1].children[0].children[0].depth, 2)
   })
 })

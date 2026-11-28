@@ -1,27 +1,77 @@
 export type ApplyPatchFile = {
+  file?: string
   filePath?: string
   relativePath?: string
-  type?: string
+  status?: string
   diff?: string
   patch?: string
+}
+
+export function getApplyPatchFiles(metadata: Record<string, unknown>): ApplyPatchFile[] {
+  return Array.isArray(metadata.files) ? metadata.files : []
+}
+
+export function getApplyPatchFilePath(file: ApplyPatchFile): string | undefined {
+  if (typeof file?.filePath === "string") return file.filePath
+  return typeof file?.file === "string" ? file.file : undefined
 }
 
 export const APPLY_PATCH_FILE_RENDER_LIMIT = 20
 const APPLY_PATCH_SCAN_LIMIT = 10_000
 
-export function getApplyPatchPathLabel(path: string, limit = 384): string {
-  const tail = path.slice(-(limit + 1)).replace(/\\/g, "/")
-  const separator = tail.lastIndexOf("/")
-  const label = separator >= 0 ? tail.slice(separator + 1) : tail
-  return label.length <= limit ? label : `...${label.slice(-(limit - 3))}`
+const operationCodes = { added: "A", deleted: "D", modified: "M", renamed: "R" } as const
+const isWindowsPath = (path: string) => /^(?:[a-z]:[\\/]|\/\/)/i.test(path) || path.includes("\\")
+
+function patchPathKey(path: string, directory?: string): string {
+  const rooted = /^([a-z]:\/|\/\/[^/]+\/[^/]+\/?|\/)/i
+  const full = directory && !rooted.test(path) ? `${directory}${path}` : path
+  const root = rooted.exec(full)?.[0] ?? ""
+  const segments: string[] = []
+  for (const segment of full.slice(root.length).split("/")) {
+    if (!segment || segment === ".") continue
+    if (segment === ".." && segments.length && segments.at(-1) !== "..") segments.pop()
+    else if (segment !== ".." || !root) segments.push(segment)
+  }
+  return root + segments.join("/")
+}
+
+export function getApplyPatchFileChange(file: ApplyPatchFile, directory?: string): { status?: keyof typeof operationCodes; path: string } {
+  const root = directory?.replace(/\\/g, "/").replace(/\/?$/, "/")
+  const windows = isWindowsPath(directory ?? "")
+  const comparable = (path: string, foldCase = windows) => foldCase ? path.toLowerCase() : path
+  const relative = (path: string) => {
+    const normalized = path.replace(/\\/g, "/")
+    return root && comparable(normalized).startsWith(comparable(root)) ? normalized.slice(root.length) : normalized
+  }
+  const targetPath = file?.relativePath || getApplyPatchFilePath(file) || ""
+  const target = relative(targetPath)
+  const nativeStatus = file?.status
+  const status = nativeStatus === "added" || nativeStatus === "deleted" || nativeStatus === "modified" || nativeStatus === "renamed"
+    ? nativeStatus
+    : undefined
+  // V2 also reports moves as "modified": `file` is the destination and the diff names the source.
+  if (target && (status === "renamed" || ((status === "modified" || !status) && typeof file.file === "string"))) {
+    const header = getApplyPatchDiff(file).slice(0, APPLY_PATCH_SCAN_LIMIT).split(/\r?\n@@ /, 1)[0]
+    const sourcePath = /^Index: (.+)\r?$/m.exec(header)?.[1] ?? /^--- ([^\t\r\n]+)\r?$/m.exec(header)?.[1]
+    if (sourcePath) {
+      const source = relative(sourcePath)
+      const foldCase = windows || isWindowsPath(sourcePath) || isWindowsPath(targetPath)
+      const sourceKey = comparable(patchPathKey(source, root), foldCase)
+      const targetKey = comparable(patchPathKey(target, root), foldCase)
+      if (status === "renamed" || (sourceKey !== targetKey && (root || !sourceKey.endsWith(`/${targetKey}`)))) {
+        return { status: "renamed", path: `${source} → ${target}` }
+      }
+    }
+  }
+  return { status, path: target }
 }
 
 export function* getApplyPatchDiagnosticPaths(diagnostics: Record<string, unknown>): Generator<string> {
   for (const path in diagnostics) if (Object.prototype.hasOwnProperty.call(diagnostics, path)) yield path
 }
 
-function getApplyPatchDiff(file: ApplyPatchFile): string {
-  return typeof file.diff === "string" ? file.diff : typeof file.patch === "string" ? file.patch : ""
+export function getApplyPatchDiff(file: ApplyPatchFile): string {
+  return typeof file?.diff === "string" ? file.diff : typeof file?.patch === "string" ? file.patch : ""
 }
 
 function probeApplyPatchCopyText(file: ApplyPatchFile, limit: number) {
@@ -41,32 +91,16 @@ export function hasApplyPatchCopyText(files: ApplyPatchFile[], scanLimit = APPLY
   return index < files.length
 }
 
-export function getApplyPatchCopyText(files: ApplyPatchFile[], limit = Number.POSITIVE_INFINITY): string {
-  const diffs: string[] = []
-  let characters = 0
-  for (const file of files) {
-    const remaining = limit - characters
-    if (remaining <= 0) break
-    const diff = getApplyPatchDiff(file)
-    const copyText = diff.slice(0, remaining)
-    if (!copyText.trim()) {
-      if (copyText.length < diff.length) break
-      continue
-    }
-    diffs.push(copyText)
-    characters += Math.min(diff.length, remaining)
-    if (diff.length > remaining) break
-  }
-  return diffs.join("\n")
+export function getApplyPatchFileCopyText(file: ApplyPatchFile, directory?: string): string {
+  const { status, path } = getApplyPatchFileChange(file, directory)
+  const diff = getApplyPatchDiff(file)
+  return status && path ? `${operationCodes[status]} ${path}${diff ? `\n${diff}` : ""}` : diff
 }
 
-export function getApplyPatchCopyOutput(files: ApplyPatchFile[], fallback: unknown): string | null {
-  return getApplyPatchCopyText(files) || (typeof fallback === "string" && fallback.length > 0 ? fallback : null)
-}
-
-export function getApplyPatchCopyAccess(files: ApplyPatchFile[], fallback: unknown) {
+export function getApplyPatchCopyAccess(files: ApplyPatchFile[], fallback: string | null, directory?: string) {
   if (hasApplyPatchCopyText(files)) {
-    return { language: "diff" as const, getCopyText: () => getApplyPatchCopyOutput(files, fallback), hasCopyText: true as const }
+    const getCopyText = () => files.map((file) => getApplyPatchFileCopyText(file, directory)).filter((text) => text.trim()).join("\n") || fallback
+    return { language: "diff" as const, getCopyText, hasCopyText: true as const }
   }
   if (typeof fallback !== "string" || fallback.length === 0) return undefined
   return { language: "text" as const, getCopyText: () => fallback, hasCopyText: true as const }
@@ -120,7 +154,7 @@ export function getApplyPatchFilesForRender(files: ApplyPatchFile[], diagnosticP
   for (let fileIndex = 0; fileIndex < files.length && rendered.length < limit; fileIndex += 1) {
     const file = files[fileIndex]
     scannedFiles += 1
-    const normalizedFilePaths = [file.filePath, file.relativePath]
+    const normalizedFilePaths = [getApplyPatchFilePath(file), file?.relativePath]
       .filter((path): path is string => typeof path === "string")
       .map(normalize)
     const matchesDiagnostic = normalizedFilePaths.some((path) => paths.some((diagnostic) => matchesPath(path, diagnostic.normalized)))

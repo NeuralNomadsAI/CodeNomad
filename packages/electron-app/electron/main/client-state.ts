@@ -2,20 +2,24 @@ import { randomUUID } from "node:crypto"
 import { closeSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { open, rename, rm } from "node:fs/promises"
 import { dirname, join } from "node:path"
+import { ClientStateFileDrafts } from "./client-state-file-drafts"
 import {
   electClientStateProcess,
   getRunningMarkerPath,
   hasLiveTauriClient,
+  hasLiveTauriClientAsync,
   hasErrorCode,
   isProcessOwnerLockOwned,
+  isProcessOwnerLockOwnedAsync,
   removeProcessOwnerLockIfOwned,
+  releaseProcessOwnerFile,
   type ProcessOwner,
-  removeRunningMarkerIfOwned,
 } from "./client-state-process"
 import { getProcessStartIdentity } from "./client-state-process-identity"
 import {
   CrossHostRegistration,
   crossHostParticipants,
+  crossHostParticipantsAsync,
   resolveCrossHostElectionDirectory,
   resolveCrossHostStatePath,
   resolveLegacyCrossHostStatePath,
@@ -77,6 +81,13 @@ interface ClientStateManagerOptions {
   legacySharedStatePath?: string | null
   legacyTauriDataPath?: string | null
   processOwner?: ProcessOwner
+  syncStateDirectory?: typeof syncDirectory
+}
+
+class DirectorySyncError extends Error {
+  constructor(cause: unknown) {
+    super("Client state published; durability unconfirmed", { cause })
+  }
 }
 
 async function writeClientStateTemporary(temporaryPath: string, serializedState: string): Promise<void> {
@@ -126,20 +137,24 @@ export class ClientStateManager {
   private readonly owner: ProcessOwner
   private readonly partitions: ClientStatePartitionStore
   private state: PersistedClientState = createClientState()
-  private writeQueue: Promise<void> = Promise.resolve()
+  private writeQueue: Promise<unknown> = Promise.resolve()
   private drainAndReleasePromise: Promise<void> | undefined
   private crossHostRegistration: CrossHostRegistration | undefined
   private primary = false
   private persistenceSuppressed = new Set<string>()
   private unsupportedFutureEnvelope = false
   private frozen = false
+  private rootSyncPending = false
+  private readonly syncStateDirectory: typeof syncDirectory
   private rendererAccessTokens = new Map<string, string>()
+  private readonly fileDrafts: ClientStateFileDrafts
 
   constructor(
     userDataPath: string,
     private readonly writeState: ClientStateWriter = writeClientStateTemporary,
     options?: ClientStateManagerOptions,
   ) {
+    this.syncStateDirectory = options?.syncStateDirectory ?? syncDirectory
     this.owner = options?.processOwner ?? {
       pid: process.pid,
       runToken: randomUUID(),
@@ -153,6 +168,7 @@ export class ClientStateManager {
       : resolveCrossHostStatePath()
     mkdirSync(dirname(this.statePath), { recursive: true })
     this.partitions = new ClientStatePartitionStore(dirname(this.statePath))
+    this.fileDrafts = new ClientStateFileDrafts(join(dirname(this.statePath), "workspace-file-drafts.json"))
     this.lockPath = join(userDataPath, PRIMARY_LOCK_FILENAME)
     const registrationLockPath = join(userDataPath, REGISTRATION_LOCK_FILENAME)
 
@@ -196,11 +212,11 @@ export class ClientStateManager {
     } catch (error) {
       console.warn("[client-state] failed to register cross-host ownership", error)
     }
-    if (!this.crossHostRegistration?.isPrimary) {
+    if (!this.checkStartupPrimary()) {
       if (election) removeProcessOwnerLockIfOwned(this.lockPath, this.owner)
       this.primary = false
     }
-    if (this.isPrimary) {
+    if (this.primary) {
       const legacySharedStatePath = options?.legacySharedStatePath === undefined
         ? (options?.crossHostElectionDirectory ? null : resolveLegacyCrossHostStatePath())
         : options.legacySharedStatePath
@@ -225,10 +241,29 @@ export class ClientStateManager {
   }
 
   get isPrimary(): boolean {
+    // Native window and flush dispatch need only the startup role. Persistence
+    // revalidates the lease asynchronously at the point of use.
+    return this.primary
+  }
+
+  private checkStartupPrimary(): boolean {
     if (!this.primary || !this.crossHostRegistration?.isPrimary) return false
     if (!this.legacyTauriDataPath) return true
     try {
       return !hasLiveTauriClient(this.legacyTauriDataPath, undefined, undefined, undefined, crossHostParticipants(this.crossHostRegistration.path))
+    } catch (error) {
+      console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
+      return false
+    }
+  }
+
+  private async checkPrimary(): Promise<boolean> {
+    const registration = this.crossHostRegistration
+    if (!this.primary || !registration || !await registration.checkPrimary()) return false
+    if (!this.legacyTauriDataPath) return this.primary
+    try {
+      const participants = await crossHostParticipantsAsync(registration.path)
+      return !await hasLiveTauriClientAsync(this.legacyTauriDataPath, participants) && this.primary
     } catch (error) {
       console.warn("[client-state] failed to recheck legacy Tauri process markers; ownership disabled", error)
       return false
@@ -249,7 +284,7 @@ export class ClientStateManager {
 
   setPreferences(request: PreferencesRequest | undefined): Promise<boolean> {
     return this.mutateWindowListAndPersist((state) => {
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       if (request) {
         state.preferences = request
         state.lastPreferences = { section: request.section, ...(request.scrollTop === undefined ? {} : { scrollTop: request.scrollTop }) }
@@ -269,7 +304,7 @@ export class ClientStateManager {
   savePreferencesWindow(window: NativeWindowState): Promise<boolean> {
     const normalized = normalizeNativeWindowState(window)
     return this.mutateWindowListAndPersist((state) => {
-      if (!normalized || !this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (!normalized || this.unsupportedFutureEnvelope) return false
       state.preferencesWindow = normalized
     })
   }
@@ -280,14 +315,30 @@ export class ClientStateManager {
         throw new Error("Unknown client state window")
       }
       if (state.activeWindowId === windowId) return true
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       state.activeWindowId = windowId
     })
   }
 
   loadClientState(windowId = this.activeWindowId): ClientStateLoadResult {
+    return this.projectClientState(windowId, this.isPrimary)
+  }
+
+  loadClientStateForRenderer(windowId: string, rendererToken: unknown): Promise<ClientStateLoadResult> {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      const primary = await this.checkPrimary()
+      this.assertRendererAccessToken(rendererToken, windowId)
+      return this.projectClientState(windowId, primary)
+    })
+    // A read delays later writes without hiding a failed publication from flush.
+    this.writeQueue = this.writeQueue.finally(() => operation.then(() => {}, () => {}))
+    void this.writeQueue.catch(() => {})
+    return operation
+  }
+
+  private projectClientState(windowId: string, primary: boolean): ClientStateLoadResult {
     const record = this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!primary) {
       return { isPrimary: false, restoreEnabled: false, snapshot: null, partitionProtocolVersion: CLIENT_STATE_PARTITION_PROTOCOL_VERSION }
     }
     return {
@@ -298,13 +349,35 @@ export class ClientStateManager {
     }
   }
 
+  loadFileDrafts(rendererToken: unknown, windowId: string, key?: unknown) {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      await this.assertReplacementAllowed(rendererToken, windowId)
+      if (!this.windowRecord(windowId).restoreEnabled) return []
+      return this.fileDrafts.load(windowId, key, () => this.assertReplacementAllowed(rendererToken, windowId))
+    })
+    this.writeQueue = operation.then(() => {}, () => {})
+    return operation
+  }
+
+  saveFileDraft(raw: unknown, rendererToken: unknown, windowId: string): Promise<boolean> {
+    const operation = this.writeQueue.catch(() => {}).then(async () => {
+      await this.assertReplacementAllowed(rendererToken, windowId)
+      return this.fileDrafts.save(raw, windowId, this.windowRecord(windowId).restoreEnabled,
+        () => this.assertReplacementAllowed(rendererToken, windowId),
+        (path, contents) => this.writeAtomically(contents, rendererToken, windowId, path),
+        () => this.rendererAccessTokens.get(windowId) === rendererToken)
+    })
+    this.writeQueue = operation.then(() => {}, () => {})
+    return operation
+  }
+
   loadClientStatePartition(key: unknown, rendererToken?: unknown, windowId = this.activeWindowId): Promise<string | null> {
     if (!isPartitionKey(key)) return Promise.reject(new TypeError("Invalid client state partition key"))
     this.windowRecord(windowId)
     const operation = this.writeQueue.catch(() => {}).then(async () => {
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
       const record = this.windowRecord(windowId)
-      if (!this.isPrimary || !record.restoreEnabled
+      if (!await this.checkPrimary() || !record.restoreEnabled
         || record.partitionProtocolVersion !== CLIENT_STATE_PARTITION_PROTOCOL_VERSION
         || !record.partitionKeys?.includes(key)) return null
       return this.partitions.load(key, () => this.assertReplacementAllowed(rendererToken, windowId))
@@ -341,8 +414,8 @@ export class ClientStateManager {
   }
 
   resetRendererAccessToken(windowId = this.activeWindowId): void {
-    this.windowRecord(windowId)
     this.rendererAccessTokens.delete(windowId)
+    this.fileDrafts.release(windowId)
   }
 
   saveClientState(snapshot: unknown, rendererToken?: unknown, windowId = this.activeWindowId): Promise<boolean> {
@@ -404,7 +477,7 @@ export class ClientStateManager {
 
   clearClientState(rendererToken?: unknown, windowId = this.activeWindowId): Promise<boolean> {
     this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!this.primary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -443,7 +516,7 @@ export class ClientStateManager {
       if (!isWindowId(windowId)) throw new TypeError("Invalid client state window ID")
       if (state.windowOrder.length >= MAX_CLIENT_STATE_WINDOWS) throw new RangeError("Too many client state windows")
       if (state.windows[windowId]) throw new Error("Client state window already exists")
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       if (state.windowOrder.length === 0) state.activeWindowId = windowId
       state.windowOrder.push(windowId)
       state.windows[windowId] = { restoreEnabled: true }
@@ -455,7 +528,7 @@ export class ClientStateManager {
       if (!isWindowId(windowId) || !Object.prototype.hasOwnProperty.call(state.windows, windowId)) {
         throw new Error("Unknown client state window")
       }
-      if (!this.isPrimary || this.unsupportedFutureEnvelope) return false
+      if (this.unsupportedFutureEnvelope) return false
       state.windowOrder = state.windowOrder.filter((id) => id !== windowId)
       delete state.windows[windowId]
       if (state.activeWindowId === windowId && state.windowOrder.length > 0) state.activeWindowId = state.windowOrder[0]!
@@ -463,6 +536,7 @@ export class ClientStateManager {
     () => this.partitions.sweep(retainedPartitionKeys(this.state), () => this.assertReplacementAllowed()))
       .then((removed) => {
         if (removed) {
+          // Workspace release can still delay destruction after the record is removed.
           this.rendererAccessTokens.delete(windowId)
           this.persistenceSuppressed.delete(windowId)
         }
@@ -481,16 +555,20 @@ export class ClientStateManager {
 
     this.frozen = true
     // The primary locks stay held until the queued root publication and GC have both drained.
-    const drain = this.writeQueue.then(
-      () => {
-        this.primary = false
-        this.releaseOwnedProcessFiles()
-      },
-      (error) => {
-        this.frozen = false
-        throw error
-      },
-    )
+    const drain = this.writeQueue.catch((error) => {
+      if (!(error instanceof DirectorySyncError && this.rootSyncPending)) throw error
+    }).then(async () => {
+      if (this.rootSyncPending) {
+        await this.assertReplacementAllowed()
+        await this.syncStateDirectory(dirname(this.statePath))
+        this.rootSyncPending = false
+      }
+      this.primary = false
+      await this.releaseOwnedProcessFiles()
+    }).catch((error) => {
+      this.frozen = false
+      throw error
+    })
     this.drainAndReleasePromise = drain
     void drain.catch(() => {
       if (this.drainAndReleasePromise === drain) this.drainAndReleasePromise = undefined
@@ -550,7 +628,7 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertStartupReplacementAllowed()
       renameSync(temporaryPath, this.statePath)
       this.syncStateDirectorySync()
     } finally {
@@ -591,7 +669,7 @@ export class ClientStateManager {
       fsyncSync(descriptor)
       closeSync(descriptor)
       descriptor = undefined
-      this.assertReplacementAllowed()
+      this.assertStartupReplacementAllowed()
       try {
         linkSync(temporaryPath, this.statePath)
         this.syncStateDirectorySync()
@@ -613,7 +691,7 @@ export class ClientStateManager {
 
   private getMutationDisposition(windowId: string, futureEnvelopeResult = true): Promise<boolean> | undefined {
     this.windowRecord(windowId)
-    if (!this.isPrimary) {
+    if (!this.primary) {
       return Promise.resolve(false)
     }
     if (this.frozen) {
@@ -634,9 +712,10 @@ export class ClientStateManager {
     committed?: () => Promise<void>,
   ): Promise<boolean> {
     const operation = this.writeQueue.catch(() => {}).then(async () => {
+      if (!await this.checkPrimary()) return false
       if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
       if (skipWhenSuppressed && this.persistenceSuppressed.has(windowId)) {
-        return
+        return true
       }
 
       const previousState = JSON.parse(JSON.stringify(this.state)) as PersistedClientState
@@ -647,15 +726,18 @@ export class ClientStateManager {
         mutate(this.windowRecord(windowId), this.state)
         await this.writeAtomically(JSON.stringify(this.state), rendererToken, windowId)
       } catch (error) {
-        this.state = previousState
-        this.persistenceSuppressed = previousPersistenceSuppressed
-        this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        if (!(error instanceof DirectorySyncError)) {
+          this.state = previousState
+          this.persistenceSuppressed = previousPersistenceSuppressed
+          this.unsupportedFutureEnvelope = previousUnsupportedFutureEnvelope
+        }
         throw error
       }
       await committed?.().catch((error) => console.warn("[client-state] failed to sweep partitions", error))
+      return true
     })
     this.writeQueue = operation
-    return operation.then(() => true)
+    return operation
   }
 
   private mutateWindowListAndPersist(
@@ -664,12 +746,19 @@ export class ClientStateManager {
   ): Promise<boolean> {
     if (this.frozen) return Promise.reject(new Error("Client state persistence is frozen for shutdown"))
     const operation = this.writeQueue.catch(() => {}).then(async () => {
+      if (!await this.checkPrimary()) return false
       const previousState = JSON.parse(JSON.stringify(this.state)) as PersistedClientState
       try {
         const result = mutate(this.state)
         if (result !== undefined) return result
         await this.writeAtomically(JSON.stringify(this.state))
       } catch (error) {
+        if (error instanceof DirectorySyncError) {
+          // Native window construction/close follows the published membership.
+          // The shutdown drain retries the sync before releasing ownership.
+          console.warn("[client-state]", error)
+          return true
+        }
         this.state = previousState
         throw error
       }
@@ -680,19 +769,26 @@ export class ClientStateManager {
     return operation
   }
 
-  private async writeAtomically(serializedState: string, rendererToken?: unknown, windowId = this.activeWindowId): Promise<void> {
+  private async writeAtomically(serializedState: string, rendererToken?: unknown, windowId = this.activeWindowId, target = this.statePath): Promise<void> {
     const temporaryPath = join(
       dirname(this.statePath),
       `.${CLIENT_STATE_FILENAME}.${this.owner.pid}.${this.owner.runToken}.tmp`,
     )
     try {
       await this.writeState(temporaryPath, serializedState)
-      this.assertReplacementAllowed(rendererToken, windowId)
-      await rename(temporaryPath, this.statePath)
-      await syncDirectory(dirname(this.statePath))
+      await this.assertReplacementAllowed(rendererToken, windowId)
+      await rename(temporaryPath, target)
     } catch (error) {
       await rm(temporaryPath, { force: true }).catch(() => {})
       throw error
+    }
+    const isRoot = target === this.statePath
+    try {
+      await this.syncStateDirectory(dirname(this.statePath))
+      if (isRoot) this.rootSyncPending = false
+    } catch (error) {
+      if (isRoot) this.rootSyncPending = true
+      throw new DirectorySyncError(error)
     }
   }
 
@@ -709,22 +805,30 @@ export class ClientStateManager {
     }
   }
 
-  private assertReplacementAllowed(rendererToken?: unknown, windowId = this.activeWindowId): void {
+  private async assertReplacementAllowed(rendererToken?: unknown, windowId = this.activeWindowId): Promise<void> {
     if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
-    if (!this.isPrimary || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
+    if (!await this.checkPrimary() || !await isProcessOwnerLockOwnedAsync(this.lockPath, this.owner)) {
+      throw new Error("Client state ownership changed before atomic replacement")
+    }
+    if (rendererToken !== undefined) this.assertRendererAccessToken(rendererToken, windowId)
+  }
+
+  // Migration runs before the first application window and before the async IPC queue exists.
+  private assertStartupReplacementAllowed(): void {
+    if (!this.checkStartupPrimary() || !isProcessOwnerLockOwned(this.lockPath, this.owner)) {
       throw new Error("Client state ownership changed before atomic replacement")
     }
   }
 
-  private releaseOwnedProcessFiles(): void {
-    const releases: Array<[string, () => void]> = [
-      ["remove running marker", () => { removeRunningMarkerIfOwned(getRunningMarkerPath(this.userDataPath, this.owner), this.owner) }],
-      ["release primary lock", () => { removeProcessOwnerLockIfOwned(this.lockPath, this.owner) }],
-      ["release cross-host registration", () => { this.crossHostRegistration?.release(); this.crossHostRegistration = undefined }],
+  private async releaseOwnedProcessFiles(): Promise<void> {
+    const releases: Array<[string, () => Promise<unknown>]> = [
+      ["remove running marker", () => releaseProcessOwnerFile(getRunningMarkerPath(this.userDataPath, this.owner), this.owner)],
+      ["release primary lock", () => releaseProcessOwnerFile(this.lockPath, this.owner)],
+      ["release cross-host registration", async () => { await this.crossHostRegistration?.release(); this.crossHostRegistration = undefined }],
     ]
     for (const [action, release] of releases) {
       try {
-        release()
+        await release()
       } catch (error) {
         console.warn(`[client-state] failed to ${action}`, error)
       }

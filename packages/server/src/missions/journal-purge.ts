@@ -1,5 +1,6 @@
 import { compareEvents, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
 import { cleanupReference, documentCleanupPending, isCleanupReason, pendingCleanupTargets, projectMissionCleanups } from "./cleanup-projection"
+import { displayMissionText } from "./truncate-text"
 import { missionTaskSessionMatcher } from "./session-identity"
 
 /** What remains of a purged deleted mission, outside the bounded journal scan:
@@ -52,7 +53,7 @@ export function parseDeletionRecord(value: unknown, projectID: string, missionID
 /** The settled cleanup summary a replayed deletion answers once its events are gone. */
 export function deletionRecordCleanup(record: MissionDeletionRecord): MissionCleanup {
   return { missionID: record.missionID, deletionID: record.deletionID, requestID: record.requestID,
-    expectedRevision: record.expectedRevision, deleteManagedSessions: record.deleteManagedSessions, objective: record.objective,
+    expectedRevision: record.expectedRevision, deleteManagedSessions: record.deleteManagedSessions, objective: displayMissionText(record.objective),
     removed: record.removed, retained: record.retained, pending: 0, reasons: [...record.reasons], createdAt: record.createdAt,
     ...(record.documentCleanup ? { documentPending: false } : {}) }
 }

@@ -25,7 +25,6 @@ export interface ColorSchemeColors {
   userAccent: string
   agentAccent: string
   compactionAccent: string
-  yoloAccent: string
 }
 
 export interface ColorSchemeDefinition {
@@ -66,7 +65,6 @@ const COLOR_KEYS: readonly (keyof ColorSchemeColors)[] = [
   "userAccent",
   "agentAccent",
   "compactionAccent",
-  "yoloAccent",
 ]
 
 const LEGACY_COLOR_KEYS = COLOR_KEYS.slice(0, 10)
@@ -75,7 +73,6 @@ const DEFAULT_SEMANTIC_COLORS = {
   userAccent: "#42A5F5",
   agentAccent: "#D97706",
   compactionAccent: "#C084FC",
-  yoloAccent: "#8FA8FF",
 } as const
 
 export const DEFAULT_CUSTOM_COLORS: Readonly<ColorSchemeColors> = {
@@ -104,7 +101,6 @@ export const LIGHT_COLOR_SCHEME_COLORS: Readonly<ColorSchemeColors> = {
   statusWarning: "#9A6700",
   statusError: "#C62828",
   ...LIGHT_IDENTITY_COLORS,
-  yoloAccent: "#0066FF",
 }
 
 export const SYSTEM_LIGHT_COLOR_SCHEME_COLORS = SOFT_SYSTEM_LIGHT
@@ -143,7 +139,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       userAccent: "#2196F3",
       agentAccent: "#D97706",
       compactionAccent: "#C084FC",
-      yoloAccent: "#0080FF",
     },
   },
   ...SOFT_COLOR_SCHEMES,
@@ -175,7 +170,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusWarning: "#D8B36A",
       statusError: "#E28181",
       ...DARK_IDENTITY_COLORS,
-      yoloAccent: "#67C9BA",
     },
   },
   {
@@ -195,7 +189,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusWarning: "#D6B36D",
       statusError: "#DF8580",
       ...DARK_IDENTITY_COLORS,
-      yoloAccent: "#A9C47F",
     },
   },
   {
@@ -215,7 +208,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusWarning: "#DDB46F",
       statusError: "#E28787",
       ...DARK_IDENTITY_COLORS,
-      yoloAccent: "#E5A77D",
     },
   },
   {
@@ -235,7 +227,6 @@ export const BUILT_IN_COLOR_SCHEMES: readonly ColorSchemeDefinition[] = [
       statusWarning: "#D8AE62",
       statusError: "#DE817A",
       ...DARK_IDENTITY_COLORS,
-      yoloAccent: "#D79A66",
     },
   },
   {
@@ -260,9 +251,13 @@ export function isColorSchemeColors(value: unknown): value is ColorSchemeColors 
 }
 
 function normalizeColors(value: unknown): ColorSchemeColors | undefined {
-  if (isColorSchemeColors(value)) return { ...value }
   if (!isRecord(value) || !LEGACY_COLOR_KEYS.every((key) => isCanonicalHexColor(value[key]))) return undefined
-  return { ...(value as unknown as Omit<ColorSchemeColors, keyof typeof DEFAULT_SEMANTIC_COLORS>), ...DEFAULT_SEMANTIC_COLORS }
+  const colors: ColorSchemeColors = { ...DEFAULT_CUSTOM_COLORS }
+  for (const key of COLOR_KEYS) {
+    const color = value[key]
+    if (isCanonicalHexColor(color)) colors[key] = color
+  }
+  return colors
 }
 
 const copyColors = (colors: Readonly<ColorSchemeColors>): ColorSchemeColors => ({ ...colors })
@@ -335,7 +330,6 @@ export function validateColorSchemeColors(value: unknown): value is ColorSchemeC
     value.userAccent,
     value.agentAccent,
     value.compactionAccent,
-    value.yoloAccent,
   ]
   const emphasisSurfaces = [value.surfaceBase, value.surfaceSecondary]
   return (
@@ -407,7 +401,6 @@ const APPLIED_PROPERTIES = [
   "--message-tool-border",
   "--session-status-compacting-fg",
   "--session-status-compacting-bg",
-  "--session-yolo-accent",
   "--tab-active-bg",
   "--tab-active-hover-bg",
   "--tab-active-text",
@@ -488,7 +481,6 @@ function derivedProperties(
     "--message-tool-border": mix(colors.textMuted, colors.borderBase, 0.28),
     "--session-status-compacting-fg": colors.compactionAccent,
     "--session-status-compacting-bg": alpha(colors.compactionAccent, dark ? 0.28 : 0.18),
-    "--session-yolo-accent": colors.accentPrimary,
     "--tab-active-bg": colors.surfaceBase,
     "--tab-active-hover-bg": mix(colors.textPrimary, colors.surfaceBase, 0.04),
     "--tab-active-text": colors.textPrimary,

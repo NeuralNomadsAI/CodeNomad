@@ -1,4 +1,4 @@
-import type { PluginControlsSnapshot } from "../api-types"
+import type { PluginConfiguredRule, PluginControlScope, PluginControlsSnapshot } from "../api-types"
 import type { Logger } from "../logger"
 import type {
   PluginSourceAddRequest,
@@ -6,7 +6,8 @@ import type {
   PluginSourceMutationResponse,
   PluginSourceRemoveRequest,
 } from "../plugin-source-types"
-import { appendPluginControlRule, PluginControlDocumentError } from "./plugin-control-document"
+import { definedBefore } from "./plugin-activation-order"
+import { appendPluginControlRule, PluginControlDocumentError, replacePluginControlRules } from "./plugin-control-document"
 import { PluginControlsError, type PluginControls, type PluginControlsErrorKind } from "./plugin-controls"
 import {
   pluginEntryTarget,
@@ -25,7 +26,7 @@ export class PluginSourcesError extends PluginControlsError {
   }
 }
 
-type Documents = Pick<PluginControls, "read" | "readConfigDocuments" | "editConfigDocument">
+type Documents = Pick<PluginControls, "read" | "readConfigDocuments" | "editConfigDocument" | "editPluginDocuments">
 type Catalog = Pick<IntegrationCatalogSource, "read">
 
 /** Bound on one queued add (its daemon reads and the write) before it is refused as unavailable. */
@@ -114,28 +115,74 @@ export class PluginSources {
     return { scope, spec, reloadPending: true }
   }
 
+  /**
+   * Removes a source with every exact `id`/`-id` rule of its plugin ID in the same document, so no orphan rule is
+   * left for OpenCode to load as a package: a bare `id` stays only after another verified definition, a `-id` while
+   * another declaration of the plugin remains. A bare `id` in the location's other writable document that loses its
+   * preceding definition goes in the same request; one in any other document refuses the removal. A source whose ID
+   * is unknown (disabled, failed before exporting one) keeps the rules. With `pluginId`, removes the exact rules of an
+   * ID the snapshot reads as orphan.
+   */
   async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
-    const { scope, target, entryIndex } = request
+    const { scope } = request
     if (!/^[a-f0-9]{64}$/.test(request.expectedRevision ?? "")) {
       throw new PluginSourcesError("OpenCode configuration confirmation is unavailable", "conflict", "stale")
     }
+    const stale = () => new PluginSourcesError("OpenCode plugin entry changed since it was displayed", "conflict", "stale")
+    let removedRules = 0
     try {
-      await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
-      try {
-        return removePluginSourceEntry(document, entryIndex, target)
-      } catch (error) {
-        if (error instanceof PluginControlDocumentError && error.kind === "conflict") {
-          throw new PluginSourcesError(error.message, "conflict", "stale")
+      await this.options.documents.editPluginDocuments(workspaceId, request.location, scope, request.expectedRevision, view => {
+        const own = view.targets.find(target => target.scope === scope)
+        if (!own?.consistent || own.order === undefined) throw stale()
+        const rulesOf = (id: string, keep: (rule: PluginConfiguredRule) => boolean = () => false) => {
+          const sources = new Set(own.sources.map(source => source.entryIndex))
+          const indexes = own.rules.filter(rule => rule.selector === id && !sources.has(rule.entryIndex) && !keep(rule))
+            .map(rule => rule.entryIndex)
+          return { indexes, expected: new Set([id, `-${id}`]) }
         }
-        throw error
-      }
-      }, undefined, false, request.expectedRevision)
+        try {
+          if ("pluginId" in request) {
+            const rules = rulesOf(request.pluginId)
+            if (!view.controls.some(control => control.id === request.pluginId && control.orphan) || rules.indexes.length === 0) throw stale()
+            removedRules = rules.indexes.length
+            return { [scope]: replacePluginControlRules(own.document, rules.indexes, rules.expected) }
+          }
+          const source = own.sources.find(entry => entry.entryIndex === request.entryIndex && entry.target === request.target)
+          if (!source) throw stale()
+          const id = source.pluginId
+          if (!id) return { [scope]: removePluginSourceEntry(own.document, request.entryIndex, request.target) }
+          // Re-evaluate the plugin's exact rules without the source, in OpenCode's applied order. In this document a bare
+          // `id` stays only after another verified definition (otherwise it becomes a package spec); a `-id` installs
+          // nothing, so it goes only when the shared loader proof shows no other loader is left.
+          const remains = view.otherLoader(source)
+          const removed = view.sequence.entries.find(entry => entry.document === own.order && entry.entryIndex === request.entryIndex)
+          const rules = rulesOf(id, rule => rule.enabled ? definedBefore(view.sequence, id, own.order!, rule.entryIndex, removed) : remains)
+          const updates: Partial<Record<PluginControlScope, string>> = { [scope]: removePluginSourceEntry(own.document, request.entryIndex, request.target, rules) }
+          // In every other applicable document, a bare `id` this source alone defined beforehand would become a package
+          // spec too: delete it from the location's other writable target, and refuse when it lives anywhere else.
+          const losing = view.sequence.entries.filter(entry => entry.document !== own.order && !entry.remove && !entry.pluginId
+            && entry.target === id && definedBefore(view.sequence, id, entry.document, entry.entryIndex)
+            && !definedBefore(view.sequence, id, entry.document, entry.entryIndex, removed))
+          for (const document of new Set(losing.map(entry => entry.document))) {
+            const target = view.targets.find(candidate => candidate.order === document)
+            if (!target) throw new PluginSourcesError("A rule in another OpenCode configuration depends on this plugin", "invalid", "dependent-rule")
+            if (!target.consistent) throw stale()
+            const indexes = losing.filter(entry => entry.document === document).map(entry => entry.entryIndex)
+            updates[target.scope] = replacePluginControlRules(target.document, indexes, new Set([id]))
+          }
+          removedRules = rules.indexes.length + losing.length
+          return updates
+        } catch (error) {
+          if (error instanceof PluginControlDocumentError && error.kind === "conflict") throw stale()
+          throw error
+        }
+      })
     } catch (error) {
       if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
       throw error
     }
-    this.options.logger.info({ workspaceId, scope }, "Removed OpenCode plugin source")
-    return { scope, spec: target, reloadPending: true }
+    this.options.logger.info({ workspaceId, scope, removedRules }, "pluginId" in request ? "Removed orphan OpenCode plugin rules" : "Removed OpenCode plugin source")
+    return { scope, spec: "pluginId" in request ? request.pluginId : request.target, reloadPending: true }
   }
 }
 

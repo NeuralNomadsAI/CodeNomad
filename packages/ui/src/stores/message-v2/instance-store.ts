@@ -78,6 +78,18 @@ function ensurePartId(messageId: string, part: ClientPart, index: number): strin
 const MAX_TRANSCRIPT_MEASUREMENT_BYTES = 64 * 1024 * 1024
 const MAX_TRANSCRIPT_MEASUREMENT_NODES = 500_000
 
+/** Rows a chunked hydration commits before yielding the main thread. */
+export const HYDRATE_CHUNK_SIZE = 50
+
+/** Yields to the main thread between chunk commits: `scheduler.yield` where
+ * available, otherwise a macrotask boundary (a microtask would not let input,
+ * timers or paint run between chunks). */
+function yieldToMainThread(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler
+  if (scheduler && typeof scheduler.yield === "function") return scheduler.yield()
+  return new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
 function clonePart(part: ClientPart): ClientPart {
   // Cloning is intentionally disabled; message parts
   // are stored as received from the backend.
@@ -243,7 +255,7 @@ export interface InstanceMessageStore {
   state: InstanceMessageState
   setState: SetStoreFunction<InstanceMessageState>
   addOrUpdateSession: (input: SessionUpsertInput) => void
-  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean }) => void
+  hydrateMessages: (sessionId: string, inputs: MessageUpsertInput[], infos?: Iterable<MessageInfo>, options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean }) => void | Promise<boolean>
   reconcileEmptyAuthoritativeSnapshot: (sessionId: string) => void
   reconcileAuthoritativeMessageIds: (sessionId: string, authoritativeIds: ReadonlySet<string>, baselineRevisions: ReadonlyMap<string, number>) => void
   markSendPending: (messageId: string) => void
@@ -296,6 +308,20 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   // Requests awaiting same-ID persistence confirmation.
   const pendingSendIds = new Set<string>()
+
+  // Fence tokens for chunked hydrations: a chunked hydration commits across
+  // task boundaries, so every other write to the session bumps its token and
+  // the stale snapshot stops committing (the newest writer owns the session).
+  const hydrationFences = new Map<string, number>()
+
+  function fenceSessionHydration(sessionId: string): void {
+    if (!sessionId) return
+    hydrationFences.set(sessionId, (hydrationFences.get(sessionId) ?? 0) + 1)
+  }
+
+  function currentHydrationFence(sessionId: string): number {
+    return hydrationFences.get(sessionId) ?? 0
+  }
 
   function forgetPendingSend(messageId: string): void {
     pendingSendIds.delete(messageId)
@@ -582,14 +608,33 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // client) and cross-attach its metadata. Sends the server has not yet
   // echoed are preserved via `pendingSendIds` instead (see hydrateMessages).
 
-  function hydrateMessages(
+  interface HydrationPlan {
+    revertMessageId: string | undefined
+    /** Resident records at plan time: the diff basis every chunk compares
+     * against, so a row the store has since replaced is decided by content
+     * freshness at the finalize pass, not by whichever writer landed first. */
+    previousRecords: Map<string, MessageRecord | undefined>
+    /** Cached infos at plan time: the finalize pass re-verifies each id
+     * before letting the snapshot's info land, so usage published by SSE
+     * after the fetch survives the commit. */
+    previousInfos: Map<string, MessageInfo | undefined>
+    dedupedInputs: MessageUpsertInput[]
+    serverIds: string[]
+    serverIdSet: Set<string>
+    previousMessageIds: string[]
+    pendingOptimisticIds: string[]
+    omittedIds: string[]
+    preservedAfter: Map<string | undefined, string[]>
+    incomingIds: string[]
+    infoList: MessageInfo[] | undefined
+  }
+
+  function planHydration(
     sessionId: string,
     inputs: MessageUpsertInput[],
     infos?: Iterable<MessageInfo>,
     options?: { preserveOmitted?: boolean; confirmPending?: boolean },
-  ) {
-    if (!Array.isArray(inputs) || inputs.length === 0) return
-
+  ): HydrationPlan {
     ensureSessionEntry(sessionId)
 
     // Defensive dedupe by message id: a snapshot should not contain the same
@@ -610,11 +655,58 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const serverIds = dedupedInputs.map((item) => item.id)
     const serverIdSet = new Set(serverIds)
+    const previousRecords = new Map<string, MessageRecord | undefined>()
+    for (const input of dedupedInputs) {
+      previousRecords.set(input.id, state.messages[input.id])
+    }
+    const membership = reconcileHydrationMembership(sessionId, serverIds, serverIdSet, options)
+    const previousMessageIds = membership.previousMessageIds
 
+    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
+    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
+    const previousInfos = new Map<string, MessageInfo | undefined>()
+    for (const info of infoList ?? []) {
+      previousInfos.set(info.id as string, messageInfoCache.get(info.id as string))
+    }
+
+    return {
+      revertMessageId,
+      previousRecords,
+      previousInfos,
+      dedupedInputs,
+      serverIds,
+      serverIdSet,
+      previousMessageIds,
+      pendingOptimisticIds: membership.pendingOptimisticIds,
+      omittedIds: membership.omittedIds,
+      preservedAfter: membership.preservedAfter,
+      incomingIds: membership.incomingIds,
+      infoList,
+    }
+  }
+
+  /** Snapshot-membership reconciliation against the session's CURRENT rows:
+   * what a hydrate keeps (pending sends, preserved runs), drops (omitted) and
+   * the resulting ordered id list. Shared by the entry plan and the chunked
+   * finalize pass, which re-runs it so rows streamed during the chunk yields
+   * survive the commit. */
+  function reconcileHydrationMembership(
+    sessionId: string,
+    serverIds: string[],
+    serverIdSet: Set<string>,
+    options?: { preserveOmitted?: boolean },
+    plannedAgainst?: ReadonlySet<string>,
+    keepArrivals = false,
+  ) {
     // Preserve only requests that have not received a promptAsync response
     // yet. Accepted prompts are confirmed under the same messageID, while
     // rejected requests are marked failed and can be removed by this snapshot.
-    const previousMessageIds = state.sessions[sessionId]?.messageIds ?? []
+    const currentIds = state.sessions[sessionId]?.messageIds ?? []
+    // The id list the snapshot was planned against: ids resident now but
+    // absent from it arrived AFTER the snapshot was fetched (a row streamed
+    // between chunk yields). The snapshot never spoke about them, so they
+    // survive in place; only ids it replaces may be omitted.
+    const baselineIds: ReadonlySet<string> = plannedAgainst ?? new Set(currentIds)
     // For each previous ephemeral "sending" record absent from this snapshot,
     // preserve it ONLY while it is a still-in-flight pending send; otherwise
     // it is stale — a send that already failed, or an ephemeral record the
@@ -626,10 +718,37 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // sit between its rows, rather than all belonging to older history. Keep
     // each omitted run after its preceding shared row, using native order.
     const preservedAfter = new Map<string | undefined, string[]>()
+    const trailingArrivals: string[] = []
+    let keptArrivals = false
+    let seenSharedId = false
     let precedingId: string | undefined
-    for (const id of previousMessageIds) {
+    const attach = (id: string) => {
+      const run = preservedAfter.get(precedingId) ?? []
+      run.push(id)
+      preservedAfter.set(precedingId, run)
+    }
+    for (const id of currentIds) {
       if (serverIdSet.has(id)) {
+        seenSharedId = true
         precedingId = id
+        continue
+      }
+      if (!baselineIds.has(id)) {
+        // Arrived after the snapshot was planned. The snapshot never spoke
+        // about this row: a latest-window load keeps the newer content,
+        // while a history replacement drops it exactly as the synchronous
+        // path omits rows its page does not hold. The whole arrival run
+        // stays anchored after the last shared id - and arrivals that share
+        // no id with the page land at the end, where the newest rows
+        // belong, instead of ahead of older messages the cap would rather
+        // evict.
+        if (keepArrivals) {
+          if (seenSharedId) attach(id)
+          else trailingArrivals.push(id)
+          keptArrivals = true
+        } else {
+          omittedIds.push(id)
+        }
         continue
       }
       const record = state.messages[id]
@@ -638,9 +757,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       } else {
         omittedIds.push(id)
         if (options?.preserveOmitted) {
-          const run = preservedAfter.get(precedingId) ?? []
-          run.push(id)
-          preservedAfter.set(precedingId, run)
+          attach(id)
         }
       }
     }
@@ -648,8 +765,466 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     const incomingIds = [
       ...preservedAfter.get(undefined) ?? [],
       ...serverIds.flatMap((id) => [id, ...preservedAfter.get(id) ?? []]),
+      ...trailingArrivals,
       ...pendingOptimisticIds,
     ]
+    return { previousMessageIds: currentIds, pendingOptimisticIds, omittedIds, preservedAfter, incomingIds, keptArrivals }
+  }
+
+  // Computes the changed records for one chunk of inputs, mirroring the
+  // synchronous pass record-for-record (unchanged records keep the resident
+  // object so their Solid subscribers stay quiet).
+  function normalizeHydrationChunk(chunk: MessageUpsertInput[], plan: HydrationPlan): Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> {
+    const normalized: Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> = []
+    const now = Date.now()
+    for (const input of chunk) {
+      const normalizedParts = normalizeParts(input.id, input.parts)
+      const previous = plan.previousRecords.get(input.id)
+      const partsChanged = normalizedParts
+        ? havePartsChanged(previous?.partIds, previous?.parts, normalizedParts.ids, normalizedParts.map)
+        : false
+      const statusChanged = previous ? previous.status !== input.status : true
+      const shouldBump = Boolean(input.bumpRevision || partsChanged || statusChanged)
+      // Identity reconciliation: a confirmed send reappears under its own id,
+      // so `previous` IS the optimistic record and its client-only
+      // prompt-display metadata carries over unchanged.
+      const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
+      // The window is re-projected on every native event, so unchanged
+      // messages must keep their resident record object: replacing it would
+      // notify every Solid subscriber of that message and re-render it.
+      const recordUnchanged = previous !== undefined && !shouldBump
+        && previous.role === input.role
+        && previous.sessionId === input.sessionId
+        && (input.createdAt === undefined || previous.createdAt === input.createdAt)
+        && (input.updatedAt === undefined || previous.updatedAt === input.updatedAt)
+        && (input.isEphemeral === undefined || previous.isEphemeral === input.isEphemeral)
+        && samePromptDisplayMetadata(clientPromptDisplayMetadata, previous.clientPromptDisplayMetadata)
+      if (recordUnchanged) continue
+      const record: MessageRecord = {
+        id: input.id,
+        sessionId: input.sessionId,
+        role: input.role,
+        status: input.status,
+        createdAt: input.createdAt ?? previous?.createdAt ?? now,
+        updatedAt: input.updatedAt ?? now,
+        isEphemeral: input.isEphemeral ?? previous?.isEphemeral ?? false,
+        clientPromptDisplayMetadata,
+        revision: previous ? previous.revision + (shouldBump ? 1 : 0) : 0,
+        partIds: normalizedParts ? normalizedParts.ids : previous?.partIds ?? [],
+        parts: normalizedParts ? normalizedParts.map : previous?.parts ?? {},
+      }
+      normalized.push({ id: input.id, record, previous })
+    }
+    return normalized
+  }
+
+  /** Whether a fetched info carries usage a resident entry lacks: tokens
+   * or cost the newer writer did not publish. */
+  function snapshotInfoExtends(current: MessageInfo | undefined, fetched: MessageInfo): boolean {
+    if (!current) return true
+    // Content first: a fetched end the resident entry lacks (or that is at
+    // least as recent) lands regardless of usage size.
+    const fetchedCompleted = fetched.time?.completed
+    const currentCompleted = current.time?.completed
+    if (fetchedCompleted !== undefined && (currentCompleted === undefined || fetchedCompleted >= currentCompleted)) return true
+    if (currentCompleted !== undefined && fetchedCompleted === undefined) return false
+    const currentTokens = current.tokens
+    const fetchedTokens = fetched.tokens
+    const currentTotal = (currentTokens?.input ?? 0) + (currentTokens?.output ?? 0) + (currentTokens?.reasoning ?? 0)
+    const fetchedTotal = (fetchedTokens?.input ?? 0) + (fetchedTokens?.output ?? 0) + (fetchedTokens?.reasoning ?? 0)
+    if (fetchedTotal > currentTotal) return true
+    return (fetched.cost ?? 0) > (current.cost ?? 0)
+  }
+
+  function isTerminalToolStatus(status: unknown): boolean {
+    return status === "completed" || status === "error"
+  }
+
+  /** Whether a streamed text fragment has its ending committed: the native
+   * provider state for text, `time.completed` for reasoning. */
+  function isCommittedProsePart(part: ClientPart): boolean {
+    if (part.type === "text") return (part as { native?: unknown }).native !== undefined
+    if (part.type === "reasoning") return (part as { time?: { completed?: unknown } }).time?.completed !== undefined
+    return true
+  }
+
+  /** Whether the resident part keeps its version against the fetched one,
+   * arbitrating per part on native evidence: a terminal tool state beats an
+   * open one, an open prose fragment keeps text the fetched page only
+   * prefixes (the stream continued past the fetch), and committed versions
+   * order by the records' server timestamps, the fetched page winning ties. */
+  function residentPartWins(resident: ClientPart, snapshot: ClientPart, residentUpdatedAt: number, snapshotUpdatedAt: number, residentRecordEnded = false, snapshotRecordEnded = false): boolean {
+    if (resident.type !== snapshot.type) return false
+    if (resident.type === "tool") {
+      const residentTerminal = isTerminalToolStatus((resident as { state?: { status?: unknown } }).state?.status)
+      const snapshotTerminal = isTerminalToolStatus((snapshot as { state?: { status?: unknown } }).state?.status)
+      if (snapshotTerminal && !residentTerminal) return false
+      if (residentTerminal && !snapshotTerminal) return true
+      return residentUpdatedAt > snapshotUpdatedAt
+    }
+    if (resident.type === "text" || resident.type === "reasoning") {
+      // Completion evidence orders before any prefix reasoning, read like
+      // the native merge's test: a fragment is committed by its own ending
+      // or by its message's end, even when only the message carries
+      // `time.completed`. The record keeps no end time of its own, so the
+      // message's end is its terminal display status - which the
+      // normalizer derives from that end: `complete` for a finished
+      // message, `error` for an interrupted or failed one (`sent` still
+      // means running for shells and compactions). A committed fetched
+      // fragment is the final version even when it is shorter than what the
+      // open stream displayed (`updatedAt` may hold the creation time and
+      // cannot order these).
+      const residentCommitted = isCommittedProsePart(resident) || residentRecordEnded
+      const snapshotCommitted = isCommittedProsePart(snapshot) || snapshotRecordEnded
+      if (snapshotCommitted && !residentCommitted) return false
+      if (!residentCommitted) {
+        if (!snapshotCommitted) {
+          // Two open fragments: the stream continued past the fetch only
+          // when the fetched text is a strict prefix of the live text.
+          const residentText = typeof (resident as { text?: unknown }).text === "string" ? (resident as { text: string }).text : ""
+          const snapshotText = typeof (snapshot as { text?: unknown }).text === "string" ? (snapshot as { text: string }).text : ""
+          return snapshotText.length < residentText.length && residentText.startsWith(snapshotText)
+        }
+        return false
+      }
+      if (!snapshotCommitted) return true
+    }
+    return residentUpdatedAt > snapshotUpdatedAt
+  }
+
+  /** A winning prose part still carries the fetched fragment's end
+   * metadata when the fetched side holds it: the resident text with the
+   * snapshot's `time`/`native` completion fields. */
+  function prosePartWithFetchedEnd(winner: ClientPart, fetched: ClientPart): ClientPart {
+    const merged = { ...winner } as Record<string, unknown>
+    let changed = false
+    const winnerTime = (winner as { time?: unknown }).time
+    const fetchedTime = (fetched as { time?: unknown }).time
+    if (fetchedTime !== undefined && winnerTime === undefined) {
+      merged.time = fetchedTime
+      changed = true
+    }
+    const winnerNative = (winner as { native?: unknown }).native
+    const fetchedNative = (fetched as { native?: unknown }).native
+    if (fetchedNative !== undefined && winnerNative === undefined) {
+      merged.native = fetchedNative
+      changed = true
+    }
+    return changed ? (merged as unknown as ClientPart) : winner
+  }
+
+  /** Merges a fetched record into one the store no longer holds as the
+   * chunks diffed it. Prose fragments (text, reasoning) pair by kind and
+   * ordinal the way the native merge does - anonymous fragments carry no id
+   * to pair on - and every other part pairs by id. The winner above decides
+   * each pair; parts only one side holds stay. Returns the resident record
+   * when nothing of the snapshot survives. */
+  function mergeSnapshotRecord(resident: MessageRecord, next: MessageRecord, keepResidentExtras: boolean): MessageRecord {
+    type ProseSide = { id: string; part: MessageRecord["parts"][string]; ordinal: number }
+    const proseOf = (record: MessageRecord): Map<string, ProseSide[]> => {
+      const byKind = new Map<string, ProseSide[]>()
+      let textOrdinal = 0
+      let reasoningOrdinal = 0
+      for (const id of record.partIds) {
+        const part = record.parts[id]?.data
+        if (!part) continue
+        if (part.type === "text" || part.type === "reasoning") {
+          const ordinal = part.type === "text" ? textOrdinal++ : reasoningOrdinal++
+          const bucket = byKind.get(part.type) ?? []
+          bucket.push({ id, part: record.parts[id]!, ordinal })
+          byKind.set(part.type, bucket)
+        }
+      }
+      return byKind
+    }
+    const residentProse = proseOf(resident)
+    const snapshotProse = proseOf(next)
+    const residentProseUsed = new Set<string>()
+    const snapshotProseUsedSet = new Set<string>()
+    const mergedParts: MessageRecord["parts"] = {}
+    const mergedIds: string[] = []
+    const ended = (record: MessageRecord) => record.status === "complete" || record.status === "error"
+    const residentEnded = ended(resident)
+    const snapshotEnded = ended(next)
+    const canonicalize = (part: MessageRecord["parts"][string], id: string): MessageRecord["parts"][string] => {
+      if (part.id === id && (part.data as { id?: unknown }).id === id) return part
+      return { ...part, id, data: { ...part.data, id } as ClientPart }
+    }
+    for (const id of next.partIds) {
+      const snapshotPart = next.parts[id]
+      const snapshotKind = snapshotPart?.data.type
+      if (snapshotPart && (snapshotKind === "text" || snapshotKind === "reasoning")) {
+        const ordinal = snapshotProse.get(snapshotKind)?.find((side) => side.id === id)?.ordinal
+        const residentSide = ordinal === undefined ? undefined : residentProse.get(snapshotKind)?.find((side) => side.ordinal === ordinal)
+        // A resident part won through pairing keeps the pair's canonical
+        // id: transcript lookups resolve parts by data.id.
+        const snapshotProseUsed = snapshotProseUsedSet
+        const residentWon = residentSide !== undefined
+          && residentPartWins(residentSide.part.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentEnded, snapshotEnded)
+        if (residentSide) residentProseUsed.add(residentSide.id)
+        snapshotProseUsed.add(id)
+        if (residentWon) {
+          const data = prosePartWithFetchedEnd(residentSide!.part.data, snapshotPart.data)
+          const wrapper = data === residentSide!.part.data ? residentSide!.part : { ...residentSide!.part, data }
+          mergedParts[id] = canonicalize(wrapper, id)
+        } else {
+          mergedParts[id] = snapshotPart
+        }
+        mergedIds.push(id)
+        continue
+      }
+      mergedIds.push(id)
+      if (!snapshotPart) continue
+      const residentPart = resident.parts[id]
+      if (!residentPart) {
+        mergedParts[id] = snapshotPart
+        continue
+      }
+      if (residentPartWins(residentPart.data, snapshotPart.data, resident.updatedAt, next.updatedAt, residentEnded, snapshotEnded)) {
+        mergedParts[id] = residentPart
+      } else {
+        mergedParts[id] = snapshotPart
+      }
+    }
+    if (keepResidentExtras) {
+      for (const id of resident.partIds) {
+        if (mergedIds.includes(id) || residentProseUsed.has(id)) continue
+        const residentPart = resident.parts[id]
+        if (!residentPart) continue
+        const kind = residentPart.data.type
+        if (kind === "text" || kind === "reasoning") {
+          // Unpaired resident prose beyond the snapshot's ordinals: kept at
+          // the tail in resident order - a live stream the fetched page has
+          // not reached yet. An authoritative history page drops it.
+          mergedIds.push(id)
+          mergedParts[id] = residentPart
+          continue
+        }
+        if (!next.parts[id]) {
+          mergedIds.push(id)
+          mergedParts[id] = residentPart
+        }
+      }
+    }
+    // The resident record object is reused only when the merge leaves both
+    // its metadata and its part list unchanged (unchanged records keep
+    // their object so their subscribers stay quiet). Anything else - an
+    // emptied part list included - publishes the merged record.
+    const partsUnchanged = mergedIds.length === resident.partIds.length
+      && mergedIds.every((id, index) => {
+        if (id !== resident.partIds[index]) return false
+        const merged = mergedParts[id]
+        const current = resident.parts[id]
+        return merged === current || (merged !== undefined && current !== undefined && partDataEqual(merged.data, current.data))
+      })
+    // Status and isEphemeral describe the message's end, so they come from
+    // the version whose end won: the side that ended while the other stayed
+    // open, else - both ended or both open - the later one by server time,
+    // the fetched page winning ties, like the part arbitration.
+    const endWinner = residentEnded !== snapshotEnded
+      ? (residentEnded ? resident : next)
+      : (ended(resident) && resident.updatedAt > next.updatedAt ? resident : next)
+    const merged: MessageRecord = {
+      ...next,
+      status: endWinner.status,
+      isEphemeral: endWinner.isEphemeral,
+      parts: mergedParts,
+      partIds: mergedIds,
+      revision: resident.revision + 1,
+    }
+    const metadataUnchanged = merged.role === resident.role
+      && merged.sessionId === resident.sessionId
+      && merged.status === resident.status
+      && merged.createdAt === resident.createdAt
+      && merged.updatedAt === resident.updatedAt
+      && merged.isEphemeral === resident.isEphemeral
+      && samePromptDisplayMetadata(merged.clientPromptDisplayMetadata, resident.clientPromptDisplayMetadata)
+    if (partsUnchanged && metadataUnchanged) return resident
+    return merged
+  }
+
+  // A chunked hydration computes its chunks across task boundaries but keeps
+  // partial results out of the visible store: concurrent structural writes
+  // fence the remaining chunks, and the finalize pass commits atomically,
+  // re-planning membership against the current rows (rows streamed during the
+  // yields survive) and skipping records a newer writer already replaced
+  // (live SSE text is never regressed by stale REST content).
+  async function hydrateMessagesChunked(
+    sessionId: string,
+    plan: HydrationPlan,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean },
+  ): Promise<boolean> {
+    const chunks: MessageUpsertInput[][] = []
+    for (let start = 0; start < plan.dedupedInputs.length; start += HYDRATE_CHUNK_SIZE) {
+      chunks.push(plan.dedupedInputs.slice(start, start + HYDRATE_CHUNK_SIZE))
+    }
+    const infoById = new Map((plan.infoList ?? []).map((info) => [info.id as string, info]))
+
+    const fenceToken = currentHydrationFence(sessionId)
+    const pendingRecords: Array<{ id: string; record: MessageRecord; previous: MessageRecord | undefined }> = []
+    const pendingInfos: MessageInfo[] = []
+    let contentChanged = false
+
+    for (let index = 0; index < chunks.length; index++) {
+      if (index > 0) {
+        await yieldToMainThread()
+        if (currentHydrationFence(sessionId) !== fenceToken) return false
+      }
+      for (const entry of normalizeHydrationChunk(chunks[index], plan)) {
+        contentChanged = true
+        pendingRecords.push(entry)
+      }
+      for (const input of chunks[index]) {
+        const info = infoById.get(input.id)
+        if (!info || !plan.serverIdSet.has(info.id as string)) continue
+        // Only record the info when its content changed against the
+        // plan-time basis: a newer writer (SSE-published usage) is handled
+        // by the finalize identity check, not by this comparison.
+        const previousInfo = plan.previousInfos.get(info.id as string)
+        if (!previousInfo || !messageInfoEqual(previousInfo, info)) {
+          pendingInfos.push(info)
+        }
+      }
+    }
+
+    // Recheck cancellation and the native revision right before the finalize
+    // writes: a load whose native state moved while its chunks computed (a
+    // cancelled jump, an SSE event the fetch never saw) must not publish.
+    if (options?.guard && !options.guard()) return false
+    // Finalize: re-plan membership against the CURRENT rows so rows streamed
+    // during the yields survive, then commit everything in one batch.
+    const membership = reconcileHydrationMembership(sessionId, plan.serverIds, plan.serverIdSet, options, new Set(plan.previousMessageIds), options?.keepStreamedArrivals === true)
+    const infoChangedAny = pendingInfos.length > 0
+    if (!contentChanged && membership.omittedIds.length === 0 && !infoChangedAny
+      && areMessageIdListsEqual(membership.previousMessageIds, membership.incomingIds)) {
+      // An identical snapshot leaves the whole resident session untouched:
+      // no record replacement, no session-entry write, no revision bump.
+      if (options?.confirmPending !== false) {
+        plan.serverIds.forEach((id) => pendingSendIds.delete(id))
+      }
+      return true
+    }
+
+    // Inbox admission can render before the message endpoint projects the
+    // accepted prompt. Only authoritative projection confirms the send.
+    if (options?.confirmPending !== false) {
+      plan.serverIds.forEach((id) => pendingSendIds.delete(id))
+    }
+
+    if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
+      membership.omittedIds.forEach((id) => {
+        messageInfoCache.delete(id)
+        forgetPendingSend(id)
+        clearPromptDisplayOverride(instanceId, sessionId, id)
+      })
+      clearRecordDisplayCacheForMessages(instanceId, membership.omittedIds)
+    }
+    for (const info of pendingInfos) {
+      // A newer writer (SSE-published usage) replaced this id after the
+      // plan: keep the published version unless the fetched snapshot is the
+      // richer one - a stale queued projection's infoless entry must not
+      // hold the fetched end time and tokens back.
+      const current = messageInfoCache.get(info.id as string)
+      if (current !== plan.previousInfos.get(info.id as string) && !snapshotInfoExtends(current, info)) continue
+      messageInfoCache.set(info.id as string, info)
+    }
+    for (const entry of pendingRecords) {
+      setPromptDisplayOverride(instanceId, entry.record.sessionId, entry.id, entry.record.clientPromptDisplayMetadata)
+    }
+    if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
+      hooks?.onMessagesRemoved?.(instanceId, sessionId, membership.omittedIds)
+    }
+
+    // Usage merges the snapshot with the resident cache, the cache winning
+    // per id: tokens published by SSE events after the fetch must survive a
+    // reload that never saw them.
+    const usageInfos = plan.infoList
+      ? new Map([
+          ...plan.infoList.map((info) => [info.id as string, info] as const),
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
+            .map((info) => [info.id as string, info] as const),
+        ]).values()
+      : undefined
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : undefined
+
+    batch(() => {
+      for (const entry of pendingRecords) {
+        // The row still holds its plan-time diff basis: the snapshot updates
+        // it. Otherwise a newer writer replaced it between the plan and this
+        // commit, and per-part native arbitration decides what lands.
+        let record = entry.record
+        const resident = state.messages[entry.id]
+        if (resident !== undefined && resident !== entry.previous) {
+          record = mergeSnapshotRecord(resident, entry.record, options?.keepStreamedArrivals === true)
+          if (record === resident) continue
+        }
+        setState("messages", entry.id, record)
+      }
+      if (!options?.preserveOmitted && membership.omittedIds.length > 0) {
+        setState("messages", produce((draft) => {
+          membership.omittedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }))
+        setState("messageInfoVersion", produce((draft) => {
+          membership.omittedIds.forEach((id) => {
+            delete draft[id]
+          })
+        }))
+        setState("permissions", produce((draft) => {
+          const omitted = new Set(membership.omittedIds)
+          membership.omittedIds.forEach((id) => {
+            delete draft.byMessage[id]
+          })
+          draft.queue = draft.queue.filter((entry) => !entry.messageId || !omitted.has(entry.messageId))
+          draft.active = draft.queue[0] ?? null
+        }))
+      }
+      for (const info of pendingInfos) {
+        setState("messageInfoVersion", info.id as string, (state.messageInfoVersion[info.id as string] ?? 0) + 1)
+      }
+      if (usageState) {
+        setState("usage", sessionId, usageState)
+      }
+      setState("sessions", sessionId, (session) => ({
+        ...session,
+        messageIds: membership.incomingIds,
+        updatedAt: Date.now(),
+      }))
+      recomputeLastAssistantMessageId(sessionId, membership.incomingIds)
+
+      clearLatestTodoSnapshot(sessionId)
+      membership.incomingIds.forEach((messageId) => {
+        maybeUpdateLatestTodoFromRecord(state.messages[messageId])
+      })
+
+      bumpSessionRevision(sessionId)
+    })
+    return true
+  }
+
+  function hydrateMessages(
+    sessionId: string,
+    inputs: MessageUpsertInput[],
+    infos?: Iterable<MessageInfo>,
+    options?: { preserveOmitted?: boolean; confirmPending?: boolean; chunked?: boolean; guard?: () => boolean; keepStreamedArrivals?: boolean },
+  ): void | Promise<boolean> {
+    if (!Array.isArray(inputs) || inputs.length === 0) return
+
+    const plan = planHydration(sessionId, inputs, infos, options)
+
+    if (options?.chunked && plan.dedupedInputs.length > HYDRATE_CHUNK_SIZE) {
+      // A newer chunked snapshot supersedes an older in-flight one. Sync
+      // hydrates (per-frame projections re-projecting the same window) do
+      // not fence: committing through them matches the synchronous path's
+      // last-writer-wins semantics, so a streaming session cannot starve
+      // its own page load.
+      fenceSessionHydration(sessionId)
+      return hydrateMessagesChunked(sessionId, plan, options)
+    }
+
+    const { dedupedInputs, serverIds, serverIdSet, omittedIds, incomingIds, infoList } = plan
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
@@ -697,9 +1272,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       }
       setPromptDisplayOverride(instanceId, input.sessionId, input.id, clientPromptDisplayMetadata)
     })
-
-    const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
-    const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -757,14 +1329,14 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     // record replacement, no session-entry write, no revision bump. This is
     // what keeps a re-projected window from invalidating every mounted row.
     if (!contentChanged && omittedIds.length === 0 && !infoChangedAny
-      && areMessageIdListsEqual(previousMessageIds, incomingIds)) {
+      && areMessageIdListsEqual(plan.previousMessageIds, incomingIds)) {
       return
     }
 
     const usageInfos = options?.preserveOmitted && infoList
       ? new Map([
           ...Array.from(messageInfoCache.values())
-            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
+            .filter((info) => info.sessionID === sessionId && (!plan.revertMessageId || info.id < plan.revertMessageId))
             .map((info) => [info.id as string, info] as const),
           ...infoList.map((info) => [info.id as string, info] as const),
         ]).values()
@@ -832,6 +1404,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     authoritativeIds: ReadonlySet<string>,
     baselineRevisions: ReadonlyMap<string, number>,
   ) {
+    // A structural reconcile fences an in-flight chunked hydration.
+    fenceSessionHydration(sessionId)
     const retainedIds = (state.sessions[sessionId]?.messageIds ?? [])
       .filter((id) => !baselineRevisions.has(id)
         || authoritativeIds.has(id)
@@ -868,6 +1442,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function updateSendRecord(messageId: string, status: "sent" | "error") {
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? "")
     const record = state.messages[messageId]
     if (!record || (record.status !== "sending" && !(status === "error" && record.status === "sent"))) return
     setState(
@@ -920,6 +1495,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // input, so this path exists to clear stale records the server no longer
   // knows about while still preserving genuinely in-flight optimistic sends.
   function reconcileEmptyAuthoritativeSnapshot(sessionId: string) {
+    fenceSessionHydration(sessionId)
     const session = state.sessions[sessionId]
     if (!session) return
     const previousMessageIds = session.messageIds ?? []
@@ -1021,6 +1597,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   }
 
   function upsertMessage(input: MessageUpsertInput) {
+    fenceSessionHydration(input.sessionId)
     const normalizedParts = normalizeParts(input.id, input.parts)
     const shouldBump = Boolean(input.bumpRevision || normalizedParts)
     const now = Date.now()
@@ -1068,6 +1645,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   function removeMessage(messageId: string, fallbackSessionId?: string) {
     if (!messageId) return
 
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? fallbackSessionId ?? "")
     forgetPendingSend(messageId)
 
     const record = state.messages[messageId]
@@ -1123,6 +1701,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function removeMessagePart(messageId: string, partId: string, fallbackSessionId?: string) {
     if (!messageId || !partId) return
+    fenceSessionHydration(state.messages[messageId]?.sessionId ?? fallbackSessionId ?? "")
     const message = state.messages[messageId]
     if (!message) {
       if (fallbackSessionId) bumpSessionRevision(fallbackSessionId)
@@ -1157,6 +1736,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function replaceMessageId(options: ReplaceMessageIdOptions) {
     if (options.oldId === options.newId) return
+    fenceSessionHydration(state.messages[options.oldId]?.sessionId ?? "")
     const existing = state.messages[options.oldId]
     if (!existing) return
 
@@ -1353,6 +1933,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function setSessionRevert(sessionId: string, revert?: SessionRecord["revert"] | null) {
     if (!sessionId) return
+    fenceSessionHydration(sessionId)
     ensureSessionEntry(sessionId)
     if (revert?.messageID) {
       pruneMessagesAfterRevert(sessionId, revert.messageID)
@@ -1410,6 +1991,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
   function clearSession(sessionId: string, options?: { preserveScroll?: boolean; preservePromptDisplayOverrides?: boolean; notify?: boolean }) {
     if (!sessionId) return
+
+    fenceSessionHydration(sessionId)
 
     if (!options?.preservePromptDisplayOverrides) clearPromptDisplayOverridesForSession(instanceId, sessionId)
 
@@ -1494,6 +2077,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
  
    function clearInstance() {
+     for (const sessionId of Object.keys(unwrap(state.sessions))) fenceSessionHydration(sessionId)
      clearPromptDisplayOverridesForInstance(instanceId, Object.keys(state.sessions))
      clearRecordDisplayCacheForInstance(instanceId)
      clearInstanceMessageRenderCaches(instanceId)

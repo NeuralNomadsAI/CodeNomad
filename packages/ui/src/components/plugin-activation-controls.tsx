@@ -13,7 +13,7 @@ import { integrationConnection, integrationConnectionMessage, integrationStateLi
 import { integrationDisplayPlugin } from "../lib/integration-rows"
 import { integrationBindings, integrations } from "../stores/integrations"
 import { pluginControlsCache } from "../stores/plugin-controls"
-import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
+import { pluginSourcesStore, removableRules, removableSources, type PluginRemoval } from "../stores/plugin-sources"
 import { createIntegrationHostInstallation } from "./integration-host-installation"
 import { createIntegrationRowBinding } from "./integration-row-binding"
 import { IntegrationStateLineView } from "./integration-state-line"
@@ -112,8 +112,9 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
   // Declarations and just-added specs the inventory does not report yet: installing,
   // disabled, or never confirmed. Their rows carry no switch (no plugin ID is known).
   const sourceTargets = createMemo(() => {
-    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target]
-      : entry.source.type === "local" ? [entry.source.path] : []))
+    // Package targets only: a local declaration is loaded only when the server identifies it (`pluginId`), never
+    // because its raw target names a reported path.
+    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
     const targets = new Set<string>()
     const configured = new Set<string>()
     for (const source of snapshot()?.configured.sources ?? []) {
@@ -194,7 +195,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       const runtime = control()?.runtime?.source
       return source.pluginId === pluginId || (runtime?.type === "package" && runtime.target === source.target)
     }
-    const removable = createMemo(() => removableSources(snapshot(), matchesControl), [], {
+    const removable = createMemo((): PluginRemoval[] => [...removableSources(snapshot(), matchesControl), ...removableRules(snapshot(), pluginId)], [], {
       equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
     })
     const integration = () => recognised().byControl.get(pluginId)
@@ -251,22 +252,27 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           {nonConformingLabel(declarationsFor(matchesControl))}<PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={name()}
           source={control()?.runtime?.source} removable={removable()} refresh={refresh} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id}
           info={connection()} hostAction={hostAction()} docs={integration()?.docs} /></div>
-        {renderSwitch("global")}
-        {renderSwitch("project")}
+        {/* Enabling an ID no plugin defines would write a package spec OpenCode installs: such a row only offers Remove. */}
+        <Show when={!control()?.orphan}>
+          {renderSwitch("global")}
+          {renderSwitch("project")}
+        </Show>
         <Show when={line()}>{value => <IntegrationStateLineView line={value()} binding={binding}
           install={() => { const entry = integration(); if (entry) void installation.open(entry.id) }} />}</Show>
       </div>
     )
   }
 
-  const removableFor = (target: string) => createMemo(() => removableSources(snapshot(), source => source.target === target), [], {
+  const removableFor = (target: string, applies: () => boolean = () => true) => createMemo(() => applies()
+    ? removableSources(snapshot(), source => source.target === target) : [], [], {
     equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
   })
 
   const renderRuntime = (target: string) => {
     const entry = () => runtimesByTarget().get(target)
     const nameId = createUniqueId()
-    const removable = removableFor(target)
+    // A failed local entry never claims a declaration by its raw path; unidentified declarations keep their own rows.
+    const removable = removableFor(target, () => entry()?.source.type === "package")
     const integration = () => recognised().byTarget.get(target)
     const packageVersion = () => { const source = entry()?.source; return source?.type === "package" ? source.version : undefined }
     const details = () => {
@@ -310,7 +316,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
         <PluginName id={nameId} name={integration()?.displayName ?? target} details={details()} />
         <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>
           <span class="plugin-source-state" role="status">
-            <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}
+            <span class="inline-flex animate-spin"><Loader2 class="h-3 w-3" aria-hidden="true" /></span>{t("instanceServiceStatus.plugins.sources.pendingLabel")}
           </span>
         </Show>
         {nonConformingLabel(declarationsFor(source => source.target === target))}
@@ -344,7 +350,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             disabled={state().loading || state().refreshing}
             onClick={refresh}
           >
-            <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
+            <span class="inline-flex" classList={{ "animate-spin": state().loading || state().refreshing }}><RefreshCw class="h-3.5 w-3.5" aria-hidden="true" /></span>
           </button>
           <Show when={snapshot()}>
             <PluginAddMenu instanceId={props.instanceId} location={requestLocation()} sessionId={props.session?.id} projectAvailable={projectAvailable()} active={props.active} />
@@ -396,6 +402,6 @@ function sourcesOverlap(left: readonly Pick<PluginConfiguredSource, "scope" | "e
   return left.some(source => right.some(other => other.scope === source.scope && other.entryIndex === source.entryIndex))
 }
 
-export function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
+export function sameSource(left: PluginRemoval, right: PluginRemoval): boolean {
   return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path && left.expectedRevision === right.expectedRevision
 }

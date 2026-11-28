@@ -1,9 +1,12 @@
 import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs"
+import { readFile, readdir, unlink } from "node:fs/promises"
 import { basename, join } from "node:path"
 import {
   type ExpectedProcessLookup,
   getProcessStartIdentity,
+  getProcessStartIdentityAsync,
   isExpectedTauriProcess,
+  isExpectedTauriProcessAsync,
   type ProcessStartIdentityLookup,
 } from "./client-state-process-identity"
 
@@ -108,16 +111,37 @@ export function hasLiveTauriClient(
     throw error
   }
   return entries.some((name) => {
-    const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
-    if (!match) return false
-    const pid = Number(match[1])
-    if (!Number.isInteger(pid) || pid <= 0 || !pidAlive(pid)) return false
+    const pid = legacyTauriPid(name)
+    if (!pid || !pidAlive(pid)) return false
     const liveIdentity = processStartIdentity(pid)
     if (liveIdentity && upgradedParticipants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) return false
     return expectedProcess(pid) !== false
   })
 }
 
+function legacyTauriPid(name: string): number | undefined {
+  // An election-aware Tauri is arbitrated by the election even before its participant appears.
+  const match = /^client-state\.running\.(\d+)\..+\.lock$/.exec(name)
+  if (!match || name.includes(".cross-host.")) return
+  const pid = Number(match[1])
+  if (Number.isInteger(pid) && pid > 0) return pid
+}
+
+export async function hasLiveTauriClientAsync(tauriDataPath: string, participants: readonly ProcessOwner[]): Promise<boolean> {
+  let entries: string[]
+  try { entries = await readdir(tauriDataPath) } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return false
+    throw error
+  }
+  for (const name of entries) {
+    const pid = legacyTauriPid(name)
+    if (!pid || !isPidAlive(pid)) continue
+    const liveIdentity = await getProcessStartIdentityAsync(pid, 1000)
+    if (liveIdentity && participants.some((owner) => owner.pid === pid && owner.processStartIdentity === liveIdentity)) continue
+    if (await isExpectedTauriProcessAsync(pid) !== false) return true
+  }
+  return false
+}
 export function classifyRunningMarker(
   markerOwner: ProcessOwner,
   currentOwner: ProcessOwner,
@@ -167,7 +191,8 @@ export function createRunningMarker(
   primaryOwner?: ProcessOwner,
 ): string {
   const markerPath = getRunningMarkerPath(userDataPath, owner)
-  publishProcessFile(markerPath, JSON.stringify(primaryOwner ? { ...owner, primaryOwner } : owner))
+  // crossHost tells Tauri this marker belongs to an election-aware host, never a legacy one.
+  publishProcessFile(markerPath, JSON.stringify({ ...owner, crossHost: true, ...(primaryOwner ? { primaryOwner } : {}) }))
   return markerPath
 }
 
@@ -311,6 +336,28 @@ export function isProcessOwnerLockOwned(path: string, owner: ProcessOwner): bool
   const value = readFileIfExists(path)
   const current = value === undefined ? undefined : parseProcessOwner(value)
   return Boolean(current && isSameProcessOwner(current, owner))
+}
+
+export async function isProcessOwnerLockOwnedAsync(path: string, owner: ProcessOwner): Promise<boolean> {
+  try {
+    const current = parseProcessOwner(await readFile(path, "utf8"))
+    return Boolean(current && isSameProcessOwner(current, owner))
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return false
+    throw error
+  }
+}
+
+export async function releaseProcessOwnerFile(path: string, owner: ProcessOwner): Promise<void> {
+  try {
+    const observed = await readFile(path, "utf8")
+    const current = parseProcessOwner(observed)
+    if (current && isSameProcessOwner(current, owner) && await readFile(path, "utf8") === observed) {
+      await unlink(path)
+    }
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) throw error
+  }
 }
 
 export function removeRunningMarkerIfOwned(markerPath: string, owner: ProcessOwner): boolean {

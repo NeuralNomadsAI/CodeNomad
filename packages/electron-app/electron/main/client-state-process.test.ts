@@ -27,6 +27,14 @@ test("legacy Tauri markers block only while their PID may be live", (t) => {
   ]), false)
 })
 
+test("an election-aware Tauri marker never vetoes, and Electron flags its own marker", (t) => {
+  const directory = temp(t)
+  writeFileSync(join(directory, "client-state.running.789.3.cross-host.acknowledges.1.2.3.lock"), "")
+  assert.equal(hasLiveTauriClient(directory, () => true, () => "tauri-start", () => true), false)
+  const owner = { pid: 790, runToken: "electron", processStartIdentity: "electron-start" }
+  assert.equal(JSON.parse(readFileSync(createRunningMarker(directory, owner), "utf8")).crossHost, true)
+})
+
 interface Child { process: ChildProcessWithoutNullStreams; result: Promise<{ isPrimary: boolean }> }
 function child(directory: string, start: string, wait = "", paused = "", release = ""): Child {
   const process = spawn(globalThis.process.execPath, ["--import", "tsx", fileURLToPath(new URL("./client-state-election-child.ts", import.meta.url)), directory, randomUUID(), start, wait, paused, release])
@@ -106,7 +114,7 @@ test("process files tolerate only unsupported fsync and never clobber an owner",
   const first = { pid: 14, runToken: "first" }
   const path = createRunningMarker(directory, first)
   assert.throws(() => createRunningMarker(directory, { pid: 14, runToken: "first" }), { code: "EEXIST" })
-  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), first)
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { ...first, crossHost: true })
   const original = fs.fsyncSync
   t.after(() => { fs.fsyncSync = original; syncBuiltinESMExports() })
   for (const [code, retained] of [["EINVAL", true], ["ENOTSUP", true], ["ENOSYS", true], ["EIO", false]] as const) {

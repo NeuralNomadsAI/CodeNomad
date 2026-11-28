@@ -12,15 +12,16 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import AlertDialog from "../../../src/components/alert-dialog"
 import "../../../src/index.css"
 import { markSessionListsRestored } from "./session-list-restored"
 import { serverApi } from "../../../src/lib/api-client"
 import { observeMissionReads } from "../mission-read-observation-fixture"
 
 observeMissionReads(serverApi)
-window.fixtureScheduleNetworkProbe = async () => {
+window.fixtureReadNetworkProbe = async () => {
   const controller = new AbortController()
-  try { await serverApi.fetchMissionSchedule("fixture", "A", { directory: "/fixture" }, controller.signal); return { aborted: false, error: "none" } }
+  try { await serverApi.fetchPermissionReceipts("fixture", "A", { unanchored: true }, undefined, controller.signal); return { aborted: false, error: "none" } }
   catch (error) { return { aborted: controller.signal.aborted, error: error instanceof Error ? error.name : String(error) } }
 }
 await initializeClientState()
@@ -68,7 +69,7 @@ function Fixture() {
 }
 declare global {
   interface Window {
-    fixtureScheduleNetworkProbe(): Promise<{ aborted: boolean; error: string }>
+    fixtureReadNetworkProbe(): Promise<{ aborted: boolean; error: string }>
     missionNavigation: {
       mount(value: boolean): void; activate(value: boolean): void; instance(value: string): void
       directory(value: string): void; project(value: string): void; clearActive(): void
@@ -77,4 +78,4 @@ declare global {
     }
   }
 }
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><Fixture /><AlertDialog /></I18nProvider></ConfigProvider>, document.getElementById("root")!)

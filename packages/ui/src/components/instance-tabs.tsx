@@ -12,14 +12,20 @@ import {
 import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
 import AppActions from "./app-actions"
-import { appActionsInTitlebar } from "./native-titlebar"
+import { hasNativeTitlebar } from "./native-titlebar"
+import { BrandLogo } from "./brand-logo"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { Plus } from "lucide-solid"
+import { Plus, Server } from "lucide-solid"
 import { withHotkey } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import type { AppTabRecord } from "../stores/app-tabs"
+import type { BackendId } from "../lib/backend-transport"
+import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import { getInstanceLabel } from "../lib/instance-label"
+import { qualifiedServerDisplayName } from "../lib/codenomad-link"
+import { useConfig } from "../stores/preferences"
 
 interface InstanceTabsProps {
   tabs: AppTabRecord[]
@@ -38,11 +44,23 @@ interface SortableAppTabProps {
   activeTabId: string | null
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
-  onRename: (folder: string, label: string) => void
+  onRename: (folder: string, label: string, backendId?: BackendId) => void
 }
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
   const { t } = useI18n()
+  const { remoteServers } = useConfig()
+  const snapshot = () => props.tab.kind === "remote-restore" ? props.tab.snapshot : undefined
+  const server = () => {
+    const saved = snapshot()
+    if (!saved) return
+    const id = backendIdOf(saved)
+    if (id === LOCAL_BACKEND_ID) return
+    const profile = remoteServers().find(entry => entry.id === id)
+    return profile ? qualifiedServerDisplayName(profile, remoteServers()) : id
+  }
+  const restoreLabel = () => getInstanceLabel(snapshot()!) || server()
+  const remoteDetail = () => server() ? `${restoreLabel()} · ${server()} · ${snapshot()!.folder}` : undefined
   return (
     <>
       {props.tab.kind === "instance" ? (
@@ -51,7 +69,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           active={props.tab.id === props.activeTabId}
           onSelect={() => props.onSelect(props.tab.id)}
           onClose={() => props.onClose(props.tab.id)}
-          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label)}
+          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label, props.tab.instance.backendId)}
         />
       ) : (
         <div
@@ -59,6 +77,8 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           role="tab"
           tabIndex={0}
           aria-selected={props.tab.id === props.activeTabId}
+          aria-label={remoteDetail()}
+          title={remoteDetail()}
           onClick={() => props.onSelect(props.tab.id)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return
@@ -67,7 +87,9 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           }}
         >
           <span class="tab-pill-button">
-            <span class="truncate max-w-[180px]">{props.tab.sidecarTab.name}</span>
+            <Show when={server()}><Server class="w-4 h-4 shrink-0" aria-hidden="true" /></Show>
+            <span class="truncate max-w-[180px]">{props.tab.kind === "sidecar" ? props.tab.sidecarTab.name
+              : props.tab.kind === "blank" ? t("newTab.title") : restoreLabel()}</span>
           </span>
           <button
             class="tab-pill-close"
@@ -76,7 +98,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
               event.stopPropagation()
               props.onClose(props.tab.id)
             }}
-            aria-label={props.tab.sidecarTab.name}
+            aria-label={t("instanceTab.actions.close.ariaLabel")}
             title={props.tab.id === props.activeTabId ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             ×
@@ -183,17 +205,16 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     })
   })
 
-  // Renaming a tab renames its project folder, like the home page: every tab of
-  // that folder and its recent-folder entry share one name.
-  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string } | null>(null)
+  // Every tab of the project folder and its recent-folder entry share one name.
+  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string; backendId?: BackendId } | null>(null)
   const [isRenaming, setIsRenaming] = createSignal(false)
-  const openRename = (folder: string, label: string) => setRenameTarget({ folder, label })
+  const openRename = (folder: string, label: string, backendId?: BackendId) => setRenameTarget({ folder, label, backendId })
   const submitRename = async (name: string) => {
     const target = renameTarget()
     if (!target) return
     setIsRenaming(true)
     try {
-      await renameProject(target.folder, name)
+      await renameProject(target.folder, name, target.backendId)
       setRenameTarget(null)
     } finally {
       setIsRenaming(false)
@@ -218,6 +239,9 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     <>
       <div class="tab-bar tab-bar-instance">
         <div class="tab-container">
+          <Show when={!hasNativeTitlebar}>
+            <BrandLogo alt={t("folderSelection.logoAlt")} class="native-titlebar-logo tab-bar-logo" />
+          </Show>
           <TabScroll>
               <div class="tab-strip-tabs" role="tablist" ref={tabList}>
                 <Show
@@ -270,9 +294,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <Plus class="w-4 h-4" />
             </button>
           </div>
-          <Show when={!appActionsInTitlebar}>
-            <AppActions class="tab-bar-actions" />
-          </Show>
+          <AppActions />
         </div>
       </div>
 

@@ -38,10 +38,11 @@ export function useFolderDrop(options: UseFolderDropOptions): {
 
   async function handleResolvedPaths(paths: string[]) {
     reset()
-    if (!options.enabled()) {
+    if (!options.enabled() || document.documentElement.inert) {
       return
     }
     const directoryPaths = await normalizeDroppedDirectoryPaths(paths)
+    if (document.documentElement.inert) return
     if (directoryPaths.length === 0) {
       options.onInvalidDrop?.()
       return

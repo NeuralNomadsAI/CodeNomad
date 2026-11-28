@@ -1,12 +1,13 @@
-import { BrowserWindow, Notification, dialog, ipcMain, powerSaveBlocker, shell, type IpcMainInvokeEvent } from "electron"
+import { Notification, dialog, ipcMain, powerSaveBlocker, shell, type BrowserWindow, type IpcMainInvokeEvent } from "electron"
 import fs from "node:fs"
 import { setupDialogIPC } from "./dialog-ipc"
 import { requestMicrophoneAccess } from "./permissions"
 import type { CliProcessManager } from "./process-manager"
-import { openWorkspaceTarget, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
+import { openLocalPath, openWorkspaceTarget, type LocalPathResult, type WorkspaceEditor, type WorkspaceOpenTarget } from "./workspace-open"
 import { popupTitlebarMenu, setWorkspaceMenuEnabled, type TitlebarMenu } from "./menu"
 import { requireHttpUrl } from "./navigation-security"
 import { validateMainFrame } from "./ipc-security"
+import { setupNotificationIPC } from "./notification-ipc"
 import type { BrowserController } from "./browser-controller"
 
 interface LocalSender {
@@ -17,6 +18,8 @@ interface LocalSender {
 interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
+  resolveRemote(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
+  resolveDictation?(event: IpcMainInvokeEvent): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
   openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
@@ -54,6 +57,7 @@ async function resolveLocalWorkspaceFolder(window: BrowserWindow, cliManager: Cl
 
 export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCDependencies) {
   let wakeLockId: number | null = null
+  let managedRenewal: Promise<boolean> | undefined
   const wakeLockWindows = new Set<number>()
   const wakeCleanupInstalled = new Set<number>()
   const local = (event: IpcMainInvokeEvent): LocalSender => {
@@ -70,7 +74,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return window
   }
   const anyTrusted = (event: IpcMainInvokeEvent): BrowserWindow => {
-    const window = BrowserWindow.fromWebContents(event.sender)
+    const window = dependencies.resolveLocal(event.sender)?.window ?? dependencies.resolvePreferences?.(event.sender) ?? dependencies.resolveRemote(event.sender)
     if (!window) throw new Error("Native operation requires a window")
     validateMainFrame(event, window, dependencies.getAllowedOrigins(window))
     return window
@@ -92,6 +96,14 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
 
   ipcMain.handle("cli:getStatus", async (event) => { settings(event); return cliManager.getStatus() })
   ipcMain.handle("cli:restart", async (event) => { settings(event); return cliManager.restart({ dev: process.env.NODE_ENV === "development" }) })
+  ipcMain.handle("cli:renewManagedSession", async (event) => {
+    const window = settings(event)
+    const jar = window.webContents.session.cookies
+    managedRenewal ??= cliManager.renewManagedSession((url, value) => jar.set({
+      url, value, name: cliManager.getAuthCookieName(), httpOnly: true, path: "/", sameSite: "lax",
+    })).catch(() => false).finally(() => { managedRenewal = undefined })
+    return managedRenewal
+  })
   ipcMain.handle("window:new", async (event) => { local(event); await dependencies.newWindow(); return { ok: true } })
   ipcMain.handle("window:nextFolder", async (event) => dependencies.nextFolder(local(event).id))
   ipcMain.handle("window:ackFolder", async (event, folder: unknown, opened: unknown) => {
@@ -119,6 +131,7 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
       sessionId: string
       registrationId: string
       guestWebContentsId: number
+      instanceId?: string
     })
     return { ok: true }
   })
@@ -130,16 +143,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const { window } = local(event)
     return dependencies.browserController.history(window.webContents, guestId, entryId)
   })
-  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown) => {
+  ipcMain.handle("browser-target:claimOpen", async (event, requestID: unknown, response: unknown) => {
     const window = local(event).window
-    const claimed = dependencies.browserController.claimOpen(window.webContents, requestID)
-    if (claimed) {
-      if (window.isMinimized()) window.restore()
-      window.show()
-      window.focus()
-    }
-    return claimed
+    return dependencies.browserController.claimOpen(window.webContents, requestID, response)
   })
+  ipcMain.handle("browser-target:ownership", (event, input: unknown) =>
+    dependencies.browserController.changeOwnership(local(event).window.webContents, input))
   ipcMain.handle("browser-target:releaseOpen", async (event, requestID: unknown) => {
     const { window } = local(event)
     return dependencies.browserController.releaseOpen(window.webContents, requestID)
@@ -177,6 +186,15 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
 
+  ipcMain.handle("workspace:openLocalPath", async (event, payload: { path?: unknown; keep?: unknown }): Promise<{ result: LocalPathResult }> => {
+    local(event)
+    const { path, keep } = payload ?? {}
+    if (typeof path !== "string" || (keep !== "none" && keep !== "text" && keep !== "files")) throw new Error("Invalid local path request")
+    return { result: await openLocalPath(path, keep, {
+      openPath: (target) => shell.openPath(target), revealPath: (target) => shell.showItemInFolder(target),
+    }) }
+  })
+
   ipcMain.handle("workspace:setMenuEnabled", (event, enabled: unknown, viewState: unknown): { ok: true } => {
     setWorkspaceMenuEnabled(local(event).window, enabled === true, viewState)
     return { ok: true }
@@ -199,8 +217,10 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
   })
 
   ipcMain.handle("media:requestMicrophoneAccess", async (event): Promise<{ granted: boolean }> => {
-    anyTrusted(event)
-    return { granted: await requestMicrophoneAccess() }
+    const dictation = dependencies.resolveDictation?.(event)
+    if (!dictation) anyTrusted(event)
+    const granted = await requestMicrophoneAccess()
+    return { granted: granted && (!dictation || dependencies.resolveDictation?.(event) === dictation) }
   })
   ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) => {
     settings(event)
@@ -221,14 +241,5 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     await dependencies.openLocalWindow()
     return { ok: true }
   })
-  ipcMain.handle("notifications:show", async (event, payload: { title?: unknown; body?: unknown }): Promise<{ ok: boolean; reason?: string }> => {
-    anyTrusted(event)
-    if (!Notification.isSupported()) return { ok: false, reason: "unsupported" }
-    try {
-      new Notification({ title: typeof payload?.title === "string" ? payload.title : "CodeNomad", body: typeof payload?.body === "string" ? payload.body : "" }).show()
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, reason: error instanceof Error ? error.message : String(error) }
-    }
-  })
+  setupNotificationIPC(ipcMain, anyTrusted, options => Notification.isSupported() ? new Notification(options) : undefined)
 }

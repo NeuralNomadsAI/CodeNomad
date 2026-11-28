@@ -3,6 +3,8 @@ import Switch from "@suid/material/Switch"
 import type { Instance, RawMcpStatus } from "../types/instance"
 import { useOptionalInstanceMetadataContext } from "../lib/contexts/instance-metadata-context"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { getRootClient } from "../stores/opencode-client"
 import { getLogger } from "../lib/logger"
 import { PluginActivationControls } from "./plugin-activation-controls"
 import { createIntegrationContext } from "./integration-context"
@@ -68,6 +70,7 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
 
 
   const [pendingMcpActions, setPendingMcpActions] = createSignal<Record<string, "connect" | "disconnect">>({})
+  const pendingMcpOwners = new Map<string, object>()
 
   const setPendingMcpAction = (name: string, action?: "connect" | "disconnect") => {
     setPendingMcpActions((prev) => {
@@ -79,25 +82,32 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
   }
 
   const toggleMcpServer = async (serverName: string, shouldEnable: boolean) => {
-    const client = instance().client
-    if (!client?.mcp) return
+    const operation = captureBackendOperation(instance().id)
+    if (!operation.current()) return
+    const instanceId = instance().id
+    if (!instance().client) return
     const action: "connect" | "disconnect" = shouldEnable ? "connect" : "disconnect"
+    pendingMcpOwners.set(serverName, operation)
     setPendingMcpAction(serverName, action)
     try {
+      const client = getRootClient(instanceId)
       const resolved = metadata()?.mcpStatus?.location
       const location = resolved
         ? { directory: resolved.directory }
         : { directory: instance().folder }
       if (shouldEnable) {
-        await client.mcp.connect({ server: serverName, location })
+        await client.experimental.mcp.connect({ server: serverName, location }, { signal: operation.signal })
       } else {
-        await client.mcp.disconnect({ server: serverName, location })
+        await client.experimental.mcp.disconnect({ server: serverName, location }, { signal: operation.signal })
       }
-      await refreshMetadata()
+      if (operation.current()) await refreshMetadata()
     } catch (error) {
       log.error("Failed to toggle MCP server", { serverName, action, error })
     } finally {
-      setPendingMcpAction(serverName)
+      if (pendingMcpOwners.get(serverName) === operation) {
+        pendingMcpOwners.delete(serverName)
+        setPendingMcpAction(serverName)
+      }
     }
   }
 
@@ -140,14 +150,14 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
                       <div class="flex items-center gap-3 flex-shrink-0">
                         <div class="flex items-center gap-1.5 text-xs text-secondary">
                           <Show when={isPending()}>
-                            <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                            <span class="inline-flex animate-spin"><svg class="h-3 w-3" fill="none" viewBox="0 0 24 24">
                               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
                               <path
                                 class="opacity-75"
                                 fill="currentColor"
                                 d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                               />
-                            </svg>
+                            </svg></span>
                           </Show>
                           <div class={statusDotClass()} style={statusDotStyle()} />
                         </div>

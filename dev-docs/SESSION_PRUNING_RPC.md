@@ -71,11 +71,12 @@ its entered deletion fence through the settlement of admitted IO and uses one
 connection throughout Location resolution, preparation, dispatch and Git exclusion.
 API 4 passes its captured outer connection and current grant into that resolver.
 
-Pending recovery prepares only its established, authorized execution-host bootstrap.
-Candidate ownership is admitted before preparation and revalidated afterward; the
-fixed snapshot keeps its loaded-only candidate semantics. Root identity, compaction
-admission, cancellation and connection are checked beside its single HTTP dispatch.
-The route preserves per-directory non-authoritative errors and retained queues.
+Pending recovery sends a single loaded-only snapshot request at its established,
+authorized execution-host root after the root's catalogue reports the plugin active.
+Candidate ownership is checked before dispatch and before publication.
+Root identity, compaction admission, cancellation and
+connection are checked beside dispatch. The validated response provides coverage;
+per-directory failures retain existing queues.
 
 The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
@@ -122,7 +123,10 @@ stops before the revert boundary (`id < revert.messageID`).
 
 - `images({ sessionID, cursor?, prompts? })` lists, newest first, one `image` entry
   per image file (`image/png|jpeg|gif|webp|avif`) of a `read` tool part and one
-  `generation` entry per `experimental_image_generate` part, in part and file order. A page holds
+  `generation` entry per image tool call — both Code Mode `generate_image` calls
+  recorded in an `execute` part's `metadata.toolCalls` and stored direct
+  `generate_image` / `experimental_image_generate` tool parts — in part, call
+  and file order. A page holds
   at most 32 assistant messages, 32 MiB of stored JSON (each row size-checked
   before it loads; a row over 16 MiB gives `blocked: limit`), 64 entries and 1 MiB
   serialized. Every admitted row is emitted before the cursor advances: a row the
@@ -135,7 +139,8 @@ stops before the revert boundary (`id < revert.messageID`).
   `blocked: not-gallery`; a row over 16 MiB gives `blocked: limit`. Decode bounds
   belong to the caller's channel.
 - `imageReference({ sessionID, target })` takes an image target or a generation
-  target `{ messageID, part, digest: SHA-256(part id, NUL, jobID) }` and returns
+  target `{ messageID, part, call?, digest }` (`call` indexes `metadata.toolCalls`
+  on an `execute` part; `digest` is `SHA-256(part id, [call,] NUL, jobID)`) and returns
   `{ path }` relative to the location, or `refused` with `unverifiable`, `outside`,
   `changed`, `not-gallery` or `missing`. A target is never substituted.
 
@@ -148,7 +153,7 @@ decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
 undecoded row is dated at or before the read's end, the scan covers the item's whole
 range (its message and the 31 before it, within 32 MiB, unless the session starts
 sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
-`experimental_image_generate` call that may write `F` in that range started before that end
+image tool call that may write `F` in that range started before that end
 (a call whose single decoded notice reports `error` before that call's start does not count:
 OpenCode delivers a failed job's notice once its run has settled, and the run's last step is the
 write, so a failed attempt followed by a retry under the same name stays provable; a cancelled
@@ -157,8 +162,8 @@ completed with a `jobID` before the read began, its single
 decoded notice names `F` between the call's start and the read's start, and no
 other completed notice names `F` from then until the read's end. Parents of a proven
 call follow the same rule over the generation's own interval. Only a `completed`
-`experimental_image_generate` part with `metadata.path` names the file it writes (that stem);
-every other `experimental_image_generate` part (streaming, running, errored or completed without
+image tool part with `metadata.path` names the file it writes (that stem);
+every other image tool part (streaming, running, errored or completed without
 `metadata.path`) may write any file, so it leaves every proof and reference it could
 affect unverifiable. Relative read names and parent references resolve lexically against the session directory in the daemon's
 path style (Windows without case); one outside the location has no label and no
@@ -178,7 +183,7 @@ notice naming the file after it (`changed`). A generation target is also refused
 its file, started before its notice (or at an unknown time) in the item's range or
 later, lacks a completion time or a decoded notice of its own.
 
-Consumed contracts: `read` tool `state.content` files, `experimental_image_generate` parts
+Consumed contracts: `read` tool `state.content` files, image tool parts under either name
 (`state.status`, `state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
 `time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
 text `Saved image: <file> (`). A change leaves generations `unknown` and images

@@ -8,15 +8,11 @@ import type { MissionJsonValue } from "./model"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { controlResumeAdmissionID, controlReceiptID } from "./receipt-identity"
-import { applyMissionDocumentActivation as activate } from "./mission-document-activation-rpc"
 import { canonicalAuthority } from "./authority-protocol"
 import { parseMissionDocument, MISSION_DOCUMENT_PREFIX } from "./mission-document"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import { missionIsRunning } from "./lifecycle-model"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
-
-const applyMissionDocumentActivation = (store: Parameters<typeof activate>[0], input: unknown, current: () => true) =>
-  activate(store, input, current, "/project")
 
 function fixture(unified = true) {
   const values = new Map<string, MissionJsonValue>(), sessions = new Map<string, NativeMissionSession>()
@@ -179,6 +175,29 @@ test("panel maps project exact unified documents with bounded missing and damage
       assert.equal(canonicalAuthority([...f.values]), before, "display reads preserve stored bytes")
     }
   }
+})
+
+test("opening a document-backed panel does not clone hidden text with the complete mission map", async t => {
+  const f = fixture()
+  const objective = "Large objective ".repeat(800), notes = "Large notes ".repeat(800)
+  const mission = (await f.control.create({ requestID: "compact-open", objective, notes, template: "custom" })).mission
+  const clone = t.mock.method(globalThis, "structuredClone")
+  const page = await f.control.panelPage({ source: "mission", missionID: mission.id, header: true })
+  assert.ok(page.available)
+  const payload = JSON.parse(page.page.pieces[0].text)
+  assert.ok(payload.root.bodies.objective && payload.root.bodies.notes)
+  assert.ok(payload.root.document)
+  assert.equal(JSON.stringify(payload).includes(objective), false)
+  assert.equal(JSON.stringify(payload).includes(notes), false)
+  assert.equal(clone.mock.calls.some(({ arguments: [value] }) => {
+    const map = (value as { mission?: { objective?: unknown; notes?: unknown } } | undefined)?.mission
+    return map?.objective === objective && map.notes === notes
+  }), false, "full hidden bodies were cloned")
+  const body = await f.control.content({ missionID: mission.id, kind: "mission", field: "notes",
+    digest: payload.root.bodies.notes.digest, offset: 0 })
+  assert.ok("content" in body)
+  assert.equal(body.content.text, notes)
+  assert.equal(JSON.stringify(body).includes(objective), false)
 })
 
 test("existing user objective/notes updates keep unified stored configuration current without prompting", async () => {
@@ -426,7 +445,10 @@ test("a full tombstone registry leaves the stopped complete map visible and pres
   assert.equal(saved.deletion!.requestID, input.requestID)
   assert.equal((await f.control.snapshot()).missions[0].id, mission.id)
   assert.equal((await f.control.snapshot()).missions[0].document!.deletion!.expectedRevision, input.expectedRevision)
-  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), { code: "request-conflict" })
+  await assert.rejects(f.control.delete({ ...input, requestID: "evade-capacity" }), {
+    name: "MissionControlError", code: "request-conflict", message: "Deletion request differs from the saved intent",
+  })
+  assert.deepEqual(await f.documents.read(mission.id), saved)
   assert.equal((f.values.get(registryKey) as { entries: unknown[] }).entries.length, 4096)
   assert.ok(f.sessions.has(mission.coordinatorSessionId))
 })
@@ -577,46 +599,6 @@ test("an already-marked unified deletion cannot confirm through the journal-only
   assert.equal((await f.journal.missionEvents(mission.id)).events.some(event => event.type === "mission.document-cleaned"), false)
   f.values.set(key, saved) // Restore the same authoritative fixture bytes, not a migration.
   assert.equal((await f.control.delete(input)).cleanup!.documentPending, false)
-})
-
-test("activation RPC persists authority and attempted barriers before acknowledgement, remains paused through readiness", async () => {
-  const f = fixture(), selection = { agent: "worker", model: { providerID: "provider", id: "model" } }
-  const doc = await f.documents.create("scheduled", { title: "Scheduled", objective: "Work", template: "custom", taskMode: "native",
-    profiles: { coordinator: selection, roles: { specialist: selection } }, profileID: "profile", executionHost: "local",
-    roots: [{ mode: "directory-only", directory: "/project" }], watchedConversationIDs: [],
-    launch: { timing: { kind: "every", intervalMs: 900_000 }, condition: null, ends: { at: null, afterMs: null, maxLaunches: null } },
-  }, 1000, () => true)
-  let identity = { missionID: doc.id, requestID: "activate-original", expectedRevision: doc.revision }
-  const targets = ["global", "project"].map(scope => ({ scope: scope as "global" | "project", path: `/${scope}/opencode.jsonc`,
-    expectation: "d".repeat(64), resultDigest: "b".repeat(64), attempted: false, acknowledged: false }))
-  let request = { ...identity, action: "prepare", authority: "a".repeat(64), targets }
-  await assert.rejects(activate(f.documents, request, () => true, "/another-location"), /Location differs/)
-  let result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  const preparedRevision = result.document.revision
-  result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  assert.equal(result.document.revision, preparedRevision)
-  const originalIdentity = identity
-  result = await applyMissionDocumentActivation(f.documents, { ...identity, action: "failed", errorCode: "configuration-conflict" }, () => true)
-  identity = { ...identity, requestID: "activate-refreshed", expectedRevision: result.document.revision }
-  request = { ...request, ...identity }
-  result = await applyMissionDocumentActivation(f.documents, request, () => true)
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...originalIdentity, action: "attempting", scope: "global", resultDigest: "b".repeat(64) }, () => true), /conflict/)
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...identity, action: "ready", effectiveOrigin: "/project/opencode.jsonc" }, () => true), /pending/)
-  for (const scope of ["global", "project"]) {
-    const target = { ...identity, scope, resultDigest: "b".repeat(64) }
-    await applyMissionDocumentActivation(f.documents, { ...target, action: "attempting" }, () => true)
-    if (scope === "global") {
-      const current = (await f.documents.read(doc.id))!
-      await assert.rejects(applyMissionDocumentActivation(f.documents, { ...request, requestID: "cannot-bypass-attempt", expectedRevision: current.revision }, () => true), /conflict/)
-    }
-    await applyMissionDocumentActivation(f.documents, { ...target, action: "acknowledged" }, () => true)
-  }
-  result = await applyMissionDocumentActivation(f.documents, { ...identity, action: "ready", effectiveOrigin: "/project/opencode.jsonc" }, () => true)
-  assert.equal(result.document.state, "paused")
-  assert.equal(result.document.firstPlayedAt, null)
-  assert.equal(result.document.scheduleActivation!.state, "ready")
-  await assert.rejects(applyMissionDocumentActivation(f.documents, { ...request, authority: "c".repeat(64) }, () => true), /conflict/)
-  assert.ok(!canonicalAuthority(result).includes("password"))
 })
 
 test("a durable paused/stopped document blocks new work even when the journal control publication has not caught up", async () => {

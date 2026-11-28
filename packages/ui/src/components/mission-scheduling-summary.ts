@@ -7,7 +7,7 @@ import { isMissionGithubCondition } from "../../../server/src/missions/mission-g
 type Translate = (key: string, params?: Record<string, string>) => string
 
 /** One readable line per launch criterion, in stored order; after the first, each
- * line is prefixed with the connector before it: "or", "if" or "else". */
+ * line is prefixed with the connector before it: "or" or "if". */
 export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translate, locale: string, oneShotAt?: number | null): string[] {
   const model = missionLaunchModel(policy), draft = decodeMissionSchedulingPolicy(policy, undefined, "UTC")
   const date = (at: number, zone: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone: zone }).format(at)
@@ -34,6 +34,7 @@ export function describeMissionCriteria(policy: MissionLaunchPolicy, t: Translat
     }
   }
   const event = (item: MissionCondition) => {
+    if (item.kind === "remote-branch-commits") return `${t(`missions.scheduling.condition.${item.kind}`)} · ${item.host}/${item.repository} · ${item.ref.slice("refs/heads/".length)}`
     if (item.kind === "repository-activity") return [t(`missions.scheduling.repository.${item.provider === "gitlab" ? "merge" : "pull"}.${item.event}`),
       `${item.host}/${item.repository}`, item.author ? `@${item.author}` : undefined].filter(Boolean).join(" · ")
     if (isMissionGithubCondition(item)) return [t(`missions.scheduling.condition.${item.kind}`), item.repository,

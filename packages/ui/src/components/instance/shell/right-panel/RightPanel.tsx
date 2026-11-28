@@ -1,4 +1,4 @@
-import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, untrack, type Accessor, type Component } from "solid-js"
+import { For, Show, Suspense, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Accessor, type Component } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -15,7 +15,12 @@ import type { Instance } from "../../../../types/instance"
 import type { Session } from "../../../../types/session"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { RightPanelTab } from "./types"
+import { MISSIONS_PLUGIN_ID } from "../../../../../../server/src/missions/plugin-id"
 
+import { captureBackendOperation } from "../../../../lib/backend-operation"
+import { showConfirmDialog } from "../../../../stores/alerts"
+import { showToastNotification } from "../../../../lib/notifications"
+import { pluginControlsCache } from "../../../../stores/plugin-controls"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../../../stores/client-state"
 import { getTabViewState, updateTabViewState } from "../../../../stores/tab-view-state"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, RIGHT_PANEL_TAB_STORAGE_KEY, readStoredRightPanelTab } from "../storage"
@@ -139,6 +144,26 @@ const RightPanel: Component<RightPanelProps> = (props) => {
     const next = updater(rightPanelCustomization())
     setRightPanelCustomization(next)
     writeClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY, JSON.stringify(next))
+  }
+
+  const panelLifetime = new AbortController()
+  onCleanup(() => panelLifetime.abort())
+  const toggleMissions = async (enabled: boolean, setVisible: () => void, checkbox: HTMLInputElement) => {
+    const instanceId = props.instanceId, location = { directory: props.instance.folder }
+    const operation = captureBackendOperation(instanceId, panelLifetime.signal, () => props.instanceId === instanceId && props.isActive())
+    if (!enabled && !await showConfirmDialog(props.t("missions.activation.disableConfirm"), {
+      variant: "warning",
+      returnFocus: () => checkbox.focus(),
+    }, operation.signal)) return
+    if (!operation.current()) return
+    setVisible()
+    try {
+      await pluginControlsCache.mutate(instanceId, location, MISSIONS_PLUGIN_ID, "global", enabled, "codenomad")
+    } catch {
+      showToastNotification({ category: "opencode", variant: "error", message: props.t("instanceServiceStatus.plugins.errors.save", {
+        name: props.t("instanceShell.rightPanel.tabs.missions"), scope: props.t("instanceServiceStatus.plugins.scope.global"),
+      }) })
+    }
   }
 
   const moveTab = (sourceId: string, targetId: string) => {
@@ -306,7 +331,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
         <RightPanelCustomizationPopover t={props.t} isActive={props.isActive} trigger={() => customizationTriggerRef}
           onClose={() => setRightPanelCustomizationOpen(false)} extensions={extensions} tabs={orderedRightPanelTabs}
           statusSections={orderedStatusSections} visibleStatusSectionCount={() => visibleStatusSections().length}
-          customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} />
+            customization={rightPanelCustomization} onCustomizationChange={updateRightPanelCustomization} onMissionsToggle={toggleMissions} />
       </Show>
 
       {/* The tab's scroller contains its absolutely positioned descendants, so no tab

@@ -42,6 +42,7 @@ async function open(host: string, initial: object, hold = false, context = "loca
       let id = 0
       const callbacks = new Map<number, (event: unknown) => void>()
       w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
         transformCallback: (callback: (event: unknown) => void) => { callbacks.set(++id, callback); return id },
         invoke: async (command: string, args: any) => {
           if (command === "cli_get_status") return read()

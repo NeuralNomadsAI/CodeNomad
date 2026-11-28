@@ -21,8 +21,8 @@ const gate = () => {
   const promise = new Promise<void>(done => { resolve = done })
   return { promise, resolve }
 }
-const slices = ["pruning", "history", "batch", "ranked", "navigation", "conversation", "assets", "api4", "pending"] as const
-type Slice = typeof slices[number]
+const preparedSlices = ["pruning", "history", "batch", "ranked", "navigation", "conversation", "assets", "api4"] as const
+type Slice = typeof preparedSlices[number] | "pending"
 
 async function fixture(t: TestContext, options: { routeBudgetMs?: number; rankedContinuation?: boolean } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "rpc-brokers-"))
@@ -37,7 +37,7 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
     return pkg
   }))
   let base = { directory: b }, workspace: any = { id: "w", path: b }, currentConnection = true, owned = true, sessionDirectory = b
-  let catalogueHook = async (_signal: AbortSignal) => {}, state = "active"
+  let catalogueHook = async (_signal: AbortSignal) => {}, snapshotHook = async () => {}, state = "active"
   const followers = new Map<string, () => Promise<void>>()
   const calls: Array<{ method: string; input: any; directory: string; signal: AbortSignal }> = []
   const catalogues: string[] = [], prepared: string[] = []
@@ -53,7 +53,7 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
         await followPresence(path.join(root, "data", "session-pruning", "presence"), async () => () => {}, undefined, undefined, location.directory))
       return { location, data: [{ id: "codenomad-session-pruning", state: { status: state } }] }
     } },
-    rpc: Object.assign(() => ({ scheduleCarrierRead: async () => ({ owned: false }) }), { call: async ({ method, input, location }: any, { signal }: any) => {
+    rpc: Object.assign(() => ({}), { call: async ({ method, input, location }: any, { signal }: any) => {
       signal.throwIfAborted(); assert(currentConnection)
       assert(prepared.includes(location.directory), "useful RPC must follow successful targeted preparation")
       calls.push({ method, input, directory: location.directory, signal })
@@ -71,12 +71,15 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
     } }),
   }
   const connection: any = { client, endpoint: { url: "http://native.invalid" }, assertCurrent() { if (!currentConnection) throw new Error("Replaced") },
-    fetch: async (_url: URL, init: RequestInit) => {
+    fetch: async (url: URL, init: RequestInit) => {
       const signal = init.signal as AbortSignal
       signal.throwIfAborted()
+      connection.assertCurrent()
+      assert.equal(url.pathname, "/api/rpc/codenomad.pending-requests/snapshot")
+      assert.deepEqual([...url.searchParams], [["location[directory]", b]])
       const input = JSON.parse(String(init.body)).input
-      assert(prepared.includes(b))
       calls.push({ method: "snapshot", input, directory: b, signal })
+      await snapshotHook()
       return Response.json({ output: { originDirectory: b, data: input.directories.map((directory: string) => ({ directory, status: "complete", locations: [] })) } })
     } }
   const installation = await lifecycle.prepare({ config: path.join(root, "config"), data: path.join(root, "data") }, connection.assertCurrent, connection)
@@ -102,7 +105,7 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
   const deps = { workspaceManager: manager, worktreeDeletionFence: fence, store, excludeDesignFolder: async () => "excluded" as const }
   registerSessionPruningRoutes(app, deps); registerImagesConversationRoute(app, deps); registerPanelExtensionAssetRoutes(app, deps)
   registerPanelExtensionApi4Routes(app, { ...deps, ...options, imageSettings: { read: async () => { throw new Error("Not requested") } } })
-  registerPendingRequestRoutes(app, { ...deps, readGitCommonDirectory: async () => "fixture-common" })
+  registerPendingRequestRoutes(app, { ...deps, logger: app.log, readGitCommonDirectory: async () => "fixture-common" })
   t.after(async () => {
     await Promise.allSettled(preparations)
     await app.close()
@@ -127,12 +130,13 @@ async function fixture(t: TestContext, options: { routeBudgetMs?: number; ranked
     drain: () => Promise.allSettled(preparations),
     warm: () => manager.desktopPluginsReady({ connection, location: { directory: a }, signal: AbortSignal.timeout(5_000), deadlineAt: Date.now() + 5_000, assertCurrent() {} }),
     hook: (callback: typeof catalogueHook) => { catalogueHook = callback },
+    onSnapshot: (callback: typeof snapshotHook) => { snapshotHook = callback },
     foreign: () => { owned = false }, fail: () => { state = "failed" },
     replace: () => { currentConnection = false }, close: () => { workspace = undefined },
     aba: () => { base = { directory: a }; base = { directory: b } }, move: () => { sessionDirectory = a } }
 }
 
-for (const slice of slices) {
+for (const slice of preparedSlices) {
   test(`${slice}: hot A then first cold B business dispatch uses the captured target exactly once`, async t => {
     const f = await fixture(t)
     await f.warm()
@@ -159,6 +163,39 @@ for (const slice of slices) {
     assert.equal(f.calls.length, 0)
   })
 }
+
+test("pending: a cold owned bootstrap activates its plugin and reads once without a readiness challenge", async t => {
+  const f = await fixture(t)
+  const response = await f.send("pending")
+  assert.equal(response.statusCode, 200, response.body)
+  assert.deepEqual(f.calls.map(({ method, directory }) => [method, directory]), [["snapshot", f.b]])
+  assert.deepEqual(f.catalogues, [f.b])
+  assert.deepEqual(f.prepared, [])
+})
+
+test("pending: foreign authority never dispatches a snapshot", async t => {
+  const f = await fixture(t)
+  f.foreign()
+  assert.notEqual((await f.send("pending")).statusCode, 200)
+  assert.deepEqual(f.catalogues, [])
+  assert.deepEqual(f.calls, [])
+})
+
+test("pending: connection replacement during the snapshot prevents publication", async t => {
+  const f = await fixture(t)
+  f.onSnapshot(async () => f.replace())
+  assert.equal((await f.send("pending")).statusCode, 503)
+  assert.equal(f.calls.length, 1)
+  assert.deepEqual(f.catalogues, [f.b])
+})
+
+test("pending: connection replacement during catalogue activation prevents dispatch", async t => {
+  const f = await fixture(t)
+  f.hook(async () => f.replace())
+  assert.equal((await f.send("pending")).statusCode, 503)
+  assert.deepEqual(f.catalogues, [f.b])
+  assert.deepEqual(f.calls, [])
+})
 
 for (const [slice, invalidation] of [["history", "aba"], ["navigation", "close"], ["pruning", "move"], ["batch", "move"], ["conversation", "aba"]] as const) {
   test(`${slice}: ${invalidation} during preparation invalidates the captured placement`, async t => {

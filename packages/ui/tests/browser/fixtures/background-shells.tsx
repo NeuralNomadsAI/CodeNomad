@@ -11,6 +11,7 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance, instances } from "../../../src/stores/instances"
 import { DEFAULT_RIGHT_PANEL_CUSTOMIZATION } from "../../../src/components/instance/shell/right-panel/registry"
 import { serverEvents } from "../../../src/lib/server-events"
+import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
 const id = "background-shells"
@@ -18,17 +19,19 @@ const folder = new URLSearchParams(location.search).has("wsl") ? "\\\\wsl.localh
 const client = OpenCode.make({ baseUrl: `${location.origin}/workspaces/${id}/instance/` })
 ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
 addInstance({ id, folder, port: 0, pid: 0, proxyPath: "", status: "ready", client })
-serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } } as any)
+serverApi.fetchConfigOwner = async () => ({ settings: { locale: new URLSearchParams(location.search).get("locale") ?? "en" } } as any)
 serverApi.fetchStateOwner = async () => ({} as any)
+const [session, setSession] = createSignal<Session | null>(null)
 const Fixture = () => {
   const { t } = useI18n()
   const [expanded, setExpanded] = createSignal(["background-processes"])
   const [customization, setCustomization] = createSignal({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-    hiddenStatusSectionIds: ["tokens", "yolo-mode", "provider-usage", "mcp", "plugins"] })
+    hiddenStatusSectionIds: ["tokens", "permissions", "provider-usage", "mcp", "plugins"] })
   return <aside style={{ width: "280px" }}><StatusTab t={t} instanceId={id} instance={instances().get(id)!}
-    activeSession={() => null} isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
+    activeSession={session} isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
     customization={customization} onCustomizationChange={setCustomization} /><AlertDialog /></aside>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { event: (type: string, directory = "/repo") => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id,
+;(window as any).fixture = { selectDirectory: (directory: string) => setSession({ id: "", location: { directory } } as Session),
+  event: (type: string, directory = "/repo") => (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id,
   event: { type, location: { directory }, data: {}, id: "event", created: Date.now() } }]) }

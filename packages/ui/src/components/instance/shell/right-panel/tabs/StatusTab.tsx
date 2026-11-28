@@ -6,13 +6,13 @@ import {
   SortableProvider,
   closestCenter,
   createSortable,
+  transformStyle,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import { Accordion } from "@kobalte/core"
 import { Tooltip } from "@kobalte/core/tooltip"
-import Switch from "@suid/material/Switch"
 
-import { ChevronRight, GripVertical, Info, TerminalSquare, Trash2, XOctagon } from "lucide-solid"
+import { ChevronRight, GripVertical, Info } from "lucide-solid"
 
 import type { Instance } from "../../../../../types/instance"
 import type { Session } from "../../../../../types/session"
@@ -20,15 +20,16 @@ import type { Session } from "../../../../../types/session"
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
 import SessionGoalLine from "../../../../session/session-goal-line"
+import SessionAutomationsBlock from "../../../../session/session-automations-block"
+import { ConversationPermissions, ConversationPermissionsInfo, ConversationPermissionsSummary, createConversationPermissionsState } from "../../../../session/conversation-permissions"
 import InstanceServiceStatus from "../../../../instance-service-status"
-import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
-import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
-import { applyRightPanelItemCustomization, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
+import { applyRightPanelItemCustomization, CONVERSATION_PERMISSIONS_SECTION_ID, reorderStatusSections, type RightPanelCustomization, type RightPanelSectionModule } from "../registry"
 import { createCoreStatusSectionManifest } from "../core-plugin"
 import { shellStore } from "../../../../../stores/shells"
 import { showConfirmDialog } from "../../../../../stores/alerts"
 import { showToastNotification } from "../../../../../lib/notifications"
 import { ShellOutputDialog } from "../../../../shell-output-dialog"
+import { BackgroundShellRow } from "../../../../background-shell-row"
 
 interface StatusTabProps {
   t: (key: string, vars?: Record<string, any>) => string
@@ -58,7 +59,8 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
   const regionLabelId = createUniqueId()
   const tooltip = () => props.section.tooltip ?? props.t(props.section.tooltipKey)
   return (
-    <div ref={sortable} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}
+    <div ref={sortable.ref} class={`right-panel-section-draggable ${sortable.isActiveDraggable ? "right-panel-section-draggable-active" : ""}`}
+      style={transformStyle(sortable.transform)}
       data-status-section={props.section.id}>
       <Accordion.Item value={props.section.id} class="right-panel-accordion-item">
         <Accordion.Header class="right-panel-accordion-header-row">
@@ -83,7 +85,11 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
               </Tooltip.Portal>
             </Tooltip>
           }>{(info) => info()()}</Show>
-          <GripVertical class="right-panel-section-grip" aria-hidden="true" />
+          <span class="right-panel-section-grip" data-drag-handle aria-hidden="true"
+            title={props.t("instanceShell.rightPanel.customize.dragToReorder")}
+            {...sortable.dragActivators}>
+            <GripVertical />
+          </span>
         </Accordion.Header>
         <Show when={props.section.regionLabel}>
           {(name) => <span id={regionLabelId} class="sr-only">{name()}</span>}
@@ -101,9 +107,19 @@ const autoExpandedKeys = new WeakMap<Accessor<string[]>, Map<string, string>>()
 const StatusTab: Component<StatusTabProps> = (props) => {
   let escaping = false
   const isSectionExpanded = (id: string) => props.expandedItems().includes(id)
+  const permissionSession = createMemo(() =>
+    props.isActive() && !props.customization().hiddenStatusSectionIds.includes(CONVERSATION_PERMISSIONS_SECTION_ID)
+      ? props.activeSession()?.id : undefined,
+  )
+  const permissions = createMemo(() => {
+    const sessionId = permissionSession()
+    if (sessionId) return createConversationPermissionsState(props.instanceId, sessionId)
+  })
   const shellLocation = createMemo(() => props.activeSession()?.location ?? { directory: props.instance.folder })
   const shellState = createMemo(() => shellStore.getState(props.instanceId, shellLocation().directory, shellLocation().workspaceID))
+  const shellsById = createMemo(() => new Map(shellState().items.map(shell => [shell.id, shell])))
   const [outputShell, setOutputShell] = createSignal<{ shell: ShellInfo; location: LocationRef; instanceId: string } | null>(null)
+  const [removingShells, setRemovingShells] = createSignal<ReadonlySet<string>>(new Set())
 
   createEffect(() => {
     if (!props.isActive() || !isSectionExpanded("background-processes")
@@ -113,50 +129,36 @@ const StatusTab: Component<StatusTabProps> = (props) => {
     void shellStore.load(props.instanceId, directory, workspaceID)
   })
 
-  const renderYoloModeSection = () => {
-    const session = props.activeSession()
-    if (!session) {
-      return (
-        <div class="right-panel-empty right-panel-empty--left">
-          <span class="text-xs">{props.t("instanceShell.yoloMode.noSessionSelected")}</span>
-        </div>
-      )
-    }
-
-    return (
-      <div class="flex items-center justify-between gap-2 border border-base bg-surface-secondary px-3 py-2">
-        <p class="min-w-0 text-xs leading-5 text-secondary">{props.t("instanceShell.yoloMode.description")}</p>
-        <div class="-mr-2 shrink-0">
-          <Switch
-            class="yolo-mode-switch"
-            checked={isPermissionAutoAcceptEnabled(props.instanceId, session.id)}
-            size="small"
-            sx={{
-              "& .MuiSwitch-switchBase.Mui-checked": { color: "var(--session-yolo-accent)" },
-              "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": { backgroundColor: "var(--session-yolo-accent)" },
-            }}
-            inputProps={{ "aria-label": props.t("instanceShell.yoloMode.title") }}
-            onChange={() => togglePermissionAutoAcceptForSession(props.instanceId, session.id)}
-          />
-        </div>
-      </div>
-    )
-  }
-
-  const removeShell = async (shellId: string, command: string, running: boolean) => {
+  const removeShell = async (shellId: string, command: string, running: boolean, source: HTMLButtonElement) => {
     const instanceId = props.instanceId
     const location = { ...shellLocation() }
-    const confirmed = await showConfirmDialog(
-      props.t("instanceShell.backgroundProcesses.remove.message", { title: command }),
-      {
-        title: props.t("instanceShell.backgroundProcesses.remove.title"),
-        confirmLabel: props.t(running
-          ? "instanceShell.backgroundProcesses.actions.stopRemove"
-          : "instanceShell.backgroundProcesses.actions.remove"),
-      },
-    )
-    if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
-      showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+    const key = JSON.stringify([instanceId, location, shellId])
+    if (removingShells().has(key)) return
+    const row = source.closest(".status-process-card")!
+    const next = row.nextElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+      ?? row.previousElementSibling?.querySelector<HTMLButtonElement>(".window-icon-button")
+    const section = row.closest(".right-panel-section-draggable")?.querySelector<HTMLButtonElement>("[data-status-section-trigger]")
+    const returnFocus = () => {
+      const target = [source, next, section].find(element => element?.isConnected)
+      target?.focus({ preventScroll: true })
+    }
+    setRemovingShells(current => new Set([...current, key]))
+    try {
+      const action = running ? "stopRemove" : "remove"
+      const confirmed = await showConfirmDialog(
+        props.t(`instanceShell.backgroundProcesses.${action}.message`, { title: command }),
+        {
+          title: props.t(`instanceShell.backgroundProcesses.${action}.title`),
+          confirmLabel: props.t(`instanceShell.backgroundProcesses.actions.${action}`),
+          returnFocus,
+        },
+      )
+      if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
+        showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+      }
+    } finally {
+      setRemovingShells(current => { const next = new Set(current); next.delete(key); return next })
+      if (!source.isConnected && document.activeElement === document.body) returnFocus()
     }
   }
 
@@ -174,40 +176,14 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           fallback={<div class="right-panel-empty right-panel-empty--left"><span class="text-xs">{props.t("instanceShell.backgroundProcesses.empty")}</span></div>}
         >
           <div class="flex flex-col gap-1">
-            <For each={shellState().items}>
-              {(shell) => {
-                const running = () => shell.status === "running"
+            <For each={[...shellsById().keys()]}>
+              {(id) => {
+                const shell = createMemo<ShellInfo>(previous => shellsById().get(id) ?? previous!)
                 return (
-                  <article class="status-process-card" title={[shell.command, shell.shell, shell.cwd,
-                    props.t(`instanceShell.backgroundProcesses.status.${shell.status}`),
-                    shell.pid === undefined ? "" : props.t("instanceShell.backgroundProcesses.pid", { pid: shell.pid }),
-                    shell.exit === undefined ? "" : props.t("instanceShell.backgroundProcesses.exitCode", { code: shell.exit }),
-                  ].filter(Boolean).join("\n")}>
-                    <span class="min-w-0 flex-1 truncate text-xs text-primary">{shell.command}</span>
-                    <div class="status-process-actions">
-                      <button
-                        type="button"
-                        class="window-icon-button"
-                        title={props.t("instanceShell.backgroundProcesses.actions.output")}
-                        aria-label={props.t("instanceShell.backgroundProcesses.actions.output")}
-                        onClick={() => setOutputShell({ shell, location: { ...shellLocation() }, instanceId: props.instanceId })}
-                      >
-                        <TerminalSquare class="h-3.5 w-3.5" aria-hidden="true" />
-                      </button>
-                      <button
-                        type="button"
-                        class="window-icon-button"
-                        title={props.t(running() ? "instanceShell.backgroundProcesses.actions.stopRemove" : "instanceShell.backgroundProcesses.actions.remove")}
-                        aria-label={props.t(running() ? "instanceShell.backgroundProcesses.actions.stopRemove" : "instanceShell.backgroundProcesses.actions.remove")}
-                        disabled={shellState().loading}
-                        onClick={() => void removeShell(shell.id, shell.command, running())}
-                      >
-                        <Show when={running()} fallback={<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />}>
-                          <XOctagon class="h-3.5 w-3.5" aria-hidden="true" />
-                        </Show>
-                      </button>
-                    </div>
-                  </article>
+                  <BackgroundShellRow shell={shell()}
+                    removing={shellState().loading || removingShells().has(JSON.stringify([props.instanceId, shellLocation(), id]))}
+                    onOutput={() => setOutputShell({ shell: shell(), location: { ...shellLocation() }, instanceId: props.instanceId })}
+                    onRemove={source => void removeShell(id, shell().command, shell().status === "running", source)} />
                 )
               }}
             </For>
@@ -241,7 +217,13 @@ const StatusTab: Component<StatusTabProps> = (props) => {
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary expanded={isSectionExpanded("tokens")} />
         </Show>
       ),
-      renderYoloModeSection,
+      renderPermissions: () => (
+        <Show when={permissions()} keyed>{state => <ConversationPermissions state={state} />}</Show>
+      ),
+      renderPermissionsSummary: () => (
+        <Show when={permissions()} keyed>{state => <ConversationPermissionsSummary state={state} />}</Show>
+      ),
+      renderPermissionsInfo: () => <ConversationPermissionsInfo />,
       renderProviderUsage,
       renderBackgroundProcesses,
       renderMcpStatus: () => <InstanceServiceStatus initialInstance={props.instance} sections={["mcp"]} showSectionHeadings={false} class="space-y-2" />,
@@ -300,7 +282,12 @@ const StatusTab: Component<StatusTabProps> = (props) => {
   return (
     <div class="status-tab-container">
       <Show when={props.activeSession()?.id}>
-        {(sessionId) => <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />}
+        {(sessionId) => (
+          <>
+            <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />
+            <SessionAutomationsBlock instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />
+          </>
+        )}
       </Show>
       <Accordion.Root
         class="right-panel-accordion"

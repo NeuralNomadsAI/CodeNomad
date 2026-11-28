@@ -6,7 +6,9 @@ import type {
   PluginControlScope,
   PluginControlsSnapshot,
 } from "../../../server/src/api-types"
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { captureBackendOperation } from "../lib/backend-operation"
 
 export interface PluginControlsState {
   invalidationRevision?: number
@@ -35,6 +37,7 @@ interface CacheRecord {
   error?: unknown
   inFlight?: Promise<void>
   inFlightController?: AbortController
+  attachment?: AbortSignal
   trailing: boolean
   mutationTail: Promise<void>
 }
@@ -54,7 +57,7 @@ export class PluginControlsCache {
   readonly states = this.stateSignal[0]
   private readonly setStates = this.stateSignal[1]
 
-  constructor(private readonly api: PluginControlsApi) {}
+  constructor(private readonly api: PluginControlsApi, private readonly signalForInstance?: (id: string) => AbortSignal) {}
 
   state(instanceId: string, location: PluginControlLocation): PluginControlsState {
     return this.states().get(cacheKey(instanceId, location)) ?? EMPTY_STATE
@@ -90,9 +93,12 @@ export class PluginControlsCache {
     pluginId: string,
     scope: PluginControlScope,
     enabled: boolean,
+    managedBy?: "codenomad",
   ): Promise<PluginActivationMutationResponse> {
     const record = this.record(instanceId, location)
+    const signal = this.signalForInstance?.(instanceId)
     const mutate = async () => {
+      signal?.throwIfAborted()
       if (!this.isActive(record)) {
         throw new Error("Plugin control location is no longer active")
       }
@@ -102,8 +108,9 @@ export class PluginControlsCache {
         pluginId,
         scope,
         enabled,
+        ...(managedBy ? { managedBy } : {}),
       })
-      if (!this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
+      if (signal?.aborted || !this.isActive(record) || !this.adoptCanonicalLocation(record, response.snapshot.location, true)) return response
       // Fence any passive read that started before the mutation became durable.
       record.generation += 1
       // A mutation overlays a durable rule onto inventory read BEFORE the write.
@@ -141,8 +148,8 @@ export class PluginControlsCache {
     this.invalidate(instanceId)
   }
 
-  invalidateAll(): void {
-    this.invalidateRecords([...new Set(this.records.values())])
+  invalidateAll(backendId?: string): void {
+    this.invalidateRecords([...new Set(this.records.values())].filter(record => backendId === undefined || parseInstanceKey(record.instanceId).backendId === backendId))
   }
 
   invalidateLocation(instanceId: string, location: PluginControlLocation): void {
@@ -179,6 +186,7 @@ export class PluginControlsCache {
 
   private invalidateRecords(records: readonly CacheRecord[]): void {
     for (const record of records) {
+      this.record(record.instanceId, record.location)
       record.generation += 1
       record.invalidationRevision = ++this.revision
       record.stale = true
@@ -216,6 +224,22 @@ export class PluginControlsCache {
     const key = cacheKey(instanceId, location)
     const existing = this.records.get(key)
     if (existing) {
+      const attachment = this.signalForInstance?.(instanceId)
+      if (existing.attachment !== attachment) {
+        const controller = existing.inFlightController
+        existing.inFlight = undefined
+        existing.inFlightController = undefined
+        existing.loading = false
+        existing.refreshing = false
+        existing.attachment = attachment
+        existing.generation++
+        existing.stale = true
+        existing.trailing = false
+        existing.mutationTail = Promise.resolve()
+        controller?.abort()
+        // Releasing old ownership must not itself admit a replacement read.
+        this.publishAll([existing], false)
+      }
       if (!existing.canonicalLocation) existing.location = { ...location }
       return existing
     }
@@ -223,6 +247,7 @@ export class PluginControlsCache {
       keys: new Set([key]),
       demands: new Set(),
       instanceId,
+      attachment: this.signalForInstance?.(instanceId),
       location: { ...location },
       canonicalLocation: false,
       generation: 0,
@@ -240,6 +265,7 @@ export class PluginControlsCache {
   }
 
   private loadRecord(record: CacheRecord, force: boolean): Promise<void> {
+    if (record.attachment?.aborted) return Promise.resolve()
     if (record.inFlight) {
       if (force) record.trailing = true
       return record.inFlight
@@ -252,10 +278,11 @@ export class PluginControlsCache {
     record.error = undefined
     this.publish(record)
     const controller = new AbortController()
+    const signal = record.attachment ? AbortSignal.any([controller.signal, record.attachment]) : controller.signal
     record.inFlightController = controller
-    const promise = this.api.getPluginControls(record.instanceId, record.location, controller.signal)
+    const promise = this.api.getPluginControls(record.instanceId, record.location, signal)
       .then((snapshot) => {
-        if (!this.isActive(record) || generation !== record.generation) return
+        if (signal.aborted || !this.isActive(record) || generation !== record.generation) return
         if (!this.adoptCanonicalLocation(record, snapshot.location, false, { snapshot, revision: requestRevision })) return
         record.snapshot = snapshot
         confirmRuntime(record)
@@ -263,7 +290,7 @@ export class PluginControlsCache {
         record.error = undefined
       })
       .catch((error) => {
-        if (!this.isActive(record) || generation !== record.generation) return
+        if (signal.aborted || !this.isActive(record) || generation !== record.generation) return
         // An aborted orphan fetch must not surface as a passive read error.
         if (controller.signal.aborted) return
         record.error = error
@@ -274,7 +301,7 @@ export class PluginControlsCache {
         if (record.inFlightController === controller) record.inFlightController = undefined
         record.loading = false
         record.refreshing = false
-        const trailing = record.trailing
+        const trailing = !signal.aborted && record.trailing
         record.trailing = false
         if (trailing) {
           // No follow-up may outlive its last visible owner. Keep the demand
@@ -291,7 +318,7 @@ export class PluginControlsCache {
     this.publishAll([record])
   }
 
-  private publishAll(records: readonly CacheRecord[]): void {
+  private publishAll(records: readonly CacheRecord[], refresh = true): void {
     const active = records.filter((record) => this.isActive(record))
     if (active.length === 0) return
     const states = new Map<CacheRecord, PluginControlsState>()
@@ -315,6 +342,7 @@ export class PluginControlsCache {
       }
       return next
     })
+    if (!refresh) return
     for (const record of active) {
       if (record.demands.size > 0 && record.stale) void this.loadRecord(record, true)
     }
@@ -457,7 +485,10 @@ function retainRuntime(durable: PluginControlsSnapshot, newer: PluginControlsSna
   }
 }
 
-export const pluginControlsCache = new PluginControlsCache(serverApi)
+export const pluginControlsCache = new PluginControlsCache({
+  getPluginControls: async (id, location, signal) => backendOf(id).api.getPluginControls(parseInstanceKey(id).workspaceId, location, signal),
+  setPluginActivation: async (id, payload) => backendOf(id).api.setPluginActivation(parseInstanceKey(id).workspaceId, payload),
+}, id => captureBackendOperation(id).signal)
 
 function cacheKey(instanceId: string, location: PluginControlLocation): string {
   return `${JSON.stringify(instanceId)}:${JSON.stringify(location.directory)}`

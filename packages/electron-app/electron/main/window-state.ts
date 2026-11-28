@@ -265,6 +265,7 @@ export function installWindowZoomInput(window: BrowserWindow, setZoomLevel: (lev
 
 export class WindowStateTracker {
   private saveTimer: ReturnType<typeof setTimeout> | undefined
+  private disarmed = false
   private desiredZoomFactor: number
   private navigating: boolean
   private normalBounds: WindowBounds
@@ -311,7 +312,13 @@ export class WindowStateTracker {
       }
     })
     window.on("close", () => { void this.saveNow() })
-    window.on("closed", () => { this.clearTimer(); zoomObservers.delete(window) })
+    window.on("closed", () => this.disarm())
+  }
+
+  disarm(): void {
+    this.disarmed = true
+    this.clearTimer()
+    zoomObservers.delete(this.window)
   }
 
   async flush(): Promise<void> {
@@ -330,6 +337,7 @@ export class WindowStateTracker {
   }
 
   private scheduleSave() {
+    if (this.disarmed) return
     this.clearTimer()
     this.saveTimer = setTimeout(() => {
       this.saveTimer = undefined
@@ -353,7 +361,7 @@ export class WindowStateTracker {
   }
 
   private captureAndQueue(): Promise<boolean> {
-    if (this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
+    if (this.disarmed || this.window.isDestroyed() || this.window.webContents.isDestroyed()) {
       return Promise.resolve(false)
     }
 

@@ -8,7 +8,7 @@ El acceso desde navegador y tableta no traslada la ejecución fuera del anfitri�
 
 1. Instala Node.js 24 LTS y npm.
 2. Pon Git en el **PATH del proceso del backend**. Git solo dentro de WSL no satisface a un backend Windows.
-3. Instala o selecciona OpenCode: **2.3.0** es el mínimo requerido. Consulta [configuración de OpenCode](opencode.md).
+3. Instala o selecciona OpenCode: **2.4.2** es el mínimo requerido. Consulta [configuración de OpenCode](opencode.md).
 4. Elige la carpeta desde la que iniciar el servidor o pasa `--workspace-root` explícitamente.
 
 Sin Git, las conversaciones siguen disponibles solo en la carpeta física abierta explícitamente; las operaciones Git y worktree fallan. Instala Git y reinicia el backend tras cambiar PATH. Una raíz de espacio de trabajo limita la apertura/exploración, no la ejecución del agente: consulta [Seguridad](security.md).
@@ -80,7 +80,7 @@ Las opciones prevalecen sobre sus equivalentes del entorno. Las opciones con val
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; permite explorar todo el sistema de archivos. No es un ajuste de aislamiento del agente. |
 | `--config <path>` | `CLI_CONFIG` | Predeterminado activo resuelto: `~/.config/codenomad/config.yaml`. Acepta un directorio o archivo YAML para una ubicación explícita. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; niveles documentados: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; en otro caso escribe en el archivo elegido. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, además de `logs/server.log` junto al archivo de configuración; un archivo elegido sustituye a ambos. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; usuario de autenticación de ejecución. Un archivo de autenticación almacenado conserva su usuario guardado si ninguna contraseña de ejecución lo sustituye. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Sin definir; contraseña solo de ejecución, prevalece sobre el archivo de autenticación gestionado. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; los caracteres distintos de letras, dígitos, `_` y `-` se convierten en `_`. |

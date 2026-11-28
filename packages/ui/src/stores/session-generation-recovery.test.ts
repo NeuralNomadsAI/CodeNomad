@@ -60,6 +60,16 @@ describe("session generation recovery", () => {
     const settled = reconcileFetchedSessionRuntime(partial, baseline, {})
     assert.equal(settled.generationRecovery, null)
   })
+  it("records the acknowledged admission covered by idle activity, without changing recovery", () => {
+    const baseline = session({ generationAdmissionEpoch: 2, idleReadAdmissionEpoch: 1, generationRecovery: "pending" })
+    const idle = reconcileFetchedSessionRuntime(baseline, baseline, {})
+    assert.equal(idle.idleReadAdmissionEpoch, 2)
+    assert.equal(idle.generationRecovery, "pending")
+    assert.equal(reconcileFetchedSessionRuntime(baseline, baseline, null).idleReadAdmissionEpoch, 1)
+    const pending = session({ ...baseline, generationAdmissionToken: 2 })
+    assert.equal(reconcileFetchedSessionRuntime(pending, pending, {}).idleReadAdmissionEpoch, 1)
+    assert.equal(mergeFetchedSessionRuntimeState(idle, baseline, session({ ...baseline, generationAdmissionEpoch: 3 }))?.idleReadAdmissionEpoch, 1)
+  })
   it("does not graft a stale outcome onto a newer idle event", () => {
     const baseline = session({ generationRecovery: "pending", runtimeStatusKnown: false })
     const latest = session({ runtimeStatusKnown: true, generationRecovery: null })

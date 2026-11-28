@@ -55,7 +55,7 @@ Pour les limites précises, consultez [aperçus navigateur et SideCars](browser-
 | --- | --- |
 | Onglet de projet / espace de travail / instance | Connexion CodeNomad à un dossier explicitement ouvert ; plusieurs onglets peuvent utiliser le service partagé. |
 | Conversation / session | Historique et exécution natifs OpenCode associés à leur répertoire. |
-| Famille | Conversation et ses sous-sessions récursives ; intervient dans les déplacements, l’activité, Yolo et les commandes des Missions. |
+| Famille | Conversation et ses sous-sessions récursives ; intervient dans les déplacements, l’activité et les commandes des Missions. |
 | Worktree | Copie de travail détenue d’un dépôt, sélectionnée pour la navigation ou l’emplacement des sessions. La parcourir ne déplace pas une conversation. |
 | Location | Contexte d’exécution natif OpenCode propre à un répertoire ; fermer un onglet de projet ferme uniquement le projet dans CodeNomad, sans décharger la Location native. |
 | Backend CodeNomad | Serveur fournissant l’espace de travail, Git, l’authentification et la connectivité des clients. Son compte et son environnement déterminent l’accès au système de fichiers du backend. |
@@ -72,7 +72,7 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Installer ou servir l’espace de travail | [Installation](install.md), [Référence serveur](server.md), [Réseau et TLS](remote-access.md) |
 | Travailler avec plusieurs copies de travail et conversations | [Projets](projects.md), [Conversations](conversations.md), [Fichiers](files.md) |
 | Rechercher dans l’historique ou le nettoyer sans risque | [Historique](history.md) |
-| Répondre aux questions et autorisations natives | [Autorisations](permissions.md) |
+| Régler les permissions d’une conversation ou répondre aux demandes | [Modes de permissions](permissions.md#conversation-mode), [Questions et autorisations](permissions.md) |
 | Coordonner un travail délimité ou programmé | [Missions](missions.md) |
 | Configurer l’exécution et les intégrations | [OpenCode](opencode.md), [Fournisseurs](providers.md), [Intégrations](integrations.md) |
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |
@@ -85,8 +85,9 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 Le panneau Statut expose l’utilisation du fournisseur de la session active et les Shells natifs en arrière-plan. Le statut des conversations et l’activité des enfants indiquent les sessions actives, en compactage ou en attente de saisie. Surveiller un Shell en arrière-plan est distinct de l’envoi d’une demande Shell depuis la zone de saisie ou de l’utilisation d’un SideCar terminal hébergé séparément.
 
 1. Ouvrez **Statut → Shells en arrière-plan** pour la Location de la conversation sélectionnée (ou l’espace de travail ouvert si aucune conversation n’est sélectionnée).
-2. Seules les commandes en cours explicitement passées en arrière-plan sont listées, une par ligne. Survolez une ligne pour voir le shell, le dossier et le PID ; son icône **Afficher la sortie** ouvre la sortie native.
-3. Utilisez l’icône **Arrêter et supprimer** de la ligne et confirmez la cible.
+2. Les commandes en cours explicitement passées en arrière-plan occupent chacune une seule ligne, avec un état discret ; les commandes longues sont tronquées. Cliquez sur la commande, ou placez-y le focus et appuyez sur Entrée ou Espace, pour ouvrir sa fenêtre de sortie.
+3. Survolez la commande, placez-y le focus clavier ou faites un appui long sur écran tactile pour consulter la commande intégrale et son état, ainsi que le dossier, le shell, le PID, le code de sortie et les dates de début/fin disponibles. Appuyez sur Échap ou touchez à l'extérieur pour fermer ces détails.
+4. La poubelle se trouve à droite, à l'extérieur du champ de commande. Pour un shell actif, choisissez **Arrêter et supprimer** et confirmez ; si une entrée terminée est encore affichée, choisissez **Supprimer** et confirmez. La poubelle agit sur le shell sans ouvrir sa sortie.
 
 Supprimer un Shell en cours arrête ce processus ; fermer sa fenêtre de sortie ne l’arrête pas.
 

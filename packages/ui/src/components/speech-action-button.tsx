@@ -21,7 +21,7 @@ export default function SpeechActionButton(props: SpeechActionButtonProps) {
       title={props.title}
     >
       {props.isLoading ? (
-        <Loader2 class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+        <span class="inline-flex animate-spin"><Loader2 class="w-3.5 h-3.5" aria-hidden="true" /></span>
       ) : props.isPlaying ? (
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="3" y="3" width="18" height="18" rx="2" />

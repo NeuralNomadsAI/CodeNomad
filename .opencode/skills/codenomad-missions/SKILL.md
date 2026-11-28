@@ -16,7 +16,7 @@ Prefer ordinary native delegation for bounded work. Use a mission only when the 
 7. Finish through `mission.report({ final: true, ... })` only when the objective is actually met. Retired work never counts as success; retiring does not interrupt admitted native execution, which can finish on its own or be stopped with `mission.interrupt` when eligible; playbook proof requirements still apply. A retired native task takes no coordinator readout; record what it returned under its replacement or in the final report. Admitted retired work settles through its actor's terminal report or an observed native end.
 
 Use `mission.inspect({ catalog: true })` before selecting a native execution profile.
-Use `mission.inspect({ list: true })` to discover all project Missions, including human-created ones; explicit `missionID` reads them from any owned conversation. `project` provides pure bounded native views: `panel` for summaries, cleanup and mission fields; `current`, `current-page` and `current-content` for scheduled passages; `passage` for archived daily results; `sources` for branch, conversation, coordinator and forge discovery. Continue only the returned pages/cursors explicitly. File criteria take relative paths; existing file tools discover them. Project reads preserve work and request identities.
+Use `mission.inspect({ list: true })` to discover all project Missions, including human-created ones; explicit `missionID` reads them from any owned conversation. `project` provides pure bounded native views: `panel` for summaries, cleanup and mission fields; `current`, `current-page` and `current-content` for scheduled passages; `sources` for branch, conversation, coordinator and forge discovery. Continue only the returned pages/cursors explicitly. File criteria take relative paths; existing file tools discover them. Project reads preserve work and request identities.
 Use `mission.inspect({ project: { kind: "playbook", template, taskMode } })` to read the UI's exact steps, roles and full prompts before creation (taskMode defaults to native).
 Use `mission.inspect({ configurations: true })` to list the unique owning backend's saved configurations, including from an owned root outside a mission; pass `configurations: "<id>"` to read one record and its suggested title. Copy the chosen fields explicitly into `prepare` or `start`. For an oversized record, pass its `read` whole and join every slice following `next`; a changed digest requires a fresh read. Invalid or unavailable libraries require recovery, preserving their stored data.
 Copy only `objective`, suggested `title`, `notes`, `template`, `profiles` and `taskMode`;
@@ -53,22 +53,14 @@ never continues Play: an unattempted automatic start stays prepared, an attempte
 one exposes its original acknowledgement or uncertainty. Inspect the saved target;
 never replace an uncertain request or emulate controls.
 
-`mission.schedule` controls every schedule in the project, including human-created
-documents, from any owned session (actors, descendants and scheduled passages included).
-Use `action: "list"` with optional `after`/`limit` (at most eight), then
-`{ action: "read", missionID }`. Mutations (`play`, `pause`, `stop`, `resume`,
-`run-now`, `check`, `configure`, `delete`) require `missionID`, a stable `requestID`
-per action and the read's `expectedRevision`. `configure` replaces the complete
-editor configuration with explicit frozen agent/model profiles, task mode, followed
-sources and ordered launch criteria. Existing-coordinator selection must be idle and
-exclude this caller and its followed/trigger sources. Play/Resume preserve explicit
-OFF; Stop is terminal. Delete keeps conversations unless `deleteManagedSessions`
-is explicitly true. After uncertainty, use `read` with the original `requestID`;
-never resend or choose a replacement identity to evade the shared hold. Exact
-completed Play/Pause/Stop/Resume/Run now/configure/delete requests read their own retained
-receipt without changing the document revision. Check always reconciles; missing, evicted
-or partial proofs retain uncertainty and their original recovery path. Changed inputs conflict. Keep exactly one
-owning CodeNomad backend available.
+`mission.program` manages the programmed Missions of this conversation's directory: a
+Mission launched again by a repeating schedule or by Git/forge events, each launch in
+the same coordinator conversation. `list` returns each one's id, title, paused, current
+`missionID`, launch criteria and next due time. `save` takes a stable `id` and the
+complete configuration, with an agent and model for the coordinator and every role;
+saving the same `id` again replaces it. `pause`, `resume` and `delete` take the `id`;
+the current Mission is deleted with `mission.delete`. A refusal names its code:
+`calendar-unsupported` with its reason, `calendar-missing` or `calendar-unavailable`.
 
 `mission.control` controls any one-time project Mission from any owned conversation:
 `play`, `resume`, graceful `pause`, immediate `interrupt`, terminal `stop`,
@@ -79,39 +71,16 @@ a retired task's native family. Mutations take a stable `requestID` and the fres
 `expectedRevision`. Use `action: "read"` and the original `requestID` to observe an
 uncertain result without sending again.
 
-`mission.configure({ action: "save", ... })` accepts objective/notes OR the editor's
-complete `configuration`. Structural edits and immediate/calendar conversion share
-the editor's admission guards. `mission.delete({ action: "delete", ... })` uses the
+`mission.configure({ action: "save", ... })` edits a Mission's objective and notes.
+`mission.delete({ action: "delete", ... })` uses the
 ordinary cleanup; omitted `deleteManagedSessions` freezes the owning profile's
 preference. Its `read` retains cleanup after deletion. Never replace an unknown
 request identity. Explicit `retry: true` keeps every original field and requires a
-positively read partial lifecycle, cleanup or structural-edit receipt.
+positively read partial lifecycle or cleanup receipt.
 
-`schedule.capabilities` is a passive diagnostic, including explicit scheduling OFF.
-`activate` prepares settings using the original request/revision; `activation-read`
-reads that preparation without Play. `configure` accepts eligible immediate/schedule
-conversion. Use `retry: true` only after positively reading the exact partial
-configuration receipt, preserving every original field.
-For daily documents use `owner: "daily"` with list/read, paused create (`creation`
-contains instructions, clock, profiles, task mode and followed sources), or
-play/pause/resume/stop/run-now/check. Creation takes a stable requestID and no missionID
-or expectedRevision. An exact daily receipt read includes requestID, expectedRevision
-and receiptAction. Only partial Pause/Stop supports explicit original `retry: true`.
-Recover a daily creation with `read`, its original `requestID` and `creation`
-fields alone; an absent receipt stays pending without dispatch. Daily discovery covers
-the project across checkouts; reads, receipts and controls resolve and revalidate
-each schedule's saved execution Location.
-
-`prepare.launch?: { when: [...] }` accepts the editor's ordered criteria: same-kind
-cards are OR, schedule→event is IF, event→schedule is ELSE. Absent, empty or sole
-`now` is one-time. Calendar-backed preparation requires complete explicit agent/model
-profiles after preference resolution. Keep launch order, followed sources
-(`watchedConversationIDs`), explicit coordinator choice and start flag unchanged on retry.
-`coordinatorSessionID` selects an eligible idle root for scheduling only; a new root
-is the default. The author, source conversations and roots with active or uncertain
-Mission ownership are ineligible. Native validation rechecks adoption before effects.
-Explicit OFF and unavailable scheduling capabilities refuse activation. Preparation
-continues only its fresh first-Play request; separate controls use `mission.schedule`.
+`prepare` creates a one-time Mission: `launch` absent, empty or a sole `now`. A repeating
+schedule or an event is refused with `use-mission-program`. Keep followed sources
+(`watchedConversationIDs`) and the start flag unchanged on retry.
 
 The mission `role` is independent of `execution.agent`. To pin execution, pass
 `execution: { agent: "catalog-agent-id", model: { providerID: "catalog-provider", id: "catalog-model", variant: "optional-catalog-variant" } }`.

@@ -121,14 +121,20 @@ pub(crate) fn bind_webview(webview: &Webview, binding: u64) {
     let host = state.1.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let closed_host = host.clone();
     let label = webview.label().to_string();
+    let closed_label = label.clone();
     webview.window().on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             if let Some(app) = closed_host.upgrade() {
-                remove_window(&app, &label, binding);
+                remove_window(&app, &closed_label, binding);
             }
         }
     });
-    crate::notification_badge_lifetime::bind(webview, host, binding);
+    #[cfg(any(windows, target_os = "linux"))]
+    crate::notification_badge_lifetime::bind(webview, move || {
+        if let Some(app) = host.upgrade() {
+            renderer_terminated(&app, &label, binding);
+        }
+    });
 }
 
 #[cfg(any(windows, target_os = "linux"))]
@@ -151,7 +157,7 @@ fn is_main_owner(label: &str, window_label: &str, local: bool, remote: bool) -> 
             || (remote && label.starts_with("remote-")))
 }
 
-fn require_owner(webview: &Webview, app: &AppHandle) -> Result<Url, String> {
+pub(crate) fn require_owner(webview: &Webview, app: &AppHandle) -> Result<Url, String> {
     let state = app.state::<crate::AppState>();
     let local = app
         .state::<crate::local_windows::LocalWindows>()
@@ -509,7 +515,10 @@ mod tests {
                 "notification:allow-is-permission-granted",
                 "notification:allow-request-permission",
                 "notification:allow-notify",
-                "allow-notification-badge-set"
+                "allow-notification-badge-set",
+                "allow-client-state-renderer-flushed",
+                "allow-notification-permission",
+                "allow-notification-show"
             ])
         );
     }

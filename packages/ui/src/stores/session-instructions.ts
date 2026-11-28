@@ -1,4 +1,5 @@
 import type { OpenCodeClient } from "@opencode/client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { getLogger } from "../lib/logger"
 import { isConversationModeEnabled } from "./conversation-speech"
 import { getDefaultWorktreeDirectory } from "./worktrees"
@@ -10,7 +11,7 @@ const PLACEMENT_INSTRUCTION = [
   "This session is being used through CodeNomad. The opened local repository and its Git worktrees form the CodeNomad project. A session's native location is its execution directory; moving between that repository's worktrees keeps it in the same project.",
   "Creating a worktree and moving a conversation are separate actions. Creating a branch or worktree alone does not move this session. A request to continue this conversation's task in a worktree authorizes changing its native location, unless the user explicitly asks to preserve the current location.",
   "When working elsewhere, use absolute paths and the tools' working-directory parameter (for example, shell workdir). Read and follow the instructions applicable to the files you edit there.",
-  "Use session_move for an authorized change of the conversation's working context. A one-off command or test in another directory only needs workdir. Never move merely to repair UI classification. Do not independently relocate a child session or assume session_move moves the complete session family; CodeNomad's UI handles family moves.",
+  "Use session_move for an authorized change of the conversation's working context. A one-off command or test in another directory only needs workdir. Never move merely to repair UI classification. Do not independently relocate a child session; moving a session cascades to its same-location children, while CodeNomad's UI handles complete family moves including split-location members.",
   "An explicit change of attachment becomes the new choice to preserve. Use the destination's exact directory spelling; do not infer a new attachment from the last directory used by a tool.",
   "Unless the user specifies another destination, create worktrees under the local main checkout's .codenomad/worktrees directory, not recursively beneath the current linked checkout. Use a named branch starting at the current session checkout's HEAD unless another revision or a detached checkout is requested. Uncommitted changes remain in the original worktree. Preserve Git's refusal to reuse a branch checked out elsewhere; never force or reset it to make creation succeed.",
   "Prefer native worktree operations when available. Native creation can produce a detached checkout: select or create the requested branch with Git without resetting an existing branch. If using Git directly, create an ordinary registered linked worktree, keep .codenomad/worktrees excluded from tracking using Git's resolved info/exclude path, and report its exact directory and branch. CodeNomad discovers registered worktrees regardless of who created them.",
@@ -24,28 +25,31 @@ const VOICE_MODE_INSTRUCTION = [
   "Do not include code, bullet lists, markdown formatting, or long technical detail in the spoken block.",
   "After the `spoken` block, continue with your normal detailed response.",
 ].join("\n\n")
-const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void> }>()
+const voiceInstructionSyncs = new Map<string, { desired: boolean; running: Promise<void>; signal: AbortSignal }>()
 
-async function syncVoiceModeInstruction(client: OpenCodeClient, instanceId: string, sessionId: string): Promise<void> {
+async function syncVoiceModeInstruction(client: OpenCodeClient, instanceId: string, sessionId: string, signal: AbortSignal, current: () => boolean): Promise<void> {
   const key = `${instanceId}:${sessionId}`
   const existing = voiceInstructionSyncs.get(key)
-  if (existing) {
+  if (existing && !existing.signal.aborted) {
     existing.desired = isConversationModeEnabled(instanceId)
     return existing.running
   }
 
-  const state = { desired: isConversationModeEnabled(instanceId), running: Promise.resolve() }
+  const state = { desired: isConversationModeEnabled(instanceId), running: Promise.resolve(), signal }
   state.running = (async () => {
     try {
       let applied: boolean | undefined
       while (applied !== state.desired) {
+        signal.throwIfAborted()
+        if (!current()) throw new DOMException("Session action view changed", "AbortError")
         const desired = state.desired
         const instruction = client.session.instructions.entry
         if (desired) {
-          await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION })
+          await instruction.put({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY, value: VOICE_MODE_INSTRUCTION }, { signal })
         } else {
-          await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY })
+          await instruction.remove({ sessionID: sessionId, key: VOICE_MODE_INSTRUCTION_KEY }, { signal })
         }
+        signal.throwIfAborted()
         applied = desired
         state.desired = isConversationModeEnabled(instanceId)
       }
@@ -61,17 +65,23 @@ async function syncVoiceModeInstruction(client: OpenCodeClient, instanceId: stri
 // entry for existing sessions and after reconnects, without a browser-only cache.
 // Voice mode is a UI preference overlay: its sync never blocks the send itself.
 // Placement context remains awaited so an action cannot silently bypass setup.
-export async function syncSessionInstructions(client: OpenCodeClient, instanceId: string, sessionId: string): Promise<void> {
+export async function syncSessionInstructions(client: OpenCodeClient, instanceId: string, sessionId: string, parentSignal?: AbortSignal,
+  owns?: () => boolean): Promise<void> {
+  const { signal, current } = captureBackendOperation(instanceId, parentSignal, owns)
+  signal.throwIfAborted()
+  if (!current()) throw new DOMException("Session action view changed", "AbortError")
   try {
-    await syncVoiceModeInstruction(client, instanceId, sessionId)
+    await syncVoiceModeInstruction(client, instanceId, sessionId, signal, current)
   } catch (error) {
     getLogger("actions").warn("Voice instruction sync failed; continuing without it", error)
   }
+  signal.throwIfAborted()
+  if (!current()) throw new DOMException("Session action view changed", "AbortError")
   await client.session.instructions.entry.put({
     sessionID: sessionId,
     key: PLACEMENT_INSTRUCTION_KEY,
     value: [PLACEMENT_INSTRUCTION, getDefaultWorktreeDirectory(instanceId)
       ? `The default worktree parent for this CodeNomad project is: ${getDefaultWorktreeDirectory(instanceId)}`
       : ""].filter(Boolean).join("\n\n"),
-  })
+  }, { signal })
 }

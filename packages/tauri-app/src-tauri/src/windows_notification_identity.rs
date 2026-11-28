@@ -15,10 +15,12 @@ use windows_sys::Win32::System::Registry::{
 
 const DISPLAY_NAME: &str = "CodeNomad";
 
-pub(crate) fn register(identifier: &str) {
+pub(crate) fn register(identifier: &str) -> bool {
     if let Err(status) = write(&key_path(identifier), toast_icon().as_deref()) {
         eprintln!("[tauri] failed to register AppUserModelID for notifications: {status}");
+        return false;
     }
+    true
 }
 
 fn key_path(identifier: &str) -> String {
@@ -92,7 +94,7 @@ fn set_string(key: HKEY, name: &str, value: &str) -> Result<(), u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
+    use std::{os::windows::process::CommandExt, process::Command};
 
     #[test]
     fn registers_the_identifier_with_a_name_and_icon_under_the_current_user() {
@@ -101,10 +103,23 @@ mod tests {
         let icon = Path::new(r"C:\CodeNomad\resources\server\public\pwa-192x192.png");
         write(&path, Some(icon)).unwrap();
         let key = format!(r"HKCU\{path}");
-        let query = Command::new("reg").args(["query", &key]).output().unwrap();
-        let _ = Command::new("reg").args(["delete", &key, "/f"]).output();
+        let reg = |args: &[&str]| {
+            Command::new("reg")
+                .creation_flags(0x08000000)
+                .args(args)
+                .output()
+        };
+        let query = reg(&["query", &key]).unwrap();
+        let _ = reg(&["delete", &key, "/f"]);
         let values = String::from_utf8_lossy(&query.stdout);
-        assert!(values.contains("DisplayName    REG_SZ    CodeNomad"), "{values}");
-        assert!(values.contains(&format!("IconUri    REG_SZ    {}", icon.display())), "{values}");
+        assert!(!values.contains("CustomActivator"), "{values}");
+        assert!(
+            values.contains("DisplayName    REG_SZ    CodeNomad"),
+            "{values}"
+        );
+        assert!(
+            values.contains(&format!("IconUri    REG_SZ    {}", icon.display())),
+            "{values}"
+        );
     }
 }

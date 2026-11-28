@@ -74,6 +74,7 @@ impl OutputDrain {
 pub(super) enum OutputLine<'a> {
     Request(&'a str),
     Token(&'a str),
+    ManagedSession(&'a str),
     Diagnostic(&'a str),
 }
 
@@ -82,6 +83,8 @@ pub(super) fn classify<'a>(line: &'a str, request_prefix: &str) -> OutputLine<'a
         OutputLine::Request(line)
     } else if let Some(token) = line.strip_prefix("CODENOMAD_BOOTSTRAP_TOKEN:") {
         OutputLine::Token(token.trim())
+    } else if let Some(response) = line.strip_prefix("CODENOMAD_MANAGED_SESSION:") {
+        OutputLine::ManagedSession(response)
     } else {
         OutputLine::Diagnostic(line)
     }

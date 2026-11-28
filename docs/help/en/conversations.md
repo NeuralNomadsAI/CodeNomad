@@ -1,6 +1,6 @@
 # Conversations
 
-Messages render Markdown, code, diffs and supported tool-result images. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
+Messages render Markdown, code, diffs and supported tool-result images. Multi-file patches show per-file changes up to the display limit; copying the tool output includes all files. **Message content** changes visibility without deleting stored parts; [History](history.md#operation-reference) distinguishes display controls from cleanup.
 
 Reasoning and tool headers show how long each step took, counting live while it runs; durations under one second are not shown. When **Tokens** is shown in **Message content** (the **Everything** preset shows it), each agent message ends with one token and cost line after its final text. That line adds up the message and the messages holding the tools and reasoning that its **Remove tools and reasoning from this response** action covers, within the loaded transcript; expand it for reasoning and cache counts.
 
@@ -20,6 +20,16 @@ Click an **Idle** or **Interrupted** badge (**Clear**) to acknowledge it without
 Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. In **Settings → General**, **Automatically expand subsessions** is enabled by default. Visible branches in the selected conversation open when subsessions start working, compacting or awaiting input. Disable the option to keep activity from opening branches; manual expansion and explicit navigation remain available. Open branches, including automatically opened ones, are saved for restoration.
 
 Back/Forward is a per-project-tab, per-window visit history, not list order. The palette's **Previous Session** / **Next Session** instead cycle the visible list.
+
+## Keep conversations in favorites {#favorites}
+
+Hover over or focus a session row to reveal its actions. On touch, the actions are visible without hovering. Use the star button or, when space is tight, open **More actions** (⋯) and choose **Add to favorites** or **Remove from favorites**.
+
+In the tree, requests needing your input come first. Favorites move ahead of other sessions at the same level under the same parent. Each branch keeps its expanded or collapsed state. In search, **Activity** prioritizes matching favorites, including subsessions when shown. **Name** and **Worktree** use their own order.
+
+In session search, choose **Favorites only**. **Show … hidden matches** enables both session types without changing the search, worktree or other filters. **Reset** restores the default filters and sort.
+
+Windows on the same CodeNomad backend share favorites for the same opened folder. Session cleanup keeps favorites and their ancestors; you can still delete them explicitly.
 
 ## Archive and restore {#archive}
 
@@ -61,8 +71,10 @@ Drafts are client-side working state, not shared native messages. Startup restor
 ## Open files from replies {#open-files-from-replies}
 
 1. Agent replies link project files with relative and absolute paths.
-2. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
-3. Modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session’s worktree keep normal link behavior.
+2. A path written as plain text or inside inline code becomes a link too when the conversation's worktree is known to contain the file — file names in any writing system included; missing paths stay plain text. In the desktop app, for a project on this computer, folders become links too.
+3. A plain click opens the linked file in the file preview, read from the conversation’s worktree.
+4. In the desktop app, for a project on this computer, the file preview keeps the text files and images it can show. Folders, other files (videos, PDFs…), paths outside the worktree and `file:` links open with your system, as Ctrl/Cmd-click and middle-click always do; an error appears if they cannot be opened.
+5. Elsewhere, modified clicks (Ctrl/Cmd-click, Shift-click, middle-click) and links outside the session's worktree keep normal link behavior.
 
 ## Commands and Shell mode {#commands-shell}
 
@@ -104,6 +116,14 @@ Closing cancels the pending side request without interrupting the main session. 
 3. Use **Pause goal** or **Resume goal** on that line, or send `/goal pause` or `/goal resume`. Use **Clear goal** or `/goal clear` to remove the goal.
 
 A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
+
+## Track session automations with /automation {#automations}
+
+1. Create or manage scheduled or event-driven automations in a conversation with `/automation` (or through the agent's automation tools).
+2. While the conversation has automations, **Status** lists them above **Tokens** (below **Goal** when one is set): each row shows its state (**Active**, **Paused** or **Done**), name, next run or schedule, and run count. Completed automations stay folded under **Done (N)** until expanded.
+3. Hover or focus a row to read its trigger, schedule and last output, or click it to open its details window. Use **Pause automation**, **Resume automation**, or **Delete automation** on a row to control it directly.
+
+Only automations belonging to the active conversation are shown. Deleting an automation cannot be undone and does not revert work already performed. Without automations, or with an OpenCode service that does not expose the automation API, the block does not appear.
 
 ## Fork, undo and recover a failed run {#fork-errors}
 

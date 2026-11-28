@@ -11,7 +11,7 @@ interface RouteDeps {
   eventBus: EventBus
 }
 
-const AbandonSchema = z.object({ path: z.string().min(1) })
+const AbandonSchema = z.object({ path: z.string().min(1), requestId: z.string().trim().min(1).max(128).optional() })
 const DiscardSchema = z.object({ onlyIfEmpty: z.boolean().optional() })
 
 export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -42,7 +42,7 @@ export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: Rou
     if (!temporary) return unavailable(reply)
     try {
       reply.code(201)
-      return { path: await temporary.createFolder() }
+      return { path: await temporary.createFolder(), supportsCancelAndAbandon: true }
     } catch (error) {
       return fail(request, reply, error, "Unable to create a temporary folder")
     }
@@ -51,7 +51,8 @@ export function registerTemporaryWorkspaceRoutes(app: FastifyInstance, deps: Rou
   app.post("/api/workspaces/temporary/abandon", async (request, reply) => {
     if (!temporary) return unavailable(reply)
     try {
-      await temporary.abandonFolder(AbandonSchema.parse(request.body ?? {}).path)
+      const { path, requestId } = AbandonSchema.parse(request.body ?? {})
+      await temporary.abandonFolder(path, requestId)
       return reply.code(204).send()
     } catch (error) {
       return fail(request, reply, error, "Unable to remove the unused temporary folder")

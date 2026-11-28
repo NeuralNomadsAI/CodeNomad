@@ -8,11 +8,13 @@ export class MissionControlError extends Error {
 }
 
 /** Model-facing refusal of the Wayfinder human gate. The innermost cause is kept as a
- * detail; native Effect wrappers ("An error occurred in Effect.tryPromise") are skipped. */
+ * detail; native Effect wrappers ("An error occurred in Effect.tryPromise") are skipped.
+ * Only a fixed reason made of words survives: system errors (paths, SQL, payloads) are dropped. */
 export function humanDecisionRequired(cause?: unknown) {
   let detail: string | undefined
   for (let error = cause, depth = 0; error instanceof Error && depth < 8; error = (error as { cause?: unknown }).cause, depth++)
     if (error.message && !error.message.startsWith("An error occurred in Effect.")) detail = error.message
+  if (detail && !/^[A-Za-z][A-Za-z -]{0,159}$/.test(detail)) detail = undefined
   return new MissionControlError("Human decision required: the user must answer this question from the CodeNomad interface. "
     + "An ordinary or agent answer is not a proven human decision; ask again with the native question tool if needed."
     + (detail ? ` (${detail})` : ""), "policy-unqualified")

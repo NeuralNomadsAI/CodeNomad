@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { TASK_STEP_MOUNT_LIMIT } from "../../src/components/tool-call/renderers/task-summary"
 
 let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -27,7 +28,9 @@ async function withPage(run: (page: Page) => Promise<void>, scenario?: string) {
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(scenario ? `${url}?steps=${scenario}` : url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    // Outside the tiered runner the standalone daemon skips warmup; the first
+    // fixture page of such a run pays the cold dependency graph.
+    await page.goto(scenario ? `${url}?steps=${scenario}` : url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await run(page)
     assert.deepEqual(errors, [])
@@ -185,7 +188,17 @@ test("exactly 200 observed child rows are not render overflow", { timeout: 45_00
   await steps.waitFor()
   assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "200 steps")
   assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 0)
-  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 200)
+  // The list mounts its newest window; the gap reveals the omitted steps in place.
+  const rows = steps.locator('.tool-call-task-summary > .tool-call')
+  const gap = steps.locator('.message-hidden-parts')
+  assert.equal(await rows.count(), TASK_STEP_MOUNT_LIMIT)
+  assert.match(await gap.textContent() ?? "", new RegExp(`${200 - TASK_STEP_MOUNT_LIMIT} items hidden`))
+  // Each reveal mounts one bounded step of the omitted rows.
+  for (let reveals = 0; reveals < 3 && await gap.count() > 0; reveals += 1) {
+    await gap.getByRole("button").click()
+  }
+  await steps.locator('.message-hidden-parts').waitFor({ state: "detached" })
+  assert.equal(await rows.count(), 200)
 }, "limit"))
 
 test("text-only latest child window exposes full-history steps copy without claiming overflow", { timeout: 45_000 }, async () => withPage(async page => {
@@ -213,7 +226,8 @@ test("observed 201 child rows retain capped count and real truncation warning", 
   await steps.waitFor()
   assert.equal(await steps.locator('.tool-call-task-section-meta').textContent(), "200+ steps")
   assert.equal(await steps.locator('.tool-call-diagnostic-message').count(), 1)
-  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), 200)
+  assert.equal(await steps.locator('.tool-call-task-summary > .tool-call').count(), TASK_STEP_MOUNT_LIMIT)
+  assert.match(await steps.locator('.message-hidden-parts').textContent() ?? "", new RegExp(`${200 - TASK_STEP_MOUNT_LIMIT} items hidden`))
   assert.match(await steps.locator('.tool-call-diagnostic-message').textContent() ?? "", /200/)
   assert.equal((await page.evaluate(() => (window as any).fixture.snapshot())).requests.filter((request: any) => request.sessionID === "child").length, 1)
 }, "overflow"))

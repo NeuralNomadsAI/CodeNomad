@@ -8,7 +8,7 @@
 
 1. 安装 Node.js 24 LTS 和 npm。
 2. 将 Git 加入**后端进程的 PATH**。仅 WSL 内的 Git 不满足 Windows 后端。
-3. 安装或选择 OpenCode：必需最低版本为 **2.3.0**。 参阅 [OpenCode 设置](opencode.md)。
+3. 安装或选择 OpenCode：必需最低版本为 **2.4.2**。 参阅 [OpenCode 设置](opencode.md)。
 4. 选择启动服务器的文件夹，或显式传入 `--workspace-root`。
 
 没有 Git 时，对话仅在显式打开的物理文件夹内可用；Git 和工作树操作失败。安装 Git，更改 PATH 后重启后端。工作区根目录限制打开/浏览，而非智能体执行：参阅[安全](security.md)。
@@ -80,7 +80,7 @@ HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`；允许浏览整个文件系统。不是智能体沙箱设置。 |
 | `--config <path>` | `CLI_CONFIG` | 解析后的活动默认值：`~/.config/codenomad/config.yaml`。接受目录或 YAML 文件以显式指定位置。 |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`；文档级别：`trace`、`debug`、`info`、`warn`、`error`。 |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`；否则写入指定文件。 |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`，另加配置文件旁的 `logs/server.log`；指定文件后取代两者。 |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`；运行时认证用户名。没有运行时密码覆盖时，已存储认证文件保留其用户名。 |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | 未设置；仅运行时密码，优先于受管理认证文件。 |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`；字母、数字、`_` 和 `-` 之外的字符变为 `_`。 |

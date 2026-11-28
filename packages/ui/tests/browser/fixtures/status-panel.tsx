@@ -1,5 +1,7 @@
 import { render } from "solid-js/web"
-import { createSignal } from "solid-js"
+import AlertDialog from "../../../src/components/alert-dialog"
+import { Toaster } from "solid-toast"
+import { createSignal, lazy, Show } from "solid-js"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
@@ -8,13 +10,14 @@ import { setSessions, setSessionInfoByInstance, updateThreadTotalsForSession } f
 import { MessageUsage } from "../../../src/components/message-usage"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
+import { serverEvents } from "../../../src/lib/server-events"
 import type { Instance } from "../../../src/types/instance"
 import type { Session } from "../../../src/types/session"
 import "../../../src/index.css"
 
 const instance: Instance = { id: "status-fixture", folder: "/fixture", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: null }
 const session: Session = {
-  id: "status-session", instanceId: instance.id, parentId: null, title: "Status fixture", agent: "build",
+  id: "ses_status", instanceId: instance.id, parentId: null, title: "Status fixture", agent: "build",
   model: { providerId: "fixture", modelId: "fixture" }, status: "idle", retry: null, idleSince: null,
   generationRecovery: null, runtimeStatusKnown: true, version: "1", projectID: "fixture", location: { directory: "/fixture" },
   cost: 0.12, tokens: { input: 1200, output: 300, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 },
@@ -26,26 +29,43 @@ setSessionInfoByInstance(previous => new Map(previous).set(instance.id, new Map(
 }]])))
 const [activeSession, setActiveSession] = createSignal(session)
 const [width, setWidth] = createSignal(360)
+const [panelActive, setPanelActive] = createSignal(true)
+const [panelMounted, setPanelMounted] = createSignal(true)
+let streamOpens = 0
+serverEvents.onOpen(() => { streamOpens++ })
+const General = lazy(() => import("../../../src/components/settings/general-settings-section").then(module => ({ default: module.GeneralSettingsSection })))
+const showSettings = new URLSearchParams(location.search).has("settings")
 
 function Fixture() {
   const { t } = useI18n()
-  return <><div data-status-fixture style={{ width: `${width()}px`, height: "800px" }}>
-    <RightPanel isActive={() => true} t={t} instanceId={instance.id} instance={instance}
-      activeSessionId={() => activeSession().id} activeSession={activeSession} isPhoneLayout={() => false}
-      rightDrawerWidth={() => 360} rightDrawerWidthInitialized={() => true}
-      onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
-  </div><div data-message-usage-fixture style={{ width: "600px" }}><MessageUsage messageInfo={{
-    tokens: { input: 1200, output: 300, reasoning: 80 }, cost: 0.12,
-  } as any} usageVisibility="collapsed" /></div></>
+  return <Show when={!showSettings} fallback={<div class="settings-content" style={{ padding: "24px" }}><General showStartupState={false} /></div>}>
+    <div data-status-fixture style={{ width: `${width()}px`, height: "800px" }}>
+      <Show when={panelMounted()}>
+        <RightPanel isActive={panelActive} t={t} instanceId={instance.id} instance={instance}
+          activeSessionId={() => activeSession().id} activeSession={activeSession} isPhoneLayout={() => false}
+          rightDrawerWidth={() => 360} rightDrawerWidthInitialized={() => true}
+          onCloseRightDrawer={() => {}} promptInputApi={() => null} setContentEl={() => {}} />
+      </Show>
+      <AlertDialog />
+      <Toaster />
+    </div>
+    <div data-message-usage-fixture style={{ width: "600px" }}><MessageUsage messageInfo={{
+      tokens: { input: 1200, output: 300, reasoning: 80 }, cost: 0.12,
+    } as any} usageVisibility="collapsed" /></div>
+  </Show>
 }
 
 await initializeClientState()
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).statusFixture = {
+  setPanelActive,
+  setPanelMounted,
   customization: () => JSON.parse(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY) ?? "{}"),
   update: () => setActiveSession(current => ({ ...current, model: { ...current.model },
     tokens: { ...current.tokens, output: current.tokens.output + 1 } })),
   select: (id: string) => setActiveSession(current => ({ ...current, id })),
+  reconnect: () => serverEvents.restart("fixture reconnect"),
+  streamOpens: () => streamOpens,
   width: setWidth,
   child: () => {
     setSessions(previous => new Map(previous).set(instance.id, new Map([

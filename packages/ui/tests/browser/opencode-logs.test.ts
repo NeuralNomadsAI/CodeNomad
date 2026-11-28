@@ -12,6 +12,91 @@ before(async () => {
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
+
+test("deferred logs cannot publish after closing or changing executable", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const held: (() => Promise<void>)[] = []
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname === "/api/opencode/logs") {
+      held.push(() => route.fulfill({ json: { path: "/old", text: "OLD_LATE", truncated: false } }).catch(() => {}))
+      return
+    }
+    return route.fulfill({ json: { state: "ready", serviceState: "ready", binaryPath: "opencode" } })
+  })
+  try {
+    await page.goto(url)
+    const trigger = page.getByRole("button", { name: "View OpenCode logs", exact: true })
+    await trigger.click()
+    await page.waitForFunction(() => Boolean(document.querySelector('.output-window [role="status"]')))
+    await trigger.click()
+    await page.locator(".output-window").waitFor({ state: "detached" })
+    assert.equal(held.length, 1)
+    await held[0]()
+    assert.equal(await page.getByText("OLD_LATE", { exact: true }).count(), 0)
+    await trigger.click()
+    await page.locator('.output-window [role="status"]').waitFor()
+    await page.evaluate(() => (window as any).fixture.selectBinary("other-opencode"))
+    await page.locator(".output-window").waitFor({ state: "detached" })
+    assert.equal(held.length, 2)
+    await held[1]()
+    assert.equal(await page.getByText("OLD_LATE", { exact: true }).count(), 0)
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+    assert.deepEqual(errors, [])
+  } finally { for (const release of held) await release(); await page.close() }
+})
+
+test("real Shell output keeps A across navigation, is literal ANSI, movable and non-modal; Escape closes only the top layer", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } })
+  const errors: string[] = [], hostShellReads: string[] = []
+  let hostLogsReads = 0
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => {
+    if (route.request().url().includes("/shell/")) hostShellReads.push(route.request().url())
+    if (new URL(route.request().url()).pathname === "/api/opencode/logs") {
+      hostLogsReads++
+      return route.fulfill({ json: { path: "/host/opencode.log", text: "HOST_SETTINGS_LOG", truncated: false } })
+    }
+    return route.fulfill({ json: { state: "ready", serviceState: "ready", binaryPath: "opencode" } })
+  })
+  try {
+    await page.goto(url + "&shell")
+    await page.getByRole("button", { name: "Open shell A", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.shellReads.length === 1)
+    const dialog = page.locator(".output-window")
+    await dialog.waitFor()
+    await page.getByRole("button", { name: "Navigate B", exact: true }).click()
+    assert.equal(await page.locator("[data-selected]").textContent(), "logsB~same")
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent), "Navigate B")
+    assert.equal(await dialog.isVisible(), true)
+    assert.notEqual(await dialog.getAttribute("aria-modal"), "true")
+    await page.evaluate(() => (window as any).fixture.releaseShell())
+    await dialog.locator("pre").waitFor()
+    assert.equal(await dialog.locator("pre").textContent(), "A <b>literal</b>\n")
+    assert.equal(await dialog.locator("pre b").count(), 0)
+    assert.ok(await dialog.locator("pre span").count() > 0)
+    const reads = await page.evaluate(() => (window as any).fixture.shellReads)
+    assert.ok(reads.every((read: any) => read.owner === "A" && read.url.includes("%2Frepo%2FA")), JSON.stringify(reads))
+    assert.deepEqual(hostShellReads, [])
+    const box = (await dialog.boundingBox())!, header = (await dialog.locator("header").boundingBox())!
+    await page.mouse.move(header.x + 100, header.y + 10)
+    await page.mouse.down(); await page.mouse.move(header.x + 160, header.y + 40); await page.mouse.up()
+    assert.ok(Math.abs((await dialog.boundingBox())!.x - box.x) > 20)
+    await page.evaluate(() => (window as any).fixture.replaceDialog("alert"))
+    await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).waitFor()
+    await page.keyboard.press("Escape")
+    await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).waitFor({ state: "detached" })
+    assert.equal(await dialog.isVisible(), true)
+    await page.keyboard.press("Escape")
+    await dialog.waitFor({ state: "detached" })
+    await page.getByRole("button", { name: "View OpenCode logs", exact: true }).click()
+    await page.getByText("HOST_SETTINGS_LOG", { exact: true }).waitFor()
+    assert.equal(hostLogsReads, 1, "host Settings remains explicit host administration while B is selected")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.shellReads.filter((read: any) => read.owner !== "A")), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.evaluate(() => (window as any).fixture?.releaseShell()); await page.close() }
+})
 after(async () => { await browser?.close() })
 
 test("logs are read only on demand in a movable non-modal window; refresh and errors are safe", async () => {

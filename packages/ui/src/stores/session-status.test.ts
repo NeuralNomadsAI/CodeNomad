@@ -2,8 +2,8 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { getIdleSinceForStatusTransition } from "../types/session.ts"
-import { clearSessionIdleFade, getSessionIdleFadeClass, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatus } from "./session-status.ts"
-import { setSessions } from "./session-state.ts"
+import { clearSessionIdleFade, idleFadeClassForSession, IDLE_STATUS_VISIBILITY_MS, markSessionIdleFadeStarted, shouldShowIdleStatus, shouldShowSessionStatusForRow } from "./session-status.ts"
+import { sessions, setSessions } from "./session-state.ts"
 import { shouldAppHoldWakeLock, shouldSessionHoldWakeLock } from "./wake-lock-eligibility.ts"
 
 describe("shouldAppHoldWakeLock", () => {
@@ -85,6 +85,7 @@ describe("idle status visibility", () => {
     const instanceId = "instance"
     const sessionId = "session"
     const idleSince = 1_000
+    const fadeClass = () => idleFadeClassForSession(instanceId, sessions().get(instanceId)?.get(sessionId) ?? null)
 
     setSessions(
       new Map([
@@ -106,24 +107,24 @@ describe("idle status visibility", () => {
     )
 
     markSessionIdleFadeStarted(instanceId, sessionId)
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
+    assert.equal(fadeClass(), "session-status-fading")
 
     setSessions(
       new Map([
         [instanceId, new Map([[sessionId, { id: sessionId, status: "idle", idleSince: null, parentId: null } as any]])],
       ]),
     )
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "session-status-fading")
+    assert.equal(fadeClass(), "session-status-fading")
 
     setSessions(
       new Map([
         [instanceId, new Map([[sessionId, { id: sessionId, status: "idle", idleSince: 2_000, parentId: null } as any]])],
       ]),
     )
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
+    assert.equal(fadeClass(), "")
 
     clearSessionIdleFade(instanceId, sessionId, idleSince)
-    assert.equal(getSessionIdleFadeClass(instanceId, sessionId), "")
+    assert.equal(fadeClass(), "")
 
     setSessions(new Map())
   })
@@ -152,10 +153,11 @@ describe("idle status visibility", () => {
       ]),
     )
 
-    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), false)
+    const row = sessions().get(instanceId)!.get(sessionId)!
+    assert.equal(shouldShowSessionStatusForRow(instanceId, row, 7_000, false), false)
 
     markSessionIdleFadeStarted(instanceId, sessionId)
-    assert.equal(shouldShowSessionStatus(instanceId, sessionId, 7_000, false), true)
+    assert.equal(shouldShowSessionStatusForRow(instanceId, row, 7_000, false), true)
 
     clearSessionIdleFade(instanceId, sessionId, idleSince)
     setSessions(new Map())

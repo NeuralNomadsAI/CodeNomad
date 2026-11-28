@@ -1,4 +1,4 @@
-import { canScrollInDirection } from "../components/virtual-follow-behavior"
+import { canScrollInDirection, markScrollMetricsStale, scrollElementMetrics } from "../components/virtual-follow-behavior"
 
 /** Controls that consume a pointer press: neither middle-button autoscroll nor a selection drag starts on them. */
 export const POINTER_CONTROL_SELECTOR = "a[href],button,input,textarea,select,[contenteditable]:not([contenteditable='false']),[role='button'],[role='textbox']"
@@ -16,14 +16,65 @@ export function scrollAxes(node: HTMLElement) {
   }
 }
 
+/** A nested-scroller walk result, keyed by the event target it started from. */
+interface NestedScrollerProbe {
+  root: HTMLElement
+  direction: "up" | "down"
+  result: HTMLElement | null
+  /** The ancestor chain from the target up to (excluding) `root`, for identity revalidation. */
+  chain: Element[]
+  /** Every chain member the walk consulted, with the geometry that decided the answer. */
+  consulted: { element: HTMLElement; scrollTop: number; scrollHeight: number; clientHeight: number }[]
+}
+
+const nestedScrollerProbes = new WeakMap<Element, NestedScrollerProbe>()
+
+/** A cached probe still stands by its answer while the ancestor chain is the same nodes and no consulted member's geometry moved (measured live, never through the shared per-epoch cache: an unobserved resize — a delayed image shrinking a nested report — must invalidate the answer). */
+function nestedScrollerProbeValid(probe: NestedScrollerProbe, target: Element, root: HTMLElement): boolean {
+  let node: Element | null = target
+  let index = 0
+  while (node && node !== root) {
+    if (probe.chain[index] !== node) return false
+    index += 1
+    node = node.parentElement
+  }
+  if (index !== probe.chain.length) return false
+  for (const { element, scrollTop, scrollHeight, clientHeight } of probe.consulted) {
+    if (!element.isConnected) return false
+    if (element.scrollTop !== scrollTop || element.scrollHeight !== scrollHeight || element.clientHeight !== clientHeight) return false
+  }
+  return true
+}
+
 /** Nested-scroller test for gesture routing: the innermost scroller from `target`
  * up to, excluding, `root` that can still scroll vertically in `direction` consumes
- * the gesture. The transcript's own intent check still walks ancestors separately. */
+ * the gesture. The transcript's own intent check still walks ancestors separately.
+ * The walk is cached per target: a wheel gesture re-validates the chain and the
+ * consulted geometry (through the shared per-frame measurement) instead of
+ * resolving styles and layout for every ancestor on every event. A computed
+ * `overflow` flip on an ancestor without any scroll, resize or observation in
+ * between is out of scope. */
 export function findNestedScroller(root: HTMLElement, target: EventTarget | null, direction: "up" | "down"): HTMLElement | null {
-  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
+  if (!(target instanceof Element)) return null
+  const cached = nestedScrollerProbes.get(target)
+  if (cached && cached.root === root && cached.direction === direction && nestedScrollerProbeValid(cached, target, root)) return cached.result
+  // The walk decides on live geometry: content may have changed since the
+  // last measured epoch without anything observing it.
+  markScrollMetricsStale()
+  const chain: Element[] = []
+  const consulted: NestedScrollerProbe["consulted"] = []
+  for (let node: Element | null = target; node && node !== root; node = node.parentElement) {
+    chain.push(node)
+    if (!(node instanceof HTMLElement)) continue
+    const metrics = scrollElementMetrics(node)
+    consulted.push({ element: node, scrollTop: metrics.offset, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight })
     // The edge test first skips style resolution for most ancestors.
-    if (node instanceof HTMLElement && canScrollInDirection(node, direction) && scrollAxes(node).y) return node
+    if (canScrollInDirection(metrics, direction) && scrollAxes(node).y) {
+      nestedScrollerProbes.set(target, { root, direction, result: node, chain, consulted })
+      return node
+    }
   }
+  nestedScrollerProbes.set(target, { root, direction, result: null, chain, consulted })
   return null
 }
 
@@ -139,7 +190,12 @@ export function attachScrollGestureRouting(root: HTMLElement, onRootWheel?: (eve
     if (middle && event.pointerId === middle.pointerId) stopMiddle()
   }
   const visibility = () => { if (document.hidden) stopMiddle() }
+  // Any scroll under `root` (its own or a nested scroller's; scroll events do
+  // not bubble but still pass capture listeners) may have moved geometry the
+  // shared measurement and the nested-scroller probes cached.
+  const scrolled = () => markScrollMetricsStale()
   root.addEventListener("wheel", wheel, { capture: true, passive: false })
+  root.addEventListener("scroll", scrolled, { capture: true, passive: true })
   root.addEventListener("pointerdown", down, true)
   root.addEventListener("pointermove", move)
   root.addEventListener("pointerup", end)
@@ -150,6 +206,7 @@ export function attachScrollGestureRouting(root: HTMLElement, onRootWheel?: (eve
   return () => {
     stopMiddle()
     root.removeEventListener("wheel", wheel, true)
+    root.removeEventListener("scroll", scrolled, true)
     root.removeEventListener("pointerdown", down, true)
     root.removeEventListener("pointermove", move)
     root.removeEventListener("pointerup", end)

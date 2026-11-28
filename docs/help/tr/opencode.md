@@ -17,8 +17,8 @@ PATH üzerinde önce eski bir OpenCode geliyorsa, sunulan eylem nasıl kurulduğ
 
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
-| Asgari | OpenCode **2.3.0** | Bu CodeNomad sürümü için gereklidir. Önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.3.0** | Doğrulanan hedef; şu anda asgari sürümle aynı. |
+| Asgari | OpenCode **2.4.2** | Bu CodeNomad sürümü için gereklidir. Önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
+| Önerilen | OpenCode **2.4.2** | CodeNomad **1.2.0** için. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
 ## Ana bilgisayar, WSL ve paylaşılan hizmet kapsamı {#execution-host}

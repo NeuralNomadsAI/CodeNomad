@@ -4,25 +4,31 @@ Una Misión reúne un objetivo, una conversación del coordinador, tareas y resu
 
 Si Misiones no está disponible, **Ajustes de OpenCode** abre la recuperación del servicio para un plugin ausente o con errores. **Diagnóstico del servidor** abre el informe de diagnóstico en Configuración → Info cuando el puente local de Misiones del servidor no está disponible.
 
+## Mostrar u ocultar Misiones {#activation}
+
+En **Personalizar panel derecho**, marca **Misiones** para mostrar la pestaña o desmárcala y confirma para ocultarla. El gesto también escribe `codenomad.missions` o `-codenomad.missions` en la configuración global del servidor OpenCode conectado. Las reglas del proyecto pueden prevalecer. Desactivar no elimina ni pausa nada, pero pueden omitirse ejecuciones programadas. Si falla la escritura, la pestaña conserva la visibilidad elegida. **Restablecer** solo cambia la disposición. **Estado → Plugins** omite el aviso para esa regla global exacta; las demás desactivaciones siguen ofreciendo **Reactivar**.
+
 ## Crear una Misión {#create}
 
 Las conexiones remotas usan el mismo formulario y los mismos controles. Usa preferentemente HTTPS para proteger el tráfico de red.
 
 **Crear misión** sustituye el árbol por el formulario hasta crear o cancelar. Una creación confirmada selecciona la misión; una creación rechazada deja el formulario editable.
 
-Pide a un agente en cualquier conversación del proyecto, incluido un subagente o una ejecución programada, que prepare una Misión separada, puntual o programada. Su conversación permanece igual; por defecto se crea una nueva conversación del coordinador. Mantén disponible el backend de CodeNomad responsable. **Iniciar automáticamente** autoriza el primer inicio de esa nueva Misión; la recuperación lee el resultado original. Los agentes también pueden listar, inspeccionar, iniciar, pausar, detener, reanudar, ejecutar ahora, comprobar, editar y eliminar cualquier programación del proyecto, incluidas las creadas en el editor. Se aplican las mismas comprobaciones de revisión y admisión; se conserva la desactivación explícita de la programación. Una acción no confirmada conserva su solicitud original para consultar el estado en modo de solo lectura.
+Pide a un agente en cualquier conversación del proyecto, incluido un subagente o una ejecución programada, que prepare una Misión separada, puntual o programada. Su conversación permanece igual; por defecto se crea una nueva conversación del coordinador. Mantén disponible el backend de CodeNomad responsable. **Iniciar automáticamente** autoriza el primer inicio de esa nueva Misión; la recuperación lee el resultado original. Los agentes también pueden listar, guardar, pausar, reanudar y eliminar las Misiones programadas del proyecto, incluidas las creadas en el editor. Una acción no confirmada conserva su solicitud original para consultar el estado en modo de solo lectura.
 
 ### Configuración {#saved-briefs}
 
 Los agentes pueden consultar todas las Misiones del proyecto, incluidas las tuyas, desde cualquier conversación propia. Las vistas de solo lectura incluyen tareas, resultados, limpieza, ejecuciones programadas y selección de fuentes; consultar nunca inicia ni reintenta trabajo.
 
-También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito, reanudar una edición parcial confirmada con la solicitud original y crear o controlar programaciones diarias.
+También pueden diagnosticar la programación, preparar sus ajustes conservando un OFF explícito y reanudar una edición parcial confirmada con la solicitud original.
 
 **Configuración** carga opcionalmente objetivo, notas, guion, perfiles y sesiones guardados. Su nombre proporciona el título editable. Revisa los campos.
 
 Los agentes pueden leer, guardar, reemplazar o renombrar, eliminar y reparar configuraciones, incluidas las instrucciones de una Misión existente. También pueden cambiar los perfiles y las sesiones predeterminados globalmente o por guion, restaurar la herencia, restablecer preferencias inválidas y cambiar la preferencia de eliminación de conversaciones de tareas. La biblioteca y estas preferencias se aplican a todos los proyectos del perfil de CodeNomad. La profundidad de subagentes del proyecto admite 1–10 o **Heredar**, incluida la reparación de un bloque de configuración vacío. Cada cambio comprueba el último valor leído y conserva las modificaciones humanas posteriores.
 
 **Guardar configuración**, abajo junto a Cancelar y Crear, conserva una configuración reutilizable sin crear ni iniciar una Misión. Programación e inicio automático se eligen aparte. El engranaje abre Preferencias y la biblioteca; eliminar una configuración conserva las misiones y conversaciones.
+
+Para sustituir una configuración guardada, usa su nombre y elige **Reemplazar**. Si varias tienen ese nombre, carga primero la que quieras sustituir. Un nombre nuevo guarda una copia mientras haya espacio en la biblioteca.
 
 ### Objetivo, Título y Notas {#mission-instructions}
 
@@ -58,7 +64,13 @@ La programación basada en calendario requiere agente y modelo explícitos para 
 
 **Iniciar automáticamente** está fuera de Programación y desactivado por defecto. Desactivado crea una Misión en pausa para iniciarla después desde ▶. Activado solicita el inicio tras confirmar la creación, con las comprobaciones habituales y la preparación automática de la programación.
 
+### Mantener activo al coordinador con /goal {#coordinator-goal}
+
+**Mantener activo al coordinador con /goal** está disponible para Misiones puntuales y desactivado por defecto. Activado, al iniciar la Misión se activa `/goal` de OpenCode en el coordinador; pausar y reanudar la Misión pausan y reanudan ese objetivo, y finalizar o detener lo elimina. Si OpenCode se reinicia durante la ejecución, Misiones reanuda automáticamente el objetivo pausado por el reinicio (incluso con CodeNomad cerrado si las automatizaciones de OpenCode están activas), manteniendo intactas las pausas manuales, por bloqueo o por límite de rondas. El estado en vivo y los controles aparecen en el resumen de la Misión.
+
 ## Programación {#daily-schedules}
+
+Una Misión con un horario repetido o un evento sigue siendo una sola fila de la lista: cada lanzamiento sustituye al anterior en la misma conversación de coordinación y espera mientras el anterior siga activo. Su detalle muestra **Lanzar cuando**, **Estado deseado**, la próxima activación o comprobación, **Pasadas iniciadas** y **Ejecuciones anteriores** (los últimos 20 lanzamientos). Con **Iniciar automáticamente** desactivado, se crea en pausa. **Editar la misión seleccionada** vuelve a abrir el formulario de creación, y el siguiente lanzamiento usa lo que guarde. **Eliminar la misión seleccionada…** quita primero su programación. ⏸ de la barra de herramientas la pausa por completo, el lanzamiento en curso y su programación, y ▶ reanuda ambos. ■ detiene el lanzamiento en curso; cuando ya no se ejecuta nada, detiene definitivamente la programación y deja la Misión en la lista.
 
 ### Criterios {#native-scheduling}
 
@@ -68,7 +80,7 @@ El primer criterio es **Una vez, ahora**. **Añadir un criterio** agrega otro. E
 
 Hay una vez ahora, cada N horas, diario, días de semana, día del mes y cron. Se usa la zona guardada; su campo aparece si difiere de la del sistema. Los meses sin el día elegido se omiten. Una vez ahora fija su instante al iniciar y ofrece una sola oportunidad, que una condición puede consumir sin lanzar. Se necesitan OpenCode y el equipo de ejecución disponibles.
 
-Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto. Se conserva un OFF explícito: **Abrir los ajustes de programación**, cuando esté disponible, abre el archivo responsable; **i** muestra el origen o los detalles del entorno.
+Al iniciar o reanudar, la programación se prepara automáticamente en la configuración OpenCode del proyecto.
 
 ### Eventos y combinaciones {#scheduling-conditions}
 
@@ -76,29 +88,27 @@ Elige **Actividad del repositorio → Evento** y los filtros opcionales en la mi
 
 Las comprobaciones usan `gh`, `glab` o `tea` en el host OpenCode, incluso con CodeNomad cerrado; los repositorios públicos permiten acceso anónimo. Las forjas autohospedadas requieren una CLI conectada a ese host. **github.com** ofrece además notificaciones y alertas Dependabot mediante `gh` conectado, con acceso a [notificaciones](https://docs.github.com/en/rest/activity/notifications) o [lectura de alertas](https://docs.github.com/en/rest/dependabot/alerts). Las notificaciones conservan su estado de lectura; las alertas incluyen las corregidas o descartadas. Las notificaciones guardadas con **Repositorio de GitHub** vacío cubren la cuenta. El primer inicio fija la referencia.
 
-Los eventos siguen el éxito de otra programación o Misión, commits locales, mensajes nuevos o archivos explícitos del proyecto. Elige la fuente dentro del criterio. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. La conversación elegida para mensajes nuevos también aporta contexto a la ejecución. Cambiar el tipo de criterio borra su fuente. La edición conserva el contexto de conversación guardado.
+Los eventos siguen commits locales o archivos explícitos del proyecto. Elige la fuente dentro del criterio. La búsqueda ignora mayúsculas y minúsculas, también en letras acentuadas. Durante una búsqueda, usa **Cargar más fuentes** en el selector para continuar, aunque la página ya tenga coincidencias. Cambiar el tipo de criterio borra su fuente.
 
-**o** une horarios vecinos o eventos vecinos. **si** convierte eventos después de horarios en condiciones: alguno debe haber cambiado desde la última pasada exitosa. **si no** convierte horarios posteriores a eventos en respaldo: nada de arriba debe haber lanzado una pasada desde su horario anterior o su activación. Los eventos posteriores condicionan ese respaldo.
+**o** une horarios vecinos o eventos vecinos. **si** convierte eventos después de horarios en condiciones: alguno debe haber cambiado desde la última pasada exitosa.
 
 Los eventos iniciales se comprueban cada 15 minutos. El primer inicio fija la referencia; el éxito la avanza y el fallo la conserva. Las pasadas no se solapan.
 
 ### Contadores e historial {#scheduling-limits}
 
-**Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial.
+**Sesión del coordinador** usa por defecto una **Nueva sesión** por pase. Con un horario o evento, **Sesión existente** permite elegir una conversación raíz del proyecto y de la misma Location de ejecución. Cada pase continúa allí con el agente y modelo configurados, conservando historial, título y permisos. Los controles de la misión también afectan al trabajo existente allí. Cada pase mantiene su propio resultado y diario en el historial. En cada lanzamiento, la conversación pasa al agente, el modelo y el razonamiento del coordinador.
 
-La programación seleccionada muestra estado, próximo despertar o comprobación, pasadas lanzadas/exitosas e historial. Se conservan 30 resultados y los contadores acumulados. **Ejecutar ahora** cuenta al admitirse. Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
+Puedes pedir a un agente que prepare la programación con su conversación raíz actual. Los pases esperan a que la conversación esté inactiva.
 
-En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, también para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
+Una política guardada no representable se conserva hasta sustituirla explícitamente; revisa finales y límites antes de editar.
 
-### Programaciones diarias existentes {#existing-daily-schedules}
+En **Conversaciones seguidas**, usa **Añadir conversación** y elige una conversación, para una Misión inmediata. Antes de iniciar, cambia una selección o quítala con ×.
 
-Los agentes pueden encontrar y controlar estas programaciones desde cualquier conversación del mismo proyecto, incluso en otro worktree.
-
-Conservan controles y zona. Tras reiniciar el servicio requieren **Reanudar** desde el estado interrumpido. Recuperan el último día válido, no todos los perdidos. La entrada seleccionada permite leer resultados.
+Elige **Nuevos commits en una rama local** para seguir una referencia Git local o **Nuevos commits en una rama remota** e introduce el nombre de la rama (por ejemplo, `dev`). La comprobación consulta directamente el repositorio detectado, sin un fetch local. Varios commits entre comprobaciones generan un solo pase.
 
 ## Árbol y resultados {#tracking}
 
-El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas.
+El chevrón despliega tareas; hacer clic selecciona Misión o tarea. Sus acciones quedan en la cabecera. Sin tareas no hay chevrón. El filtro busca en las entradas cargadas. Las Misiones únicas y recurrentes comparten una lista, con la actividad más reciente primero; una ejecución programada en curso va arriba.
 
 El ojo alterna el resumen central y sigue la selección. **Abrir conversación** lleva al coordinador o tarea. El menú ⋯ contiene las acciones disponibles de actualización, interrupción, configuración y edición.
 
@@ -108,9 +118,9 @@ Más entradas y tareas se cargan automáticamente al acercarse al final. Si fall
 
 ### Colores y estados {#status-colours}
 
-La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo pulsante indica trabajo observado. Un símbolo de pausa naranja indica pausa; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
+La bandera muestra la Misión y el chevrón la atención de sus tareas; las recurrentes usan repetición. Rojo pide respuesta y amarillo indica trabajo observado. Un símbolo de pausa naranja indica pausa: nada continúa ni se lanza hasta que la reanude; un triángulo de advertencia naranja, interrupción. Verde indica una Misión, tarea o ejecución correcta pendiente de revisión.
 
-Un icono de acento con una pequeña línea neutra estática debajo significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados, las programaciones detenidas y **Estado sin confirmar** son neutros; consulta el texto de estado.
+Un reloj de arena en el color de acento significa **Esperando ejecución programada**: la próxima activación está confirmada. El acento sigue la paleta. El icono de acento solo indica preparación o una tarea sin iniciar. Los resultados revisados y las programaciones detenidas son neutros; consulta el texto de estado.
 
 Seleccionar o pulsar/barrer iconos verdes confirma resultados; el menú del chevrón ofrece **Marcar como leído**. Para **Ejecución correcta por revisar**, selecciona explícitamente la fila recurrente en la ventana activa o usa **Marcar como leído**. El icono vuelve a espera si la programación sigue activa; en caso contrario, a neutro. Los resultados nuevos que llegan a una fila ya seleccionada permanecen sin leer. Las tareas retiradas conservan historial.
 
@@ -132,15 +142,17 @@ Con CodeNomad funcionando, los agentes pueden buscar conversaciones guardadas de
 
 ## Cierre y reinicios {#lifetime}
 
-Cerrar CodeNomad no detiene trabajo nativo. Las programaciones nativas activadas funcionan con servicio/equipo disponibles; calendarios sanos se reanudan tras reiniciar el servicio. Pausas, paradas e incertidumbres conservan sus bloqueos. Las entradas diarias existentes requieren Reanudar.
+Cerrar CodeNomad no detiene trabajo nativo. Las programaciones nativas activadas funcionan con servicio/equipo disponibles; calendarios sanos se reanudan tras reiniciar el servicio. Pausas, paradas e incertidumbres conservan sus bloqueos.
 
 Algunas acciones de coordinación y recuperación necesitan el servidor CodeNomad.
+
+Una Misión puntual en curso sigue asignando sus tareas y entregando sus informes aunque ninguna ventana de CodeNomad tenga el proyecto abierto. Las variables de entorno y los ajustes de permisos cambiados en CodeNomad vuelven a aplicarse a esas conversaciones cuando el proyecto está abierto.
 
 ## Pausa, parada y acciones no confirmadas {#controls-recovery}
 
 Pausa puntual deja acabar los pasos actuales sin empezar otros; interrumpir solicita interrupción inmediata. Parar es terminal y requiere confirmación. La pausa de programación cierra futuros inicios y pide interrumpir la pasada actual. Los efectos de herramientas pueden continuar.
 
-Conserva la solicitud original no confirmada. Usa la consulta de estado, actualización de recibo o reintento ofrecido, no una acción sustitutiva.
+Conserva la solicitud original no confirmada: mientras la vista de una programación nativa o el editor estén abiertos, CodeNomad la vuelve a leer automáticamente hasta resolverla y reintenta por sí solo únicamente una preparación parcial exactamente registrada. Usa **Comprobar estado** para controles de Misiones puntuales, y **Actualizar mapa de misión** para una creación puntual ordinaria cuando se ofrezcan; no crees una acción sustitutiva.
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 

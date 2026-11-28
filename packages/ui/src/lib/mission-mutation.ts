@@ -21,8 +21,8 @@ export class MissionMutationError extends HttpResponseError {
 
 // Only reviewed redacted codes cross this seam. Never display or log arbitrary
 // upstream error text, and never replay an already dispatched mutation.
-export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
-  const response = await authenticatedFetch(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
+export async function missionMutationRequest(url: string, method: "POST" | "PATCH", input: object, fetcher: typeof fetch = authenticatedFetch): Promise<{ mission: MissionMap; acknowledgement?: "fresh" | "recovered" }> {
+  const response = await fetcher(url, { method, credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })
   if (!response.ok) {
     const operation = method === "POST" ? "create" : "edit"
     const body: unknown = await response.json().catch(() => undefined)
@@ -50,23 +50,6 @@ export function isDefinitiveCreationRejection(error: unknown): boolean {
   if (!(error instanceof MissionMutationError) || error.operation !== "create") return false
   if (error.code) return error.code !== "creation-uncertain" && error.code !== "creation-conflict"
   return [400, 401, 403, 404].includes(error.status)
-}
-
-// Recurring twin of isDefinitiveCreationRejection: the message key of a refusal that
-// proves nothing was sent, or undefined when the request must stay held. The route
-// codes pre-dispatch refusals; codeless 409/5xx, creation-uncertain and transport
-// loss may follow a committed paused schedule.
-export function recurrenceCreationRefusalKey(error: unknown): string | undefined {
-  if (!(error instanceof HttpResponseError)) return undefined
-  const { status, code } = error
-  if (status === 400 && (code === "compare-models-required" || code === "compare-models-identical")) return `missions.compare.${code}`
-  if (status === 400) return "missions.recurrence.invalid"
-  if (status === 503 && code === "recurrence-capacity") return "missions.recurrence.capacity"
-  if (status === 503 && code === "creation-capacity") return "missions.control.creation.capacity"
-  if (status === 503 && code === "creation-unavailable") return "missions.control.creation.unavailable"
-  if (status === 409 && code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"
-  if (!code && [401, 403, 404].includes(status)) return "missions.control.mutation.forbidden"
-  return undefined
 }
 
 export function missionMutationErrorKey(error: unknown): string {

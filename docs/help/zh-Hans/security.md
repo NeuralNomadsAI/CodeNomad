@@ -29,11 +29,13 @@
 
 ## 浏览器会话与撤销 {#sessions}
 
-直接登录会创建不透明的后端内存会话和 `codenomad_session` cookie（或配置的 cookie 名）。cookie 为 `HttpOnly`、`SameSite=Lax`，作用域为 `/`，通过 HTTPS 签发时标记为 `Secure`。它们是浏览器会话 cookie；后端重启使内存会话失效。收到提示时请就地重新认证，而非重发失败的修改操作。
+如果 Tauri 或 Electron 启动的本地服务器未设置密码，应用会在当前窗口续期已到期的会话。草稿会保留，失败的操作不会重试。主动退出或撤销会话后，无法续期。
+
+直接登录会创建不透明的后端内存会话和 `codenomad_session` cookie（或配置的 cookie 名）。cookie 为 `HttpOnly`、`SameSite=Lax`，作用域为 `/`，通过 HTTPS 签发时标记为 `Secure`。Cookie 保留七天，重启浏览器后仍在；后端重启使内存会话失效。收到提示时请就地重新认证，而非重发失败的修改操作。
 
 退出登录会撤销当前直接会话。在主机成功更改密码会撤销该用户的所有直接会话，包括当前会话；请重新登录。会话在 24 小时没有经过认证的请求后，或创建七天后过期。要调整期限，请在启动后端前将 `CODENOMAD_SESSION_IDLE_SECONDS` 和 `CODENOMAD_SESSION_ABSOLUTE_SECONDS` 设为正整数秒。远程控制设备需单独撤销。
 
-LAN 客户端可以登录、退出和使用项目。密码更改、远程控制管理、远程服务器／代理工具和 SideCars 由主机通过回环连接管理。主机的**通过 HTTPS 打开 SideCars**设置会向通过可信 HTTPS 来源登录的浏览器开放 SideCars；仅当这些地址的所有用户都可以使用你的 SideCar 服务时才开启。浏览器修改请求须提供允许的 Origin，缺少 Origin 时则检查 Referer。服务器公布的来源默认允许；如使用 DNS 别名、反向代理或单独托管的界面，请将 `CODENOMAD_ALLOWED_ORIGINS` 设为逗号分隔的精确 HTTP(S) 来源，例如 `https://code.example.test,https://ui.example.test:8443`，然后重启。不要包含路径或通配符。这仅授予浏览器访问权，不授予主机权限。原生 LAN 客户端修改请求也须发送允许的 Origin。通过回环连接的可信代理具有主机权限，须自行实施访问控制。当服务器监听回环地址或所有接口时，在主机上以相同协议和端口通过 `localhost` 打开的界面同样可用。
+LAN 客户端可以登录、退出和使用项目。密码更改、远程控制管理、独立窗口的代理工具和 SideCars 由主机通过回环连接管理。主机的**通过 HTTPS 打开 SideCars**设置会向通过可信 HTTPS 来源登录的浏览器开放 SideCars；仅当这些地址的所有用户都可以使用你的 SideCar 服务时才开启。浏览器修改请求须提供允许的 Origin，缺少 Origin 时则检查 Referer。服务器公布的来源默认允许；如使用 DNS 别名、反向代理或单独托管的界面，请将 `CODENOMAD_ALLOWED_ORIGINS` 设为逗号分隔的精确 HTTP(S) 来源，例如 `https://code.example.test,https://ui.example.test:8443`，然后重启。不要包含路径或通配符。这仅授予浏览器访问权，不授予主机权限。原生 LAN 客户端修改请求也须发送允许的 Origin。通过回环连接的可信代理具有主机权限，须自行实施访问控制。当服务器监听回环地址或所有接口时，在主机上以相同协议和端口通过 `localhost` 打开的界面同样可用。 有关管理服务器和安全输入凭据，请参阅 [保存远程服务器](remote-access.md#saved-servers).
 
 怀疑被入侵时：
 

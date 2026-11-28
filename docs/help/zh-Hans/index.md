@@ -55,7 +55,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- |
 | 项目标签页 / 工作区 / 实例 | CodeNomad 与显式打开的文件夹之间的连接；多个标签页可以使用共享服务。 |
 | 对话 / 会话 | 与其目录关联的原生 OpenCode 历史记录和执行。 |
-| 会话族 | 一个对话及其递归子会话；涉及移动、活动、Yolo 和任务控件。 |
+| 会话族 | 一个对话及其递归子会话；涉及移动、活动 和任务控件。 |
 | 工作树 | 选择用于浏览或放置会话的、归属已确认的仓库检出目录。浏览它不会移动对话。 |
 | Location | OpenCode 按目录划分的原生运行时上下文；关闭项目标签页时 CodeNomad 不会卸载它，其生命周期由 OpenCode 管理。 |
 | CodeNomad 后端 | 提供工作区、Git、认证和客户端连接的服务器。其账户和环境决定后端的文件系统访问权限。 |
@@ -72,7 +72,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 安装或提供工作区服务 | [安装](install.md)、[服务器参考](server.md)、[网络与 TLS](remote-access.md) |
 | 跨检出目录和对话工作 | [项目](projects.md)、[对话](conversations.md)、[文件](files.md) |
 | 查找历史记录或安全清理 | [历史记录](history.md) |
-| 回答原生问题和权限请求 | [权限](permissions.md) |
+| 设置对话权限或回应请求 | [权限模式](permissions.md#conversation-mode)、[问题与权限](permissions.md) |
 | 协调有界任务或计划工作 | [任务](missions.md) |
 | 配置执行和集成 | [OpenCode](opencode.md)、[提供商](providers.md)、[集成](integrations.md) |
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |
@@ -85,8 +85,9 @@ npx @neuralnomads/codenomad --generate-token --launch
 状态面板显示活动会话的提供商用量和原生后台 Shell。对话状态和子会话活动标明正在工作、压缩和等待输入的会话。监控后台 Shell 不同于发送输入框 Shell 请求，也不同于使用单独托管的终端 SideCar。
 
 1. 打开所选对话 Location 的**状态 → 后台 Shell**（未选择对话时则为当前工作区）。
-2. 仅列出明确转入后台且仍在运行的命令，每个命令占一行。悬停可查看 Shell、目录和 PID；**查看输出**图标打开原生输出。
-3. 使用该行的**停止并移除**图标并确认目标。
+2. 明确转入后台且仍在运行的命令各占一行，配有低调的状态指示；长命令会截断显示。点击命令，或将焦点移到命令上并按 Enter 或空格键，即可打开其输出窗口。
+3. 将指针悬停在命令上、通过键盘聚焦或在触摸屏上长按，可查看完整命令和状态，以及可用的文件夹、Shell、PID、退出代码和开始/结束日期。按 Escape 或点击外部区域可关闭详情。
+4. 垃圾桶按钮位于命令框外侧的右边。对于运行中的 Shell，选择**停止并移除**并确认；如果已结束的条目仍在显示，选择**移除**并确认。垃圾桶按钮直接操作 Shell，不会打开其输出。
 
 移除正在运行的 Shell 会停止该进程；关闭其输出窗口则不会。
 

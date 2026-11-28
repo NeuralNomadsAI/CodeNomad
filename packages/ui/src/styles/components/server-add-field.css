@@ -1,0 +1,41 @@
+.server-add-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.server-add-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-inline-start: var(--space-sm);
+  background-color: var(--surface-field);
+  border: 1px solid color-mix(in srgb, var(--border-base) 50%, transparent);
+}
+.browse-menu-body .server-add-field-row { border-width: 1px 0 0; }
+.server-add-field-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.25rem;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+.server-add-field-row:focus-within { outline: 1px solid var(--focus-ring-color); outline-offset: 1px; }
+.server-add-field-error {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-sm);
+  color: var(--status-error-fg);
+  overflow-wrap: anywhere;
+}
+.server-add-field-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0 var(--space-sm) var(--space-xs);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+}

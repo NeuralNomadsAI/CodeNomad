@@ -1,6 +1,7 @@
 import type { RestorableSessionState } from "./client-state-codec"
 import { normalizeRestorableSession } from "./client-state-codec"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { workspaceIdentity } from "./app-session-reconciliation"
+import { parseInstanceKey, projectScope } from "../lib/backend-identity"
 import { normalizeTabViewState, parseLegacySessionPreviews, type RestorableTabPreview } from "./tab-view-state-codec"
 
 /** Stable compact identities shared by saved Mission views, disclosures and acknowledgements. */
@@ -23,6 +24,12 @@ export function readLegacyMissionView(folder: string, read: (key: string) => str
   } catch { /* Ignore malformed saved layout. */ }
 }
 
+/** Normalize the physical folder while preserving its backend's case-sensitive identity. */
+export function legacyProjectIdentity(scope: string): string {
+  const { backendId, workspaceId: folder } = parseInstanceKey(scope)
+  return workspaceIdentity(folder, backendId)
+}
+
 /** Descriptor order owns project-wide adoption; session entries copy to each matching occurrence. */
 export function migrateLegacyTabPreviews(state: RestorableSessionState | null, value: string | null,
   readLayout: (key: string) => string | null = () => null) {
@@ -33,8 +40,8 @@ export function migrateLegacyTabPreviews(state: RestorableSessionState | null, v
   const adoptedMissions = new Set<string>(), missions: Array<{ key: string; source: string }> = []
   const tabs = state.tabs.map(tab => {
     if (tab.kind !== "workspace") return tab
-    const folder = normalizeWorkspacePath(tab.folder)
-    const legacyMission = adoptedMissions.has(folder) ? undefined : readLegacyMissionView(tab.folder, readLayout)
+    const folder = workspaceIdentity(tab.folder, tab.backendId)
+    const legacyMission = adoptedMissions.has(folder) ? undefined : readLegacyMissionView(projectScope(tab), readLayout)
     adoptedMissions.add(folder)
     if (legacyMission) missions.push({ key: legacyMission.key, source: legacyMission.source })
     const previews: Record<string, RestorableTabPreview> = {}
@@ -46,7 +53,7 @@ export function migrateLegacyTabPreviews(state: RestorableSessionState | null, v
           [folder, sessionId] = tuple
         }
       } catch { /* A project-wide key is a plain folder path. */ }
-      if (normalizeWorkspacePath(folder) !== normalizeWorkspacePath(tab.folder)) continue
+      if (legacyProjectIdentity(folder) !== workspaceIdentity(tab.folder, tab.backendId)) continue
       const projectWide = sessionId === undefined
       if (projectWide) {
         if (adoptedProjects.has(key)) continue

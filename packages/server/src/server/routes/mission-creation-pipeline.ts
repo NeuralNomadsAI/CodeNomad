@@ -17,17 +17,21 @@ import type { MissionCreationMetadata } from "../../missions/creation-defaults"
 import { nativeDocumentID } from "../../missions/launch-policy"
 import type { MissionPanelMap } from "../../missions/mission-panel-map"
 import type { MissionPreparationOptions } from "../../missions/preparation-input"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
+import { sessionPermissionTarget } from "./session-permission-mode"
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
   template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
+  coordinatorGoal: z.boolean().optional(),
   watchedConversationIDs: z.array(nativeDocumentID).max(32).refine(ids => new Set(ids).size === ids.length).optional(),
 }).strict()
 
 export type MissionCreationPipelineManager = Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection"
   | "ownsLocation" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath">
+  & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
 
 export class MissionCreationPreparationError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 503, message: string) { super(message) }
@@ -47,6 +51,7 @@ export async function prepareMissionCreation(input: {
   creationDefaults?: MissionCreationMetadata
   startOnCreation?: boolean
   preparationOptions?: MissionPreparationOptions
+  permissionModes?: SessionPermissionModes
 }) {
   const { manager, workspaceID, signal } = input
   const wait = input.wait ?? (<T>(operation: Promise<T>) => operation)
@@ -86,11 +91,15 @@ export async function prepareMissionCreation(input: {
   if (!inventory.data.some(entry => entry.id === CODENOMAD_MISSIONS_RPC_ID && entry.state.status === "active")) {
     throw new MissionCreationPreparationError(503, "Mission plugin unavailable")
   }
+  let supportsRootPermissions = false
   try {
     const capability = await wait(client.rpc(CODENOMAD_MISSIONS_RPC).documentCapabilities({}, { location, ...locationRequestOptions(location), signal }))
-    const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional(),
+    const parsed = z.object({ version: z.literal(1), automaticStart: z.literal(true).optional(), rootPermissions: z.literal(true).optional(),
       agentSchedulePreparation: z.literal(true).optional(), agentScheduleControl: z.literal(true).optional() }).strict().parse(capability)
     if (input.startOnCreation !== undefined && parsed.automaticStart !== true) throw new Error("Automatic start capability unavailable")
+    // The caller will verify the created session as well. An older plugin must
+    // refuse before it could create a root without the requested permissions.
+    supportsRootPermissions = parsed.rootPermissions === true
   } catch { throw new MissionCreationPreparationError(503, "Unified Mission documents unavailable") }
   signal.throwIfAborted(); connection.assertCurrent()
   const locations = [location]
@@ -109,10 +118,16 @@ export async function prepareMissionCreation(input: {
   // Reserved identity seam only: prepared creation emits NO native message.
   // Same derivation as the durable recurrence passage, never a fresh retry ID.
   const creationMessageID = `msg_${stableToken(request.requestId, 28)}`
+  const distro = manager.getServiceWslDistro?.(workspaceID)
+  const permissions = request.coordinatorSessionId ? undefined : await wait(input.permissionModes?.newRootRules({
+    client, location, distro, signal,
+  }) ?? Promise.resolve(undefined))
+  if (permissions && !supportsRootPermissions) throw new MissionCreationPreparationError(503, "Mission root permissions unavailable")
   const nativeInput = {
     prepared: true, requestID: request.requestId, objective: request.objective,
     ...(request.title === undefined ? {} : { title: request.title }),
     ...(request.notes === undefined ? {} : { notes: request.notes }), template: request.template, taskMode: request.taskMode ?? "native",
+    ...(request.coordinatorGoal ? { coordinatorGoal: true } : {}),
     ...(request.profiles === undefined ? {} : { profiles: request.profiles }),
     ...(request.watchedConversationIDs === undefined ? {} : { watchedConversationIDs: request.watchedConversationIDs }),
     ...(input.creationDefaults === undefined ? {} : { creationDefaults: input.creationDefaults }),
@@ -121,6 +136,7 @@ export async function prepareMissionCreation(input: {
     ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
     ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
     ...(input.preparationOptions === undefined ? {} : { preparationOptions: input.preparationOptions }),
+    ...(permissions ? { permissions } : {}),
   }
   const admission = await admitMissionCreationLocations(manager, input.fence, workspaceID, connection, locations, signal, {
     key: `human:${projectID}:${missionID}`, workspaceID, projectID, missionID, sessionID, requestDigest: missionCreationDigest(nativeInput),
@@ -135,6 +151,22 @@ export async function prepareMissionCreation(input: {
     if (disposed) throw new Error("Mission creation preparation was released")
     await admission.assertCurrent()
   }
+  const confirmPermissions = async (id: string, recovering = false) => {
+    if (!permissions) return
+    const signal = AbortSignal.timeout(10_000)
+    const session = await client.session.get({ sessionID: id }, { signal })
+    if (session.id !== id || session.projectID !== projectID || !sameLocation(session.location, location)) {
+      throw new MissionCreationHoldError("creation-uncertain")
+    }
+    await admission.assertReceiptCurrent()
+    const modes = input.permissionModes!
+    if (!recovering) {
+      modes.confirmNewRoot(session, distro, permissions, [])
+      return
+    }
+    const current = () => { signal.throwIfAborted(); connection.assertCurrent() }
+    await modes.recoverNewRoot(sessionPermissionTarget(session, { client, distro, signal, current }), permissions)
+  }
   return {
     missionID, sessionID, creationMessageID, request: structuredClone(nativeInput), dispose,
     async readReceipt(): Promise<MissionPanelMap | undefined> {
@@ -145,7 +177,11 @@ export async function prepareMissionCreation(input: {
       await admission.assertReceiptCurrent()
       if (result.requestID !== request.requestId || result.projectID !== projectID || result.mission?.id !== missionID
         || result.mission.projectID !== projectID) return
+      if (!isCoordinator(result.mission.coordinatorSessionId)) return
+      const recoverPermissions = admission.uncertain
       admission.reconcile()
+      // The durable receipt settles creation; current session rules only establish block ownership.
+      if (recoverPermissions) await confirmPermissions(result.mission.coordinatorSessionId, true).catch(() => {})
       return result.mission
     },
     /** False until the native create is attempted: any earlier failure proves no effect. */
@@ -187,6 +223,7 @@ export async function prepareMissionCreation(input: {
           || result.mission.preparedBy?.coordinatorSessionId !== input.preparedBy?.coordinatorSessionID
           || !sameMissionProfiles(result.mission.profiles, nativeInput.profiles)
           || (result.mission.taskMode ?? "native") !== nativeInput.taskMode) throw new MissionCreationHoldError("creation-uncertain")
+        if (result.acknowledgement === "fresh") await confirmPermissions(result.mission.coordinatorSessionId)
         admission.settled()
         await assertCurrent()
         return result

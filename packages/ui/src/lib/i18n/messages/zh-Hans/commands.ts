@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "close, stop, 关闭, 停止",
 
   "commands.scrubSessions.label": "清理会话",
-  "commands.scrubSessions.description": "移除空会话、已完成主任务的子智能体会话，以及多余的分叉会话。",
+  "commands.scrubSessions.description": "移除已确认是空白且不活跃的会话。",
   "commands.scrubSessions.keywords": "cleanup, blank, empty, sessions, remove, delete, scrub, 清理, 空白, 会话, 删除, 整理",
 
   "commands.instanceInfo.label": "实例信息",

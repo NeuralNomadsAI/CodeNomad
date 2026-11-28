@@ -9,7 +9,7 @@ import { useI18n } from "../lib/i18n"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
-import { collectTextFromPart, foldTimelineSegments, getToolTitle, parseTimelineSegmentId, survivingTimelineSegmentId, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
+import { collectTextFromPart, foldTimelineSegments, getToolTitle, parseTimelineSegmentId, survivingTimelineSegmentId, timelineSegmentLabel, timelineSegmentTooltip, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
 
 export type { TimelineSegment, TimelineSegmentType }
 
@@ -38,7 +38,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const { t } = useI18n()
   const previewId = createUniqueId()
   const store = () => messageStoreBus.getOrCreate(props.instanceId)
-  const [hoveredSegment, setHoveredSegment] = createSignal<TimelineSegment | null>(null)
+  const segmentsById = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment])))
+  const [hoverPreview, setHoverPreview] = createSignal<{ segment: TimelineSegment; rect: DOMRect }>()
+  const hoveredSegment = () => hoverPreview()?.segment
   const [visiblePreviewSegments, setVisiblePreviewSegments] = createSignal<TimelineSegment[]>([])
   const previews = createTimelinePreviews({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
     active: () => props.isActive !== false,
@@ -62,12 +64,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       if (text) return text
     }
     // Excerpts carry a message's text and tools, not its thinking.
-    if (segment.type === "reasoning") return segment.tooltip
+    if (segment.type === "reasoning") return timelineSegmentTooltip(segment, record, t)
     const preview = previews(segment.messageId)
-    return (segment.type === "tool" ? preview?.tools : preview?.text) || segment.tooltip || ""
+    return (segment.type === "tool" ? preview?.tools : preview?.text) || timelineSegmentTooltip(segment, record, t)
   })
   const [tooltipCoords, setTooltipCoords] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 })
-  const [hoverAnchorRect, setHoverAnchorRect] = createSignal<{ top: number; left: number; width: number; height: number } | null>(null)
   const [tooltipSize, setTooltipSize] = createSignal<{ width: number; height: number }>({ width: 360, height: 120 })
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
@@ -89,8 +90,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const clearHoverPreview = () => {
     clearHoverTimer()
     clearCloseTimer()
-    setHoveredSegment(null)
-    setHoverAnchorRect(null)
+    setHoverPreview(undefined)
   }
 
   const scheduleClose = () => {
@@ -112,9 +112,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     hoverTimer = window.setTimeout(() => {
       hoverTimer = null
       if (!target.isConnected) return
-      const rect = target.getBoundingClientRect()
-      setHoverAnchorRect({ top: rect.top, left: rect.left, width: rect.width, height: rect.height })
-      setHoveredSegment(segment)
+      setHoverPreview({ segment, rect: target.getBoundingClientRect() })
     }, 200)
   }
 
@@ -124,9 +122,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   createEffect(() => {
     if (typeof window === "undefined") return
-    const anchor = hoverAnchorRect()
-    const segment = hoveredSegment()
-    if (!anchor || !segment) return
+    const anchor = hoverPreview()?.rect
+    if (!anchor) return
     const { width, height } = tooltipSize()
     const verticalGap = 16
     const horizontalGap = 16
@@ -225,7 +222,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   // A selected marker that a reveal removed is represented by its surviving
   // run marker, a folded one by its row's marker, and one whose content is
   // hidden (or gone) by its message's first visible marker.
-  const messageBySegmentId = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment.messageId])))
   const firstVisibleByMessage = createMemo(() => {
     const result = new Map<string, string>()
     for (const segment of visibleSegments()) if (!result.has(segment.messageId)) result.set(segment.messageId, segment.id)
@@ -234,11 +230,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const activeVisibleId = createMemo(() => {
     const requested = props.activeSegmentId
     if (!requested) return null
-    const known = messageBySegmentId()
+    const known = segmentsById()
     const surviving = survivingTimelineSegmentId(requested, id => known.has(id))
     const id = fold().representative.get(surviving) ?? surviving
     if (segmentIndexById().has(id)) return id
-    const messageId = known.get(id) ?? parseTimelineSegmentId(id)?.messageId
+    const messageId = known.get(id)?.messageId ?? parseTimelineSegmentId(id)?.messageId
     return messageId === undefined ? null : firstVisibleByMessage().get(messageId) ?? null
   })
   // One uniform gap between visible markers, none before the first. V2 records
@@ -266,12 +262,19 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       >
         <TimelineVirtualList register={setVirtualizerHandle} onVisibleItems={setVisiblePreviewSegments} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
+            // Ordinal IDs can be reused after an edit. Only this mounted marker owns its preview.
+            onCleanup(() => setHoverPreview(current => current?.segment === segment ? undefined : current))
             const isActive = () => activeVisibleId() === segment.id
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
             const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
             const state = () => segmentStateFor(segment.id)
             const hasActivePermission = () => state().hasActivePermission
             const isHidden = () => state().hidden
+            const label = () => timelineSegmentLabel(segment, t)
+            const accessibleLabel = createMemo(() => {
+              const exact = segment.partIds?.length || segment.toolPartIds?.length || segment.partId
+              return timelineSegmentTooltip(segment, exact ? store().getMessage(segment.messageId) : undefined, t) || label()
+            })
 
             const shortLabelContent = () => {
               if (segment.type === "tool") {
@@ -296,8 +299,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                     data-variant={segment.variant}
                   class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""}`}
                   aria-current={isActive() ? "true" : undefined}
-                  aria-label={segment.tooltip || segment.label}
-                   aria-describedby={hoveredSegment()?.id === segment.id && previewText() ? previewId : undefined}
+                   aria-label={accessibleLabel()}
+                   aria-describedby={hoveredSegment() === segment && previewText() ? previewId : undefined}
                   data-message-id={segment.messageId}
                   aria-hidden={isHidden() ? "true" : undefined}
                     onClick={() => { clearHoverPreview(); props.onSegmentClick?.(segment) }}
@@ -306,7 +309,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                   onFocus={(event) => handleMouseEnter(segment, event)}
                   onBlur={handleMouseLeave}
                 >
-                  <span class="message-timeline-label message-timeline-label-full">{segment.label}</span>
+                   <span class="message-timeline-label message-timeline-label-full">{label()}</span>
                   <span class="message-timeline-label message-timeline-label-short">{shortLabelContent()}</span>
                 </button>
               </div>

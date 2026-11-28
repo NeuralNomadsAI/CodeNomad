@@ -91,14 +91,24 @@ function harness(): {
   fixtures.push(h)
   return h
 }
-function compact(h: ReturnType<typeof harness>, phase: "started" | "delta" | "ended" | "failed", sessionID = "unknown-child", seq = ++h.clock) {
+function compact(h: ReturnType<typeof harness>, phase: "started" | "delta" | "ended" | "failed", sessionID = "unknown-child", seq = ++h.clock, created = Date.now() + seq) {
   sseManager["handleEvent"](h.id, {
-    id: `event-${seq}`, created: seq, type: `session.compaction.${phase}`,
+    id: `event-${seq}`, created, type: `session.compaction.${phase}`,
     ...(phase === "delta" ? {} : { durable: { aggregateID: sessionID, seq, version: 1 } }),
     location: { directory: h.directory },
     data: { sessionID, reason: "auto", text: "summary", error: { _tag: "UnknownError", message: "fixture" } },
   } as any)
 }
+
+test("a compaction hold ages out instead of deferring discovery forever", async () => {
+  const h = harness()
+  // A replayed or long-unended compaction start must not defer every later
+  // scan: the backend's own loaded-only deferral stays the authoritative fence.
+  compact(h, "started", "unknown-child", ++h.clock, Date.now() - 11 * 60_000)
+  await syncPendingRequests(h.id)
+  assert.ok(brokerReads > 0, "an aged-out hold must not defer the scan")
+  assert.equal(incompletePendingRecovery().has(h.id), false, "the scan completed authoritatively")
+})
 async function history(h: ReturnType<typeof harness>) {
   serverApi.fetchWorktrees = async () => ({ worktrees: Array.from({ length: 100 }, (_, i) => ({
     slug: `tree-${i}`, directory: `${h.directory}/tree-${i}`, kind: "worktree" as const,

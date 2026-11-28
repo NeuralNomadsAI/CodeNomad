@@ -484,6 +484,7 @@ fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> 
             .map(|name| target(&roots.electron_base, name, false)),
     );
     planned.push(target(&shared_state, "client-state.json", false));
+    planned.push(target(&shared_state, "workspace-file-drafts.json", false));
     planned.push(target(&shared_state, "partitions", true));
     planned.push(target(&roots.home_client_state, "client-state.json", false));
     planned.extend(

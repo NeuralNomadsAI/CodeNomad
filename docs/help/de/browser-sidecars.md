@@ -8,17 +8,35 @@ Iframe-Vorschauen und SideCars verweigern Verbindungen zu den eigenen Listener-A
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
 3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie zum Fortsetzen im selben Tab und in derselben Unterhaltung erneut.
 
+Service Worker bleiben in entfernten Vorschauen deaktiviert.
+
 Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn in der Web-Vorschau dieser Sitzung, auf jedem Client mit verfügbarer Vorschau. Über Remote Control, wenn der Host Web-Vorschauen deaktiviert hält, oder auf einem Client ohne verfügbare Vorschau behalten solche Links ihr normales Browser-Verhalten. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet den Link stattdessen im Browser.
 
-Jede Sitzung hat eine Vorschau im Fenster. Doppelte Registerkarten wählen unabhängig zwischen Chat und derselben aktiven Vorschau mit gemeinsamer Seite, URL, Verlauf und Viewport-Vorlage. Die Schließen-Schaltfläche bringt nur ihre Registerkarte zum Chat zurück. Wechsel zwischen Registerkarten, Unterhaltungen, Projekten oder Info erhält das Dokument; beim Schließen eines Duplikats bleibt es erhalten, solange eine weitere Instanz der Sitzung geöffnet ist. Schließen der letzten Instanz oder des Fensters sowie Renderer-Neustart beendet das aktive Dokument.
+Die Seite der nativen Vorschau bleibt erhalten, wenn Sie zum Chat zurückkehren oder sie im selben Fenster verschieben.
 
 Jede Registerkarte speichert ihre Chat-/Vorschauwahl; die Sitzung speichert gemeinsame URL, Viewport-Vorlage und Verlauf. Gespeicherte Seiten laden erst beim ausdrücklichen erneuten Öffnen des Sitzungsbrowsers. Gespeichert werden URLs und ein Zeiger; aktive Formulare, DOM, POST-Inhalte und JavaScript-Speicher enden mit dem Dokument. Der Verlauf ist auf 32 URLs je Sitzung und ein gemeinsames Fensterbudget begrenzt; ältere Einträge können gekürzt werden. Eine wiederhergestellte URL kann neu geladen werden.
 
+Remote-Vorschauen nutzen den Projektserver und zeigen die Anwendungs-URL. Schließen der Vorschau oder des Tabs, Trennen des Servers oder Beenden beendet die Live-Seite. Beim erneuten Öffnen werden Adresse und Verlauf geladen, ungespeicherte Eingaben gehen verloren. Halten Sie interne Ladeadressen privat.
+
+Native entfernte Vorschauen unterdrücken Kontextmenüs, Zwischenablageexport, Link-Ziehen, Drucken, Pop-ups, Downloads, Seitendialoge und Berechtigungsabfragen, damit interne Ladeadressen privat bleiben. Speichern Sie die Arbeit der Seite vor dem Schließen.
+
+Die Vorschau-Bedienelemente erscheinen, sobald der Host und der Server des entfernten Projekts die Verfügbarkeit der Vorschau bestätigen.
+
+Für die Fernsteuerung sind **Web-Vorschauen** unter **Einstellungen → Remote-Zugriff → Fernsteuerung** auf dem Host standardmäßig eingeschaltet. Das Ausschalten beendet Vorschauen und ihre WebSockets; nach dem Neuladen wird **Web-Vorschau öffnen** ausgeblendet. Beim Abmelden oder Widerrufen eines gekoppelten Geräts enden dessen Vorschauen und WebSocket-Verbindungen.
+
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
+
+Unter Electron und Tauri für Windows startet der automatisierte Neustart (`codenomad.act`, `restart`) das geprüfte Profil mit derselben Konfiguration und demselben Build neu. Wird das ursprüngliche Fenster wiederhergestellt, wird es erneut geprüft; andernfalls meldet die Automatisierung das fehlende Fenster und prüft kein anderes. Eine erfolgreiche Prüfung während der Wiederverbindung hat Vorrang.
+
+Wird der Neustart abgebrochen, listen Sie die offenen Fenster mit `codenomad.inspect` und `targets: true` auf und prüfen Sie das gewünschte Fenster anhand seines `target`.
 
 Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte/Sitzungen innerhalb derselben Desktop-Engine und desselben Profil-/Konfigurationsbereichs, getrennt vom vertrauenswürdigen CodeNomad-Renderer. Abmelden von einer Website in einer Vorschau betrifft andere Vorschauen desselben Speichers. Dokumente, Formulare, Sitzungsspeicher, Navigationsverläufe und Automatisierungszuordnungen gehören jeweils zur Sitzung.
 
-Ein Agent öffnet den gemeinsamen Sitzungsbrowser in einer zugehörigen Registerkarte, möglichst der aktiven. Die gewählte Registerkarte bleibt während des Öffnens fest; ihr Schließen bricht das Öffnen ab. Seitenaktionen zielen auf die sichtbare native Vorschau der Sitzung; ausgeblendete Vorschauen bleiben ausgeschlossen.
+Jede Sitzung hat eine native Vorschau. Zeigt eine doppelte Registerkarte **Vorschau in einer anderen Registerkarte geöffnet**, wählen Sie **Zur Registerkarte**, um dorthin zu wechseln, oder **Hier öffnen**, um die Vorschau im selben Fenster zu verschieben. Die bisherige Registerkarte zeigt dann dieselbe Meldung. Nach dem Schließen der Registerkarte mit der Vorschau lässt sie sich in einer anderen öffnen.
+
+Solange ein Desktop-Fenster eine Unterhaltung zeigt, können ihre Agenten deren Vorschau mit den Browser-Werkzeugen von OpenCode steuern (OpenCode 2.4 oder neuer); Seitenskripte auszuführen wird abgelehnt, und in der Tauri-App unter macOS und Linux können sie nicht zurück, vor oder neu laden. In Electron und der Windows-Tauri-App können sie außerdem Konsolenmeldungen und Netzwerkanfragen der Vorschau lesen; sie sehen Header und Textinhalte von Anfragen und Antworten, solange die Vorschau sie noch vorhält, außer den Werten der Cookie- und Autorisierungs-Header. Der Agent öffnet die Vorschau in der Registerkarte, der sie gehört, oder sonst in der zuletzt für die Sitzung verwendeten Registerkarte. Seitenaktionen gelten für die sichtbare native Vorschau. Seiten laden wie in der sichtbaren Vorschau über das Netzwerk dieses Computers; `localhost` ist also dieser Computer, auch wenn OpenCode in WSL läuft.
+
+Vor einer Aktion oder Aufnahme erstellt der Agent einen Snapshot der Vorschau. Ändert sich die Vorschau, bricht der Befehl ab, statt eine andere Vorschau zu verwenden.
 
 | Client | Vorschauimplementierung | Agenten-Browser-Automatisierung | Mobilvorlagen |
 | --- | --- | --- | --- |
@@ -58,7 +76,9 @@ Unter Electron und Windows-Tauri setzen Mobilvorlagen Android-/Chromium-Identit�
 1. Starten Sie das Webwerkzeug separat auf dem CodeNomad-Backend-Host, lauschend auf `127.0.0.1:<port>`.
 2. Öffnen Sie **Einstellungen → SideCars**. Geben Sie **Name** und **Port** ein; prüfen Sie den abgeleiteten **Basispfad** (`/sidecars/<id>`).
 3. Setzen Sie **Protokoll** passend zum Upstream-Dienst und wählen Sie **Präfix-Modus**.
-4. Wählen Sie **SideCar hinzufügen**, dann **SideCar öffnen** auf der Startseite, um dessen Tab zu öffnen.
+4. Wählen Sie **SideCar hinzufügen** und öffnen Sie ihn über **Durchsuchen**. [Projekt-Tabs](projects.md#open-project).
+
+Ein laufender SideCar bleibt nach dem Schließen seines Tabs in der Liste der letzten Tabs.
 
 | Auswahl | Exakte Wirkung |
 | --- | --- |
@@ -73,7 +93,7 @@ Prüfen Sie bei Nichterreichbarkeit Prozess und Port auf dem Backend. Lädt HTML
 
 Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben.
 
-SideCar-Inhalte (`/sidecars/`) und SideCar-WebSockets erfordern eine Loopback-Verbindung auf dem Host. Um sie auch von anderen Geräten zu öffnen, aktivieren Sie auf dem Host **SideCars über HTTPS öffnen** unter **Einstellungen → SideCars**: Browser, die über die HTTPS-Adressen dieses Servers oder einen HTTPS-Origin aus `CODENOMAD_ALLOWED_ORIGINS` angemeldet sind, etwa hinter einem TLS-Reverse-Proxy, können dann SideCars öffnen. Einfaches HTTP, `localhost`-Adressen und die Fernsteuerung bleiben dem Host vorbehalten. Die Registrierung über `/api/sidecars` ist für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar; Web-Vorschauen der [Fernsteuerung](remote-control.md#remote-surface) bleiben mit ihrem Berechtigungstoken verfügbar, solange sie aktiviert sind. Anforderungen für den Direktzugriff stehen unter [Aktualisieren](remote-access.md#upgrading).
+SideCar-Inhalte (`/sidecars/`) und SideCar-WebSockets erfordern eine Loopback-Verbindung auf dem Host. Um sie auch von anderen Geräten zu öffnen, aktivieren Sie auf dem Host **SideCars über HTTPS öffnen** unter **Einstellungen → SideCars**: Browser, die über die HTTPS-Adressen dieses Servers oder einen HTTPS-Origin aus `CODENOMAD_ALLOWED_ORIGINS` angemeldet sind, etwa hinter einem TLS-Reverse-Proxy, können dann SideCars öffnen. Einfaches HTTP, `localhost`-Adressen und die Fernsteuerung bleiben dem Host vorbehalten. Die Registrierung über `/api/sidecars` ist für gekoppelte Geräte und authentifizierte direkte LAN-Clients verfügbar. Inhalte aktiver Vorschauen (`/previews/`) sind mit einem gültigen Berechtigungstoken über direkten LAN-Zugriff verfügbar; Web-Vorschauen der [Fernsteuerung](remote-control.md#remote-surface) bleiben mit ihrem Berechtigungstoken verfügbar, solange sie aktiviert sind. Anforderungen für den Direktzugriff stehen unter [Erlaubte Ursprünge](remote-access.md#upgrading).
 
 ## OpenVSCode-Server-Rezept {#openvscode}
 

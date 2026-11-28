@@ -13,6 +13,10 @@
   flex: 0 0 32px;
 }
 
+.prompt-input-footer .voice-button {
+  border-inline-end: 1px solid var(--border-divider);
+}
+
 .prompt-input-footer .send-button,
 .prompt-input-footer .stop-button {
   appearance: none;
@@ -54,7 +58,8 @@
 }
 
 .prompt-input-footer .send-button,
-.prompt-input-footer .stop-button {
+.prompt-input-footer .stop-button,
+.prompt-input-footer .voice-button {
   height: auto;
   min-height: 28px;
   align-self: stretch;
@@ -80,6 +85,7 @@
 
 .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
 .prompt-input-footer .stop-button,
+.prompt-input-footer .voice-button,
 .prompt-input-footer .send-button {
   width: 28px;
   height: auto;
@@ -97,6 +103,7 @@
   }
   .prompt-input-footer .prompt-actions-menu-trigger.action-overflow-trigger,
   .prompt-input-footer .stop-button,
+  .prompt-input-footer .voice-button,
   .prompt-input-footer .send-button {
     width: var(--touch-target-size);
     height: auto;

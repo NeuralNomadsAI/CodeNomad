@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createEffect, createRoot } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import { createMissionTaskSessions } from "./mission-task-session-reads"
 
@@ -190,6 +191,26 @@ test("activity invalidations without linked conversations never fan out an activ
   assert.equal(state.activeReads, 0)
 })
 
+for (const change of ["connection", "generation"] as const)
+test(`a replacement ${change} reads independently and old cleanup cannot release its flight`, async () => {
+  const gates = [deferred<unknown>(), deferred<unknown>()]
+  let connection = {}, generation = 1, calls = 0
+  const root = { message: { list: () => gates[calls++].promise }, session: {} }
+  const store = createMissionTaskSessions({ connection: () => connection, generation: () => generation,
+    root: () => root as never, warn: () => assert.fail("unexpected native read failure") })
+  const done = { ...mission, tasks: [] }
+  const first = store.demand("inst", done, 1, "preview")
+  if (change === "connection") connection = {}
+  else generation++
+  const second = store.demand("inst", done, 2, "preview")
+  assert.equal(calls, 2, "new ownership never waits for the obsolete native read")
+  gates[0].resolve({ data: [], cursor: {} }); await first
+  const third = store.demand("inst", done, 3, "preview")
+  assert.equal(calls, 2, "old finally preserves the replacement's coalescence lane")
+  gates[1].resolve({ data: [], cursor: {} }); await Promise.all([second, third])
+  assert.equal(calls, 2)
+})
+
 test("releasing the last owner stops a read in flight and drops its queued rerun; another owner keeps it", async () => {
   const { state, store, hold } = harness()
   state.first = [{ type: "user", text: assignment("msn_one", "build") }]
@@ -234,4 +255,115 @@ test("a completed queued rerun registers no owner: releasing the last view still
   gate.resolve(); await next
   assert.equal(store.taskSession("inst", mission, "build"), undefined, "nothing is published without an owner")
   assert.equal(state.activeReads, 0)
+})
+
+test("coordinator message scan stops after the first page once every task is linked", async () => {
+  let pages = 0
+  const root = {
+    message: {
+      list: async ({ cursor }: { sessionID: string; cursor?: string }) => {
+        pages++
+        if (!cursor) {
+          return {
+            data: [{ type: "assistant", content: [{ type: "tool", name: "subagent", state: {
+              input: { prompt: assignment("msn_one", "build") }, metadata: { sessionID: "ses_child" },
+            } }] }],
+            cursor: { next: "page_2" },
+          }
+        }
+        assert.fail("must not fetch older pages once every task is linked")
+      },
+    },
+    session: { list: async () => assert.fail("must not list children once linked"), active: async () => ({}) },
+  }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  await store.demand("inst", mission, 1, "view")
+  assert.equal(pages, 1)
+  assert.equal(store.taskSession("inst", mission, "build"), "ses_child")
+})
+
+const delegation = (key: string, child: string, id?: string) => ({ ...(id ? { id } : {}), type: "assistant", content: [{ type: "tool", name: "subagent", state: {
+  input: { prompt: assignment("msn_one", key) }, metadata: { sessionID: child } } }] })
+const quiet = { list: async () => ({ data: [] }), active: async () => ({}) }
+
+test("a task window loaded later in the same revision resumes the scan on older coordinator pages", async () => {
+  const cursors: Array<string | undefined> = []
+  const root = { session: quiet, message: { list: async ({ cursor }: { cursor?: string }) => {
+    cursors.push(cursor)
+    return cursor ? { data: [delegation("docs", "ses_docs")], cursor: {} } : { data: [delegation("build", "ses_build")], cursor: { next: "older" } }
+  } } }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  await store.demand("inst", mission, 1, "view")
+  assert.deepEqual(cursors, [undefined], "every task of the first window is linked on the newest page")
+  const wider = { ...mission, tasks: [...mission.tasks, { key: "docs", status: "completed" }] } as unknown as MissionMap
+  await store.demand("inst", wider, 2, "view")
+  assert.deepEqual(cursors, [undefined, "older"], "the newest page is not read again")
+  assert.equal(store.taskSession("inst", wider, "docs"), "ses_docs")
+  assert.equal(store.taskSession("inst", wider, "build"), "ses_build")
+})
+
+test("a delegation older than 400 coordinator messages is still linked", async () => {
+  const filler = Array.from({ length: 100 }, () => ({ type: "assistant", content: [] }))
+  let pages = 0
+  const root = { session: quiet, message: { list: async () => ++pages < 5
+    ? { data: filler, cursor: { next: `older_${pages}` } } : { data: [delegation("build", "ses_child")], cursor: {} } } }
+  const done = { ...mission, tasks: [{ key: "build", status: "completed" }] } as unknown as MissionMap
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  await store.demand("inst", done, 1, "view")
+  assert.equal(store.taskSession("inst", done, "build"), "ses_child")
+})
+
+test("a later revision reads only the messages added since, and a newer delegation becomes the task's latest", async () => {
+  let transcript = [delegation("build", "ses_first", "msg_2"), { id: "msg_1", type: "user", text: "go" }]
+  const cursors: Array<string | undefined> = []
+  const root = { session: quiet, message: { list: async ({ cursor }: { cursor?: string }) => {
+    cursors.push(cursor)
+    if (cursor) assert.fail("messages an earlier revision read are not read again")
+    return { data: transcript, cursor: { next: "older" } }
+  } } }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  await store.demand("inst", mission, 1, "view")
+  assert.equal(store.taskSession("inst", mission, "build"), "ses_first")
+  transcript = [delegation("build", "ses_second", "msg_3"), ...transcript]
+  const next = { ...mission, revision: 5 } as unknown as MissionMap
+  await store.demand("inst", next, 2, "view")
+  assert.deepEqual(cursors, [undefined, undefined])
+  assert.equal(store.taskSession("inst", next, "build"), "ses_second")
+  assert.equal(store.sessionIncludes("inst", next, "ses_first"), true, "the earlier revision's link is kept")
+})
+
+test("a kept cursor that no longer reads restarts the scan from the newest message", async () => {
+  let fresh = false
+  const root = { session: quiet, message: { list: async ({ cursor }: { cursor?: string }) => {
+    if (cursor === "stale") throw new Error("invalid cursor")
+    if (cursor) return { data: [delegation("docs", "ses_docs")], cursor: {} }
+    const next = fresh ? "older" : "stale"
+    fresh = true
+    return { data: [delegation("build", "ses_build")], cursor: { next } }
+  } } }
+  const warnings: unknown[] = []
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: (_message, details) => warnings.push(details) })
+  await store.demand("inst", mission, 1, "view")
+  const wider = { ...mission, tasks: [...mission.tasks, { key: "docs", status: "completed" }] } as unknown as MissionMap
+  await store.demand("inst", wider, 2, "view")
+  assert.equal(store.taskSession("inst", wider, "docs"), "ses_docs")
+  assert.deepEqual(warnings, [])
+})
+
+test("views demanding one mission at different pulses never retrigger each other", async () => {
+  const root = { message: { list: async () => ({ data: [], cursor: {} }) }, session: { list: async () => ({ data: [] }), active: async () => ({}) } }
+  const store = createMissionTaskSessions({ connection: () => root, generation: () => 1, root: () => root as never, warn: () => {} })
+  // Nothing to link and no live task: every later demand takes the synchronous path.
+  const settled = { ...mission, tasks: [{ key: "build", status: "completed" }] } as unknown as MissionMap
+  await store.demand("inst", settled, 1, "tree")
+  let runs = 0
+  const demand = (pulse: number, owner: string) => createEffect(() => {
+    if (++runs > 20) throw new Error("a demand retriggered the other view's")
+    void store.demand("inst", settled, pulse, owner)
+  })
+  // A task reader demands without a pulse while the tree follows the activity projection.
+  const dispose = createRoot(dispose => { demand(0, "reader"); demand(2, "tree"); return dispose })
+  await new Promise(resolve => setImmediate(resolve))
+  dispose()
+  assert.equal(runs, 2)
 })

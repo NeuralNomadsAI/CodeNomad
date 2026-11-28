@@ -1,3 +1,4 @@
+use super::diagnostics::preview_error;
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -24,9 +25,7 @@ pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Resu
             let params = CoTaskMemPWSTR::from("{}");
             let callback =
                 CallDevToolsProtocolMethodCompletedHandler::create(Box::new(|result, _| {
-                    if let Err(error) = result {
-                        eprintln!("[browser-close] {error}");
-                    }
+                    report_close_result("complete popup Page.close", result);
                     Ok(())
                 }));
             core.CallDevToolsProtocolMethod(
@@ -35,11 +34,15 @@ pub(super) fn request_close<R: tauri::Runtime>(view: &tauri::Webview<R>) -> Resu
                 &callback,
             )
         })();
-        if let Err(error) = result {
-            eprintln!("[browser-close] {error}");
-        }
+        report_close_result("dispatch popup Page.close", result);
     })
     .map_err(|error| error.to_string())
+}
+
+fn report_close_result(step: &'static str, result: windows_core::Result<()>) {
+    if let Err(error) = result {
+        eprintln!("[browser-close] {}", preview_error(step, error));
+    }
 }
 
 pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<(), String> {
@@ -60,14 +63,17 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
     webview
         .with_webview(move |platform| {
             let result = (|| {
-                let core = unsafe { platform.controller().CoreWebView2() }?;
+                let core = unsafe { platform.controller().CoreWebView2() }
+                    .map_err(|error| preview_error("get WebView2 for protections", error))?;
                 let fullscreen_view = view.clone();
                 let fullscreen_policy = policy.clone();
                 let permission =
                     PermissionRequestedEventHandler::create(Box::new(move |_, args| {
                         if let Some(args) = args {
                             unsafe {
-                                if !policy.current(view.label(), token) {
+                                if !policy.current(view.label(), token)
+                                    || policy.restricted_browser(view.label())
+                                {
                                     args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
                                     return Ok(());
                                 }
@@ -88,9 +94,13 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                         Ok(())
                     }));
                 let mut event_token = 0;
-                unsafe { core.add_PermissionRequested(&permission, &mut event_token)? };
+                unsafe { core.add_PermissionRequested(&permission, &mut event_token) }
+                    .map_err(|error| preview_error("install permission handler", error))?;
                 unsafe {
-                    core.Settings()?.SetIsStatusBarEnabled(true)?;
+                    core.Settings()
+                        .map_err(|error| preview_error("get WebView2 settings", error))?
+                        .SetIsStatusBarEnabled(true)
+                        .map_err(|error| preview_error("enable status bar", error))?;
                 }
                 unsafe {
                     core.add_ContainsFullScreenElementChanged(
@@ -120,16 +130,48 @@ pub(super) fn install<R: tauri::Runtime>(webview: &tauri::Webview<R>) -> Result<
                             }),
                         ),
                         &mut 0,
-                    )?;
+                    )
+                    .map_err(|error| preview_error("install fullscreen handler", error))?;
                 }
-                Ok::<(), webview2_com::Error>(())
+                Ok::<(), String>(())
             })();
-            let _ = sender.send(result.map_err(|error| error.to_string()));
+            let _ = sender.send(result);
         })
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| preview_error("dispatch WebView2 protections", error))?;
     receiver
         .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "Timed out configuring WebView2 browser security".to_string())?
+        .map_err(|error| preview_error("wait for WebView2 protections", error))?
+}
+
+pub(super) fn privacy<R: tauri::Runtime>(
+    view: &tauri::Webview<R>,
+) -> Result<(), String> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Settings3, ICoreWebView2Settings4,
+    };
+    use windows_core::Interface;
+    let (sender, receiver) = mpsc::sync_channel(1);
+    view.with_webview(move |native| {
+        let result = (|| unsafe {
+            let settings = native.controller().CoreWebView2()?.Settings()?;
+            settings.SetIsStatusBarEnabled(false)?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+            settings.SetAreDefaultScriptDialogsEnabled(false)?;
+            settings.SetIsBuiltInErrorPageEnabled(false)?;
+            let autofill = settings.cast::<ICoreWebView2Settings4>()?;
+            autofill.SetIsPasswordAutosaveEnabled(false)?;
+            autofill.SetIsGeneralAutofillEnabled(false)?;
+            settings
+                .cast::<ICoreWebView2Settings3>()?
+                .SetAreBrowserAcceleratorKeysEnabled(false)?;
+            Ok::<(), webview2_com::Error>(())
+        })();
+        let _ = sender.send(result.map_err(|error| error.to_string()));
+    })
+    .map_err(|error| error.to_string())?;
+    receiver
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "Timed out configuring preview privacy")?
 }
 
 fn permission_state(
@@ -149,6 +191,28 @@ fn permission_state(
 mod tests {
     use super::*;
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
+
+    #[test]
+    fn popup_close_failures_retain_both_steps_and_native_hresult() {
+        for step in ["complete popup Page.close", "dispatch popup Page.close"] {
+            let error =
+                windows_core::Error::from_hresult(windows_core::HRESULT(0x80070057u32 as i32));
+            let expected = format!("browser preview: {step}: {error}");
+            report_close_result(step, Err(error));
+            assert!(expected.contains("0x80070057"));
+            assert!(super::super::diagnostics::logs()
+                .iter()
+                .any(|log| log["level"] == "error" && log["text"] == expected));
+        }
+        report_close_result("successful popup Page.close", Ok(()));
+        assert!(!super::super::diagnostics::logs()
+            .iter()
+            .any(|log| log["text"]
+                .as_str()
+                .unwrap()
+                .contains("successful popup Page.close")));
+    }
+
     #[test]
     fn only_classified_non_forbidden_permissions_reach_browser_consent() {
         for kind in -1..=30 {

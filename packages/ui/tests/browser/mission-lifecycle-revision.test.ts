@@ -11,6 +11,7 @@ import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { missionDetail, missionMenuItem, missionMenuItemState, missionRefresh, missionToolbar, missionToolbarAction, selectMission } from "./mission-actions"
 import { panelMissions } from "./mission-content-fixture"
+import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 
 let browser: Browser, server: ViteDevServer, url: string
 before(async () => {
@@ -187,9 +188,6 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
       if (route.request().method() === "GET") {
         reads++
-        const path = new URL(route.request().url()).pathname
-        if (path.endsWith("/scheduled")) return route.fulfill({ json: { version: 1, projectID: "fixture", schedules: [] } })
-        if (path.endsWith("/schedule")) return route.fulfill({ json: { document: null, pending: false } })
         return route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), mission("two")]), generatedAt: reads, discardedEvents: 0 } })
       }
       calls.push(controlInput(route)); submitted(); await held
@@ -199,10 +197,7 @@ test("real RightPanel ignores late rejection after row disposal in a newly selec
     await pause(page).click(); await sent
     // Unmounting the panel disposes the dispatching toolbar; then another Mission is selected.
     await fixture(page, "mount", false); await missionDetail(page).waitFor({ state: "detached" }); await fixture(page, "mount", true)
-    // Complete selection's deferred list/point read before measuring the old control reply.
-    const selectionRead = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/two/schedule"))
     await selectMission(page, "Lifecycle two")
-    assert.equal(await (await selectionRead).finished(), null)
     await page.waitForFunction(() => (window as any).missionVisibility.state().status === "ready")
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
@@ -298,12 +293,13 @@ for (const state of ["running", "form"] as const) test(`Pause lets ${state} work
     // Interrupt now lives in the selection's overflow menu, disabled while it does not apply.
     const interrupt = () => missionMenuItemState(page, "interrupt")
     await observed.promise
-    // The POST has returned, but its status read is still held.
+    // The header can publish before the directory reconciliation finishes: this is
+    // still the acknowledged operation's reconciliation state.
     assert.equal((await interrupt()).enabled, false)
     // Command feedback is announced (visually hidden, here in a leaf's folded detail) and joins
     // the primary button's tooltip.
     const status = (text: string) => page.getByRole("status", { includeHidden: true }).filter({ hasText: text })
-    assert.equal(await status("Checking action status…").count(), 1)
+    assert.equal(await status(en["missions.control.run.checking"]).count(), 1)
     release.resolve()
     await status("Pausing: the steps in progress are finishing.").waitFor({ state: "attached" })
     assert.equal(await status("Pausing: the steps in progress are finishing.").count(), 1)

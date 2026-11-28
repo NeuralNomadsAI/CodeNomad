@@ -1,165 +1,203 @@
-import { createEffect, createSignal, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 import { showAlertDialog } from "../../stores/alerts"
-import { loadSpeechCapabilities, speechCapabilities } from "../../stores/speech"
-import { serverApi } from "../../lib/api-client"
+import { loadSpeechCapabilities, speechCapabilities, speechCapabilitiesError } from "../../stores/speech"
+import { onInstanceLifecycleAuthority } from "../../stores/instance-lifecycle-authority"
+import { promptTranscript, setPromptTranscript } from "../../stores/prompt-transcripts"
 import { useI18n } from "../../lib/i18n"
-import { isElectronHost } from "../../lib/runtime-env"
-import { blobToBase64, createMediaRecorder, stopTracks } from "../../lib/audio-utils"
-import { createRecordingController, type RecordingState } from "./recording-controller"
+import { microphoneUse } from "../../lib/microphone-lease"
+import { apiCaptureAvailable, createApiRecordingController } from "./api-recording-controller"
+import { type RecordingState, type VoiceInputController, type VoiceInputEngine } from "./recording-controller"
+import { useRemoteDictation } from "./useRemoteDictation"
+import { useDeviceDictation } from "./useDeviceDictation"
 
 interface UsePromptVoiceInputOptions {
   prompt: Accessor<string>
+  draftRevision: Accessor<number>
   setPrompt: (value: string) => void
   getTextarea: () => HTMLTextAreaElement | null
+  instanceId: Accessor<string>
+  sessionId: Accessor<string>
+  directory: Accessor<string>
+  captureOwner: () => () => boolean
+  active: Accessor<boolean>
   enabled: Accessor<boolean>
   disabled: Accessor<boolean>
+  sending: Accessor<boolean>
+  canInsertTranscript: Accessor<boolean>
 }
 
-export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
-  const { t } = useI18n()
-  const [state, setState] = createSignal<RecordingState>("idle")
-  const [elapsedMs, setElapsedMs] = createSignal(0)
+type TextSelection = Pick<HTMLTextAreaElement, "selectionStart" | "selectionEnd" | "selectionDirection">
+const selection = ({ selectionStart, selectionEnd, selectionDirection }: HTMLTextAreaElement): TextSelection =>
+  ({ selectionStart, selectionEnd, selectionDirection })
+const sameSelection = (field: HTMLTextAreaElement, captured: TextSelection) =>
+  field.selectionStart === captured.selectionStart && field.selectionEnd === captured.selectionEnd
+  && field.selectionDirection === captured.selectionDirection
 
-  const controller = createRecordingController(
-    {
-      isElectron: () => isElectronHost(),
-      requestMicAccess: async () =>
-        (window as Window & { electronAPI?: ElectronAPI }).electronAPI?.requestMicrophoneAccess?.(),
-      getUserMedia: async () => navigator.mediaDevices.getUserMedia({ audio: true }),
-      setupRecorder: (stream, handlers) => {
-        const recorder = createMediaRecorder(stream as MediaStream)
-        let stopped = false
-        recorder.addEventListener("dataavailable", (event) => {
-          if (event.data.size > 0) handlers.onDataAvailable(event.data)
-        })
-        recorder.addEventListener("stop", () => handlers.onStop())
-        return {
-          start: () => recorder.start(),
-          stop: () => {
-            if (!stopped) {
-              stopped = true
-              if (recorder.state === "recording") {
-                recorder.stop()
-              }
-            }
-          },
-          mimeType: recorder.mimeType,
-        }
-      },
-      stopTracks: (stream) => stopTracks(stream as MediaStream | null),
-      blobToBase64,
-      transcribe: (input) => serverApi.transcribeAudio(input),
-      setInterval: (fn, ms) => window.setInterval(fn, ms),
-      clearInterval: (id) => {
-        if (id !== undefined) window.clearInterval(id)
-      },
+export function usePromptVoiceInput(options: UsePromptVoiceInputOptions) {
+  const { t, locale } = useI18n()
+  const [state, setState] = createSignal<RecordingState>("idle")
+  const transcript = () => {
+    if (!options.active()) return
+    const saved = promptTranscript(options.instanceId(), options.sessionId())
+    if (saved?.directory === options.directory() && saved.owner()) return saved.text
+  }
+  const discardTranscript = () => setPromptTranscript(options.instanceId(), options.sessionId(), undefined)
+  type ActiveCapture = { controller?: VoiceInputController; current: () => boolean; selectionChanged: () => void; restoreFocus?: boolean }
+  const [activeCapture, setActiveCapture] = createSignal<ActiveCapture>()
+  let composing = false
+
+  const deviceDictation = useDeviceDictation(locale, options.enabled)
+  const remoteDictation = useRemoteDictation(locale, options.enabled)
+  const route = remoteDictation?.route ?? deviceDictation?.route
+  const authorizeApi = remoteDictation?.authorizeApi ?? deviceDictation?.authorizeApi
+  const apiEngine: VoiceInputEngine = {
+    canStart: () => {
+      const capabilities = speechCapabilities()
+      return apiCaptureAvailable() && Boolean(capabilities?.available && capabilities.sttConfigured && capabilities.supportsStt)
     },
-    {
-      onStateChange: setState,
-      onElapsedChange: setElapsedMs,
-      onTranscript: (text) => insertTranscript(text),
-      onError: (errorKey, detail) => {
-        showAlertDialog(t(errorKey), {
-          title: t("promptInput.voiceInput.error.title"),
-          ...(detail ? { detail } : {}),
-          variant: "error",
-        })
-      },
-    },
-  )
+    createController: callbacks => createApiRecordingController(callbacks, "dictation", authorizeApi),
+  }
+  const engine = () => route ? route(apiEngine) : apiEngine
+
+  function cancelRecording() {
+    const capture = activeCapture()
+    if (!capture) return
+    setActiveCapture(undefined)
+    capture.controller?.cancelRecording()
+    setState("idle")
+  }
 
   createEffect(() => {
-    void loadSpeechCapabilities()
+    if (options.enabled()) void loadSpeechCapabilities()
+  })
+  createEffect(() => {
+    const capture = activeCapture()
+    if (capture && !capture.current()) cancelRecording()
   })
 
+  const stopWatching = onInstanceLifecycleAuthority(event => {
+    if (event.instanceId === options.instanceId()) cancelRecording()
+  })
+  onMount(() => window.addEventListener("pagehide", cancelRecording))
   onCleanup(() => {
-    controller.cleanup(false)
+    stopWatching()
+    window.removeEventListener("pagehide", cancelRecording)
+    cancelRecording()
   })
 
-  const isSupported = () => {
-    if (typeof window === "undefined") return false
-    return typeof window.MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia)
+  function unavailableKey() {
+    if (!options.enabled()) return "voice.command.off"
+    if (state() === "starting") return "settings.speech.testInput.requesting"
+    if (state() === "transcribing") return "promptInput.voiceInput.transcribing.title"
+    if (state() === "limitReached") return "promptInput.voiceInput.limitReached"
+    if (transcript()) return "voice.command.pendingTranscription"
+    if (options.disabled() || options.sending()) return "voice.command.composerUnavailable"
+    if (deviceDictation?.readFailed() || remoteDictation?.readFailed()) return "settings.speech.device.readFailed"
+    const purpose = microphoneUse()
+    if (purpose) return `voice.microphone.${purpose}`
+    if (engine()?.canStart()) return
+    if (deviceDictation?.choice() === null || remoteDictation?.choice() === null) return "settings.speech.device.chooseLocal"
+    if (engine() === apiEngine && !apiCaptureAvailable()) {
+      if (typeof window !== "undefined" && !window.isSecureContext) return "voice.command.secureContext"
+      return "voice.microphone.unavailable"
+    }
+    if (remoteDictation && !remoteDictation.choice()) return "promptInput.remoteDictation.unavailable"
+    if (engine() === apiEngine && !speechCapabilities()) {
+      return speechCapabilitiesError() ? "voice.command.capabilitiesError" : "voice.command.loading"
+    }
+    return "voice.command.setupDictation"
   }
-
-  const canUseVoiceInput = () => {
-    const capabilities = speechCapabilities()
-    return Boolean(
-      options.enabled() &&
-        isSupported() &&
-        capabilities?.available &&
-        capabilities?.sttConfigured &&
-        capabilities?.supportsStt,
-    )
-  }
+  const canStartRecording = () => state() === "idle" && !unavailableKey()
 
   async function startRecording() {
-    if (!canUseVoiceInput() || options.disabled() || state() === "transcribing" || state() === "recording") return
-
-    if (!isSupported()) {
-      showAlertDialog(t("promptInput.voiceInput.error.unsupported"), {
-        title: t("promptInput.voiceInput.error.title"),
-        variant: "error",
-      })
-      return
-    }
-
-    await controller.startRecording()
-  }
-
-  function stopRecording() {
-    controller.stopRecording()
-  }
-
-  async function toggleRecording(): Promise<void> {
-    if (state() === "recording") {
-      stopRecording()
-      return
-    }
-
-    await startRecording()
-  }
-
-  function insertTranscript(text: string) {
-    const current = options.prompt()
+    if (!canStartRecording() || activeCapture() || composing) return
     const textarea = options.getTextarea()
-    const start = textarea ? textarea.selectionStart : current.length
-    const end = textarea ? textarea.selectionEnd : current.length
-    const wasCursorAtEnd = end === current.length
-    const wasScrolledToBottom = textarea
-      ? textarea.scrollHeight - (textarea.scrollTop + textarea.clientHeight) <= 4
-      : false
-    const before = current.slice(0, start)
-    const after = current.slice(end)
-    const prefix = ""
-    const suffix = after.length > 0 ? (/^\s/.test(after) ? "" : " ") : " "
-    const nextValue = `${before}${prefix}${text}${suffix}${after}`
-    const cursor = before.length + prefix.length + text.length + suffix.length
+    if (!textarea?.isConnected || textarea.value !== options.prompt()) return
 
-    options.setPrompt(nextValue)
-    if (textarea) {
-      setTimeout(() => {
-        textarea.focus()
-        textarea.setSelectionRange(cursor, cursor)
-        if (wasCursorAtEnd || wasScrolledToBottom) {
-          textarea.scrollTop = textarea.scrollHeight
+    const owner = options.captureOwner()
+    const instanceId = options.instanceId(), sessionId = options.sessionId(), directory = options.directory()
+    const selectedEngine = engine()
+    if (!selectedEngine) return
+    const revision = options.draftRevision(), range = selection(textarea)
+    const contextCurrent = () => owner() && instanceId === options.instanceId() && sessionId === options.sessionId()
+      && directory === options.directory() && options.active() && textarea === options.getTextarea() && textarea.isConnected
+    const current = () => contextCurrent() && options.enabled() && selectedEngine === engine()
+      && (state() === "transcribing" || (!options.disabled() && (state() === "limitReached" || !options.sending())))
+    if (!current()) return
+    let moved = false
+    let delivered = false
+    const capture: ActiveCapture = { current, selectionChanged: () => { moved ||= !sameSelection(textarea, range) } }
+    const held = () => activeCapture() === capture && current()
+    capture.controller = selectedEngine.createController({
+      onStateChange: value => {
+        if (activeCapture() !== capture) return
+        if (value === "idle") setActiveCapture(undefined)
+        setState(value)
+      },
+      onTranscript: text => {
+        if (!held() || delivered || !text) return
+        delivered = true
+        if (!options.canInsertTranscript() || options.disabled() || options.sending() || composing || moved
+          || revision !== options.draftRevision() || !sameSelection(textarea, range) || textarea.value !== options.prompt()) {
+          setPromptTranscript(instanceId, sessionId, { text, directory, owner })
+          return
         }
-      }, 0)
-    }
+        insertTranscript(textarea, text, range.selectionStart, range.selectionEnd)
+        if (capture.restoreFocus && textarea.ownerDocument.activeElement === textarea.ownerDocument.body) {
+          textarea.focus({ preventScroll: true })
+        }
+      },
+      onError: (errorKey, detail) => {
+        if (!held()) return
+        showAlertDialog(t(errorKey), { title: t("promptInput.voiceInput.error.title"), detail, variant: "error" })
+      },
+    })
+    setActiveCapture(capture)
+    await capture.controller.startRecording()
+  }
+
+  function insertTranscript(textarea: HTMLTextAreaElement, text: string, start: number, end: number) {
+    const suffix = /^\s/.test(textarea.value.slice(end)) ? "" : " "
+    // Change the range and caret in the same turn without acquiring focus or scheduling a later write.
+    textarea.setRangeText(`${text}${suffix}`, start, end, "end")
+    options.setPrompt(textarea.value)
+  }
+
+  function restoreTranscript() {
+    const saved = transcript()
+    const textarea = options.getTextarea()
+    if (!options.canInsertTranscript() || !saved || !textarea || composing || textarea.value !== options.prompt()) return
+    const end = textarea.selectionEnd
+    const prefix = /\S$/.test(textarea.value.slice(0, end)) ? " " : ""
+    discardTranscript()
+    insertTranscript(textarea, `${prefix}${saved}`, end, end)
+    textarea.focus({ preventScroll: true })
   }
 
   return {
     state,
-    elapsedMs,
-    canUseVoiceInput,
+    unavailableKey,
+    canStartRecording,
     startRecording,
-    stopRecording,
-    toggleRecording,
+    usesRemoteCapture: () => remoteDictation?.choice() === "hex",
+    stopRecording: () => activeCapture()?.controller?.stopRecording(),
+    confirmTranscription: (restoreFocus: boolean) => {
+      const capture = activeCapture()
+      if (!capture?.current()) return
+      capture.restoreFocus = restoreFocus
+      capture.controller?.confirmTranscription?.()
+    },
+    cancelRecording,
+    selectionChanged: () => activeCapture()?.selectionChanged(),
+    setComposing: (value: boolean) => { composing = value },
+    savedTranscript: transcript,
+    restoreTranscript,
+    discardTranscript,
     isRecording: () => state() === "recording",
     isTranscribing: () => state() === "transcribing",
     buttonTitle: () => {
       if (state() === "recording") return t("promptInput.voiceInput.stop.title")
-      if (state() === "transcribing") return t("promptInput.voiceInput.transcribing.title")
-      return t("promptInput.voiceInput.start.title")
+      return t("promptInput.voiceInput.dictate")
     },
   }
 }

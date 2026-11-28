@@ -15,9 +15,13 @@ function workerMain(load: NodeJS.Require) {
   const queue: GitRequest[] = []
   const foreground: GitRequest[] = []
   let running = 0
+  let bypassed = 0
   const scheduler = { pump() {
     while (running < 2 && (foreground.length || queue.length)) {
-      const request = (foreground.shift() ?? queue.shift())!
+      // Bound overtakes: a fresh ownership read can depend on a bulk probe.
+      const nextForeground = foreground.length && (!queue.length || bypassed < 8)
+      const request = (nextForeground ? foreground.shift() : queue.shift())!
+      bypassed = nextForeground && queue.length ? bypassed + 1 : 0
       running += 1
       execFile("git", ["-C", request.directory, ...request.args], {
         encoding: "buffer", windowsHide: true, maxBuffer: request.maxBuffer ?? 1024 * 1024,

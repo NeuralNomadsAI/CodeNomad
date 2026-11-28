@@ -2,36 +2,21 @@ mod access;
 mod commands;
 mod cross_host;
 mod envelope;
+mod file_drafts;
+mod initialization;
+mod legacy;
 mod navigation;
+mod ipc_queue;
 mod partitions;
 mod process;
+mod renderer_flush;
 mod restorable;
 mod startup_command;
 mod window;
 mod window_flush;
 mod window_updates;
 
-#[doc(hidden)]
-pub use commands::{
-    __cmd__client_state_claim_access, __cmd__client_state_clear,
-    __cmd__client_state_commit_partitions, __cmd__client_state_load,
-    __cmd__client_state_load_partition, __cmd__client_state_navigation_flushed,
-    __cmd__client_state_renderer_flushed, __cmd__client_state_save,
-    __cmd__client_state_set_restore_enabled, __cmd__client_state_startup_command_result,
-    __tauri_command_name_client_state_claim_access, __tauri_command_name_client_state_clear,
-    __tauri_command_name_client_state_commit_partitions, __tauri_command_name_client_state_load,
-    __tauri_command_name_client_state_load_partition,
-    __tauri_command_name_client_state_navigation_flushed,
-    __tauri_command_name_client_state_renderer_flushed, __tauri_command_name_client_state_save,
-    __tauri_command_name_client_state_set_restore_enabled,
-    __tauri_command_name_client_state_startup_command_result,
-};
-pub use commands::{
-    client_state_claim_access, client_state_clear, client_state_commit_partitions,
-    client_state_load, client_state_load_partition, client_state_navigation_flushed,
-    client_state_renderer_flushed, client_state_save, client_state_set_restore_enabled,
-    client_state_startup_command_result,
-};
+pub(crate) use commands::with_ordered_ipc;
 pub(crate) use startup_command::{
     command_name as startup_state_command, run_in_local_window as run_startup_state_command,
     StartupStateSnapshot,
@@ -50,38 +35,28 @@ pub(crate) fn home_client_state_directory() -> Option<PathBuf> {
 pub(crate) use navigation::{
     before_window_navigation, before_window_navigation_if, NavigationKind,
 };
+pub(crate) use ipc_queue::IpcQueue;
+pub(crate) use renderer_flush::RendererFlushRequest;
 pub use window::{
-    capture_and_flush_all_windows, capture_and_flush_window, local_window_zoom,
+    capture_all_windows, capture_and_flush_window, capture_preferences_window, local_window_zoom,
     set_local_window_zoom, setup_local_window, DEFAULT_ZOOM_LEVEL, MIN_WINDOW_WIDTH,
 };
 
 use envelope::PersistedClientState;
+use renderer_flush::RendererFlush;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use url::Url;
 
 const CLIENT_STATE_FILENAME: &str = "client-state.json";
 const MAX_CLIENT_SNAPSHOT_BYTES: usize = envelope::MAX_SNAPSHOT_BYTES;
-const RENDERER_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
-
-#[derive(Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RendererFlushRequest {
-    pub(crate) generation: u64,
-}
-
-#[derive(Default)]
-struct RendererFlush {
-    request_lock: Mutex<()>,
-    windows: Mutex<HashMap<String, (u64, u64)>>,
-}
 
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,214 +78,65 @@ pub struct ClientState {
     renderer_access: access::RendererAccess,
     ephemeral_windows: Mutex<HashSet<String>>,
     renderer_flush: RendererFlush,
+    file_draft_readers: file_drafts::Readers,
     startup_commands: startup_command::StartupCommands,
     write_state: StateWriter,
+    root_sync_pending: AtomicBool,
 }
 
 type StateWriter =
-    std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), String> + Send + Sync>;
+    std::sync::Arc<dyn Fn(&Path, &[u8], &dyn Fn() -> bool) -> Result<(), PublicationError> + Send + Sync>;
+
+#[derive(Debug)]
+enum PublicationError {
+    BeforeRename(String),
+    DirectorySync(String),
+}
+
+impl From<String> for PublicationError {
+    fn from(error: String) -> Self {
+        Self::BeforeRename(error)
+    }
+}
+
+#[cfg(test)]
+impl From<&str> for PublicationError {
+    fn from(error: &str) -> Self {
+        Self::BeforeRename(error.to_owned())
+    }
+}
+
+impl From<PublicationError> for String {
+    fn from(error: PublicationError) -> Self {
+        match error {
+            PublicationError::BeforeRename(error) => error,
+            PublicationError::DirectorySync(error) => format!("Client state published; durability unconfirmed: {error}"),
+        }
+    }
+}
 
 impl ClientState {
-    pub(crate) fn stage_renderer_page_load(
-        &self,
-        window_id: &str,
-        url: &Url,
-    ) -> Result<(), String> {
-        self.renderer_access
-            .begin_navigation_for(window_id, Some(url))
-            .map(|_| ())
+    pub(crate) fn renderer_page_started(&self, window_id: &str, allowed_url: Option<&Url>) {
+        self.renderer_access.page_started(window_id, allowed_url);
     }
 
-    pub fn initialize(app: &AppHandle, scoped_client_state_directory: Option<&Path>) -> Self {
-        match app.path().app_data_dir() {
-            Ok(app_data_dir) => {
-                let paths = scoped_client_state_directory
-                    .map(|directory| {
-                        (
-                            Ok(directory.join("election")),
-                            Ok(directory.join(CLIENT_STATE_FILENAME)),
-                            Ok(None),
-                        )
-                    })
-                    .unwrap_or_else(|| {
-                        (
-                            cross_host::election_directory(),
-                            cross_host::state_path(),
-                            cross_host::legacy_state_path().map(Some),
-                        )
-                    });
-                match paths {
-                    (Ok(election_dir), Ok(state_path), Ok(legacy_state_path)) => {
-                        let legacy_electron = scoped_client_state_directory
-                            .is_none()
-                            .then(cross_host::legacy_electron_data_directory)
-                            .flatten();
-                        Self::initialize_managed_at_with_election(
-                            &app_data_dir,
-                            &election_dir,
-                            &state_path,
-                            legacy_state_path.as_deref(),
-                            legacy_electron.as_deref(),
-                        )
-                    }
-                    (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
-                        eprintln!("[client-state] initialization failed; restore disabled: {err}");
-                        Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!("[client-state] initialization failed; restore disabled: {err}");
-                Self::disabled(PathBuf::new())
-            }
-        }
+    pub(crate) fn renderer_has_claimed(&self, window_id: &str) -> bool {
+        self.renderer_access.is_claimed_for(window_id)
     }
 
-    #[cfg(test)]
-    fn initialize_managed_at(app_data_dir: &Path) -> Self {
-        Self::initialize_at(app_data_dir).unwrap_or_else(|err| {
-            eprintln!("[client-state] initialization failed; restore disabled: {err}");
-            Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
-        })
+    pub(crate) fn renderer_page_finished(&self, window_id: &str, webview: &tauri::Webview, url: &Url) {
+        self.deliver_renderer_challenge(window_id, url, |script| { let _ = webview.eval(script); });
     }
 
-    fn initialize_managed_at_with_election(
-        app_data_dir: &Path,
-        election_dir: &Path,
-        state_path: &Path,
-        legacy_shared_state_path: Option<&Path>,
-        legacy_electron_data_dir: Option<&Path>,
-    ) -> Self {
-        Self::initialize_at_with_writer_and_election(
-            app_data_dir,
-            election_dir,
-            state_path,
-            legacy_shared_state_path,
-            legacy_electron_data_dir,
-            std::sync::Arc::new(write_atomically),
-        )
-        .unwrap_or_else(|err| {
-            eprintln!("[client-state] initialization failed; restore disabled: {err}");
-            Self::disabled(app_data_dir.join(CLIENT_STATE_FILENAME))
-        })
-    }
-
-    fn disabled(state_path: PathBuf) -> Self {
-        let mut state = PersistedClientState::default();
-        let record = state.active_mut();
-        record.restore_enabled = false;
-        record.writes_enabled = false;
-        Self::new(
-            state_path,
-            process::ProcessState::disabled(),
-            state,
-            std::sync::Arc::new(write_atomically),
-        )
-    }
-
-    fn new(
-        state_path: PathBuf,
-        process: process::ProcessState,
-        state: PersistedClientState,
-        write_state: StateWriter,
-    ) -> Self {
-        let zoom_levels = state
-            .window_order
-            .iter()
-            .map(|id| {
-                let record = state.windows.get(id).expect("validated window order");
-                let zoom = record
-                    .restore_enabled
-                    .then(|| record.window.as_ref().map(|window| window.zoom_factor))
-                    .flatten()
-                    .unwrap_or(DEFAULT_ZOOM_LEVEL);
-                (id.clone(), zoom)
-            })
-            .collect();
-        Self {
-            state_path,
-            process,
-            state: Mutex::new(state),
-            zoom_levels: Mutex::new(zoom_levels),
-            write_lock: Mutex::new(()),
-            window_flush: window_flush::WindowFlushScheduler::default(),
-            pending_windows: Mutex::new(window_updates::WindowCaptures::default()),
-            renderer_access: access::RendererAccess::default(),
-            ephemeral_windows: Mutex::new(HashSet::new()),
-            renderer_flush: RendererFlush::default(),
-            startup_commands: startup_command::StartupCommands::default(),
-            write_state,
-        }
-    }
-
-    #[cfg(test)]
-    fn initialize_at(app_data_dir: &Path) -> Result<Self, String> {
-        Self::initialize_at_with_writer(app_data_dir, std::sync::Arc::new(write_atomically))
-    }
-
-    #[cfg(test)]
-    fn initialize_at_with_writer(
-        app_data_dir: &Path,
-        write_state: StateWriter,
-    ) -> Result<Self, String> {
-        Self::initialize_at_with_writer_and_election(
-            app_data_dir,
-            &app_data_dir.join(".cross-host-election"),
-            &app_data_dir.join(CLIENT_STATE_FILENAME),
-            None,
-            None,
-            write_state,
-        )
-    }
-
-    fn initialize_at_with_writer_and_election(
-        app_data_dir: &Path,
-        election_dir: &Path,
-        state_path: &Path,
-        legacy_shared_state_path: Option<&Path>,
-        legacy_electron_data_dir: Option<&Path>,
-        write_state: StateWriter,
-    ) -> Result<Self, String> {
-        fs::create_dir_all(app_data_dir).map_err(|err| {
-            format!(
-                "failed to create app data directory {}: {err}",
-                app_data_dir.display()
-            )
-        })?;
-
-        let registration = process::Registration::initialize(
-            app_data_dir,
-            election_dir,
-            legacy_electron_data_dir,
-        )?;
-        if registration.is_primary() && !state_path.exists() {
-            if let Some(legacy_path) = legacy_shared_state_path {
-                copy_legacy_shared_state(legacy_path, state_path, &|| registration.is_primary())?;
-            }
-        }
-        let future_legacy =
-            !state_path.exists() && has_future_legacy_state(app_data_dir, legacy_electron_data_dir);
-        if registration.is_primary() && !state_path.exists() && !future_legacy {
-            migrate_legacy_state(state_path, app_data_dir, legacy_electron_data_dir, &|| {
-                registration.is_primary()
-            })?;
-        }
-        let state = if registration.is_primary() {
-            if future_legacy {
-                envelope::unsupported()
-            } else {
-                read_client_state(state_path)
-            }
-        } else {
-            PersistedClientState::default()
+    fn deliver_renderer_challenge(&self, window_id: &str, url: &Url, deliver: impl FnOnce(String)) {
+        let Some(challenge) = self.renderer_access.document_challenge(window_id, url) else {
+            return;
         };
-        let process = registration.finish();
-        Ok(Self::new(
-            state_path.to_path_buf(),
-            process,
-            state,
-            write_state,
-        ))
+        // Deliver into the committed document, never via an invoke that an
+        // outgoing document could have queued before the navigation.
+        deliver(format!(
+            "window.__CODENOMAD_RESOLVE_CLIENT_STATE_DOCUMENT__?.('{challenge}');"
+        ));
     }
 
     fn is_primary(&self) -> bool {
@@ -347,20 +173,23 @@ impl ClientState {
         if !self.is_primary() {
             return Ok(false);
         }
+        let clearing = request.is_none();
         let previous = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
                 return Ok(false);
             }
-            if state.preferences == request {
+            if state.preferences == request && request.is_some() && !self.root_sync_pending.load(Ordering::Relaxed) {
                 return Ok(true);
             }
+            self.apply_window_captures(&mut state)?;
             let previous = (state.preferences.clone(), state.last_preferences.clone());
             if let Some(request) = &request {
                 state.last_preferences = Some(crate::preferences_window::PreferencesRequest {
                     section: request.section.clone(),
                     scroll_top: request.scroll_top,
                     instance_id: None,
+                    server_id: None,
                     workspace_path: None,
                     location: None,
                 });
@@ -368,11 +197,17 @@ impl ClientState {
             state.preferences = request;
             previous
         };
-        if let Err(error) = self.write_current_state() {
-            let mut state = self.state.lock().map_err(|err| err.to_string())?;
-            state.preferences = previous.0;
-            state.last_preferences = previous.1;
-            return Err(error);
+        if let Err(error) = self.write_current_state_guarded(&|| true) {
+            if matches!(error, PublicationError::BeforeRename(_)) {
+                let mut state = self.state.lock().map_err(|err| err.to_string())?;
+                state.preferences = previous.0;
+                state.last_preferences = previous.1;
+            } else if clearing {
+                // The close already removed the restore record from the published root.
+                eprintln!("[client-state] {}", String::from(error));
+                return Ok(true);
+            }
+            return Err(error.into());
         }
         Ok(true)
     }
@@ -388,31 +223,6 @@ impl ClientState {
         })
     }
 
-    pub(crate) fn set_active_window(&self, window_id: &str) -> Result<bool, String> {
-        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
-        if !self.is_primary() {
-            return Ok(false);
-        }
-        let previous = {
-            let mut state = self.state.lock().map_err(|err| err.to_string())?;
-            if state.unsupported_future_envelope || state.active_window_id == window_id {
-                return Ok(!state.unsupported_future_envelope);
-            }
-            state.record(window_id)?;
-            let previous = state.active_window_id.clone();
-            state.active_window_id = window_id.to_string();
-            previous
-        };
-        if let Err(error) = self.write_current_state() {
-            self.state
-                .lock()
-                .map_err(|err| err.to_string())?
-                .active_window_id = previous;
-            return Err(error);
-        }
-        Ok(true)
-    }
-
     pub(crate) fn active_window_id(&self) -> Result<String, String> {
         self.state
             .lock()
@@ -423,6 +233,7 @@ impl ClientState {
     fn claim_renderer_access(
         &self,
         window_id: &str,
+        document: u64,
         access_token: &str,
         renderer_url: &Url,
     ) -> Result<(), String> {
@@ -442,7 +253,7 @@ impl ClientState {
             return Err("Unknown client state window".to_string());
         }
         self.renderer_access
-            .claim_for(window_id, access_token, renderer_url)
+            .claim_in_document(window_id, document, access_token, renderer_url)
     }
 
     fn load(&self) -> Result<ClientStateLoadResult, String> {
@@ -632,11 +443,13 @@ impl ClientState {
     }
 
     fn collect_partitions(&self, access_valid: &dyn Fn() -> bool) {
-        let retained = self
+        let Ok(retained) = self
             .state
             .lock()
             .map(|state| state.retained_partition_keys())
-            .unwrap_or_default();
+        else {
+            return;
+        };
         if let Err(err) = self
             .partition_store()
             .sweep(&retained, &|| self.is_primary() && access_valid())
@@ -744,6 +557,9 @@ impl ClientState {
 
     fn flush(&self) -> Result<(), String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if self.window_captures_stopped()? {
+            return Ok(());
+        }
         let unsupported = self
             .state
             .lock()
@@ -783,24 +599,31 @@ impl ClientState {
     }
 
     fn write_current_state(&self) -> Result<(), String> {
-        self.write_current_state_guarded(&|| true)
+        self.write_current_state_guarded(&|| true).map_err(Into::into)
     }
 
     fn write_current_state_guarded(
         &self,
         replacement_valid: &dyn Fn() -> bool,
-    ) -> Result<(), String> {
-        let bytes = {
-            let state = self.state.lock().map_err(|err| err.to_string())?;
-            serde_json::to_vec(&*state).map_err(|err| err.to_string())?
-        };
-        (self.write_state)(&self.state_path, &bytes, &|| {
-            self.is_primary() && replacement_valid()
-        })?;
+    ) -> Result<(), PublicationError> {
+        let envelope = self.state.lock().map_err(|err| err.to_string())?.clone();
+        let bytes = serde_json::to_vec(&envelope).map_err(|err| err.to_string())?;
+        self.publish_root(&bytes, replacement_valid)?;
         // New events may already be queued, but only this serialized writer can
         // have merged captures into the state we just published.
         self.window_captures_published();
         Ok(())
+    }
+
+    // The writer lock serializes publication, durability repair and GC.
+    fn publish_root(&self, bytes: &[u8], replacement_valid: &dyn Fn() -> bool) -> Result<(), PublicationError> {
+        let result = (self.write_state)(&self.state_path, bytes, &|| self.is_primary() && replacement_valid());
+        match result {
+            Ok(()) => self.root_sync_pending.store(false, Ordering::Relaxed),
+            Err(PublicationError::DirectorySync(_)) => self.root_sync_pending.store(true, Ordering::Relaxed),
+            Err(PublicationError::BeforeRename(_)) => {}
+        }
+        result
     }
 
     fn mutate_and_write(
@@ -821,36 +644,92 @@ impl ClientState {
 
         let result = self.write_current_state_guarded(replacement_valid);
         let mut state = self.state.lock().map_err(|error| error.to_string())?;
-        if result.is_err() {
+        if matches!(result, Err(PublicationError::BeforeRename(_))) {
             *state = previous_state;
         }
         self.finish_window_capture_policy(&state, window_id);
-        result.map(|()| true)
+        result.map(|()| true).map_err(Into::into)
     }
 
-    pub(crate) fn add_window(&self, window_id: String) -> Result<bool, String> {
+    pub(crate) fn can_register_window(&self) -> bool {
+        self.process.has_primary_lock()
+            && self.state.lock().is_ok_and(|state| !state.unsupported_future_envelope)
+    }
+
+    // The renderer FIFO is sealed before this final, fallible publication.
+    pub(crate) fn prepare_ownership_release(&self) -> Result<(), String> {
+        self.set_window_captures_stopped(true);
+        self.window_flush.stop();
+        let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        self.flush_pending_window_captures()
+    }
+
+    pub(crate) fn resume_window_captures(&self) {
+        self.window_flush.resume();
+        self.set_window_captures_stopped(false);
+    }
+
+    pub(crate) fn queue_new_window(app: &AppHandle, window_id: String) -> Result<(), String> {
+        let worker = app.clone();
+        app.state::<IpcQueue>()
+            .enqueue(Box::new(move || {
+                let state = worker.state::<Self>();
+                match state.add_window(window_id.clone()) {
+                    Ok(true) => {}
+                    Ok(false) => state.discard_new_window_capture(&window_id),
+                    Err(error) => {
+                        // A directory-sync error has already promoted the record.
+                        state.discard_new_window_capture(&window_id);
+                        eprintln!("[client-state] failed to persist a new window: {error}");
+                    }
+                }
+            }))
+            .map_err(str::to_string)
+    }
+
+    pub(crate) fn remove_window_in_order(app: &AppHandle, window_id: String) -> Result<bool, String> {
+        let worker = app.clone();
+        let (done, reply) = std::sync::mpsc::sync_channel(1);
+        app.state::<IpcQueue>().enqueue(Box::new(move || {
+            let _ = done.send(worker.state::<Self>().remove_window(&window_id));
+        }))?;
+        reply.recv().map_err(|error| error.to_string())?
+    }
+
+    fn add_window(&self, window_id: String) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
         if !self.is_primary() {
             return Ok(false);
         }
-        let previous = {
+        let mut next = {
             let mut state = self.state.lock().map_err(|err| err.to_string())?;
             if state.unsupported_future_envelope {
                 return Ok(false);
             }
-            let previous = state.clone();
-            state.add_window(window_id.clone())?;
-            previous
+            self.apply_window_captures(&mut state)?;
+            state.clone()
         };
-        if let Err(err) = self.write_current_state() {
-            *self.state.lock().map_err(|lock_err| lock_err.to_string())? = previous;
-            return Err(err);
+        // Keep the tentative record and serialization off the lock used by native window setup.
+        next.add_window(window_id.clone())?;
+        self.snapshot_new_window_capture(&mut next, &window_id)?;
+        let bytes = serde_json::to_vec(&next).map_err(|err| err.to_string())?;
+        let result = self.publish_root(&bytes, &|| true);
+        if matches!(result, Err(PublicationError::BeforeRename(_))) {
+            return result.map(|()| false).map_err(Into::into);
+        }
+        {
+            let mut state = self.state.lock().map_err(|err| err.to_string())?;
+            *state = next;
+            self.finish_new_window_capture(&state, &window_id);
+        }
+        if result.is_ok() {
+            self.window_captures_published();
         }
         self.zoom_levels
             .lock()
             .map_err(|err| err.to_string())?
-            .insert(window_id, DEFAULT_ZOOM_LEVEL);
-        Ok(true)
+            .entry(window_id).or_insert(DEFAULT_ZOOM_LEVEL);
+        result.map(|()| true).map_err(Into::into)
     }
 
     pub(crate) fn register_ephemeral_window(&self, window_id: String) {
@@ -860,7 +739,11 @@ impl ClientState {
     }
 
     pub(crate) fn unregister_window(&self, window_id: &str) {
+        self.discard_new_window_capture(window_id);
         self.renderer_access.remove(window_id);
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            readers.remove(window_id);
+        }
         if let Ok(mut windows) = self.ephemeral_windows.lock() {
             windows.remove(window_id);
         }
@@ -871,6 +754,11 @@ impl ClientState {
 
     pub(crate) fn remove_window(&self, window_id: &str) -> Result<bool, String> {
         let _write = self.write_lock.lock().map_err(|err| err.to_string())?;
+        if self.state.lock().map_err(|err| err.to_string())?.record(window_id).is_err()
+            && self.ephemeral_windows.lock().map_err(|err| err.to_string())?.contains(window_id)
+        {
+            return Ok(true);
+        }
         if !self.is_primary() {
             return Ok(false);
         }
@@ -887,99 +775,53 @@ impl ClientState {
             self.preserve_window_capture_policy(&previous, window_id);
             previous
         };
-        let result = self.write_current_state();
+        let result = self.write_current_state_guarded(&|| true);
         {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if result.is_err() {
+            if matches!(result, Err(PublicationError::BeforeRename(_))) {
                 *state = previous;
             }
             self.finish_window_capture_policy(&state, window_id);
         }
-        result?;
+        if let Err(PublicationError::BeforeRename(error)) = result {
+            return Err(error);
+        }
+        if let Ok(mut readers) = self.file_draft_readers.lock() {
+            if let Some((generation, _)) = readers.get_mut(window_id) {
+                // The renderer survives record removal while its workspace release runs.
+                *generation = None;
+            }
+        }
         self.renderer_access.remove(window_id);
         self.zoom_levels
             .lock()
             .map_err(|err| err.to_string())?
             .remove(window_id);
-        self.collect_partitions(&|| true);
+        match result {
+            Ok(()) => self.collect_partitions(&|| true),
+            Err(error) => eprintln!("[client-state] {}", String::from(error)),
+        }
         Ok(true)
     }
 
     fn release_locks(&self) {
-        self.stop_window_captures();
-        self.window_flush.stop();
+        // Best effort when the state is being dropped outside orderly shutdown.
+        if let Err(error) = self.prepare_ownership_release() {
+            eprintln!("[client-state] failed to drain final window state: {error}");
+        }
+        self.finish_ownership_release();
+    }
+
+    fn finish_ownership_release(&self) {
         // Lock order fences takeover until root publication and partition GC leave write_lock.
         let _write = self
             .write_lock
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        // Also drain a capture admitted before stop whose wakeup wasn't sent yet,
-        // or retry geometry merged by a worker whose publication failed.
-        if let Err(error) = self.flush_pending_window_captures() {
-            eprintln!("[client-state] failed to drain final window state: {error}");
-        }
         self.process.release_locks();
     }
 
-    pub(crate) fn wait_for_renderer_flush(
-        &self,
-        app: &AppHandle,
-        window_label: &str,
-        window_id: &str,
-        require_claim: bool,
-    ) {
-        let _request = self
-            .renderer_flush
-            .request_lock
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
-        if require_claim && !self.renderer_access.is_claimed_for(window_id) {
-            return;
-        }
-        let Some(webview) = app.get_webview(window_label) else {
-            return;
-        };
-        let generation = {
-            let mut windows = self
-                .renderer_flush
-                .windows
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let state = windows.entry(window_id.to_string()).or_default();
-            state.0 += 1;
-            state.0
-        };
-        if let Err(err) = webview.emit(
-            "client-state:navigation-flush-requested",
-            RendererFlushRequest { generation },
-        ) {
-            eprintln!("[client-state] failed to request renderer flush: {err}");
-            return;
-        }
 
-        let deadline = Instant::now() + RENDERER_FLUSH_TIMEOUT;
-        while self
-            .renderer_flush
-            .windows
-            .lock()
-            .ok()
-            .and_then(|windows| windows.get(window_id).copied())
-            .is_some_and(|state| state.0 == generation && state.1 != generation)
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn acknowledge_renderer_flush(&self, window_id: &str, generation: u64) {
-        if let Ok(mut windows) = self.renderer_flush.windows.lock() {
-            if let Some(state) = windows.get_mut(window_id) {
-                if state.0 == generation {
-                    state.1 = generation;
-                }
-            }
-        }
-    }
 }
 
 impl Drop for ClientState {
@@ -1003,153 +845,6 @@ fn parse_client_state(bytes: &[u8]) -> PersistedClientState {
     envelope::parse(bytes)
 }
 
-fn legacy_candidate(
-    path: &Path,
-    host: &'static str,
-) -> Option<(PersistedClientState, bool, i64, &'static str)> {
-    let bytes = fs::read(path).ok()?;
-    let Value::Object(value) = serde_json::from_slice::<Value>(&bytes).ok()? else {
-        return None;
-    };
-    if value
-        .get("version")
-        .and_then(envelope::exact_nonnegative_safe_integer)
-        != Some(envelope::LEGACY_MONOLITHIC_VERSION)
-    {
-        return None;
-    }
-    let saved_at = value
-        .get("snapshot")
-        .and_then(Value::as_object)
-        .and_then(|snapshot| snapshot.get("savedAt"))
-        .and_then(Value::as_i64)
-        .unwrap_or(-1);
-    let mut parsed = parse_client_state(&bytes);
-    if parsed.unsupported_future_envelope {
-        return None;
-    }
-    parsed.active_mut().window = None;
-    Some((parsed, value.contains_key("snapshot"), saved_at, host))
-}
-
-fn has_future_legacy_state(tauri_data_dir: &Path, electron_data_dir: Option<&Path>) -> bool {
-    [
-        electron_data_dir.map(|path| path.join(CLIENT_STATE_FILENAME)),
-        Some(tauri_data_dir.join(CLIENT_STATE_FILENAME)),
-    ]
-    .into_iter()
-    .flatten()
-    .any(|path| {
-        fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|value| {
-                value
-                    .get("version")
-                    .and_then(envelope::exact_nonnegative_safe_integer)
-            })
-            .is_some_and(|version| version > envelope::LEGACY_MONOLITHIC_VERSION)
-    })
-}
-
-fn migrate_legacy_state(
-    state_path: &Path,
-    tauri_data_dir: &Path,
-    electron_data_dir: Option<&Path>,
-    ownership_valid: &dyn Fn() -> bool,
-) -> Result<(), String> {
-    let mut candidates = [
-        electron_data_dir
-            .and_then(|path| legacy_candidate(&path.join(CLIENT_STATE_FILENAME), "electron")),
-        legacy_candidate(&tauri_data_dir.join(CLIENT_STATE_FILENAME), "tauri"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.0
-            .active()
-            .restore_enabled
-            .cmp(&right.0.active().restore_enabled)
-            .then_with(|| left.1.cmp(&right.1))
-            .then_with(|| right.2.cmp(&left.2))
-            .then_with(|| right.3.cmp(left.3))
-    });
-    let Some((state, _, _, _)) = candidates.first() else {
-        return Ok(());
-    };
-    let record = state.active();
-    #[derive(Serialize)]
-    #[serde(rename_all = "camelCase")]
-    struct LegacyState<'a> {
-        version: u64,
-        restore_enabled: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        snapshot: Option<&'a Value>,
-    }
-    let bytes = serde_json::to_vec(&LegacyState {
-        version: envelope::LEGACY_MONOLITHIC_VERSION,
-        restore_enabled: record.restore_enabled,
-        snapshot: record.snapshot.as_ref(),
-    })
-    .map_err(|err| err.to_string())?;
-    if let Some(parent) = state_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
-    }
-    write_atomically(state_path, &bytes, ownership_valid)?;
-    Ok(())
-}
-
-fn copy_legacy_shared_state(
-    legacy_path: &Path,
-    state_path: &Path,
-    ownership_valid: &dyn Fn() -> bool,
-) -> Result<(), String> {
-    if state_path.exists() {
-        return Ok(());
-    }
-    let bytes = match fs::read(legacy_path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(format!("failed to read legacy shared client state: {err}")),
-    };
-    let version = serde_json::from_slice::<Value>(&bytes)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("version")
-                .and_then(envelope::exact_nonnegative_safe_integer)
-        });
-    if version != Some(envelope::LEGACY_MONOLITHIC_VERSION)
-        || parse_client_state(&bytes).unsupported_future_envelope
-    {
-        return Ok(());
-    }
-    let parent = state_path
-        .parent()
-        .ok_or_else(|| format!("state path has no parent: {}", state_path.display()))?;
-    fs::create_dir_all(parent)
-        .map_err(|err| format!("failed to create shared client-state directory: {err}"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|err| format!("failed to create temporary state file: {err}"))?;
-    temporary
-        .write_all(&bytes)
-        .and_then(|_| temporary.as_file().sync_all())
-        .map_err(|err| format!("failed to copy legacy shared client state: {err}"))?;
-    if !ownership_valid() {
-        return Err("Client state ownership changed before atomic replacement".to_string());
-    }
-    match temporary.persist_noclobber(state_path) {
-        Ok(_) => partitions::sync_directory(parent),
-        Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(err) => Err(format!(
-            "failed to publish copied legacy shared client state: {}",
-            err.error
-        )),
-    }
-}
-
 fn serialized_value_size(value: &Value) -> Result<usize, String> {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
@@ -1160,7 +855,16 @@ fn write_atomically(
     path: &Path,
     bytes: &[u8],
     ownership_valid: &dyn Fn() -> bool,
-) -> Result<(), String> {
+) -> Result<(), PublicationError> {
+    write_atomically_with_sync(path, bytes, ownership_valid, partitions::sync_directory)
+}
+
+fn write_atomically_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    ownership_valid: &dyn Fn() -> bool,
+    sync_directory: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), PublicationError> {
     let parent = path
         .parent()
         .ok_or_else(|| format!("state path has no parent: {}", path.display()))?;
@@ -1171,26 +875,17 @@ fn write_atomically(
         .and_then(|_| temporary.as_file().sync_all())
         .map_err(|err| format!("failed to write temporary state file: {err}"))?;
     if !ownership_valid() {
-        return Err("Client state ownership changed before atomic replacement".to_string());
+        return Err("Client state ownership changed before atomic replacement".to_string().into());
     }
     temporary
         .persist(path)
         .map_err(|err| format!("failed to replace state file: {}", err.error))?;
-    partitions::sync_directory(parent)?;
-    Ok(())
+    sync_directory(parent).map_err(PublicationError::DirectorySync)
 }
 
 pub fn release(app: &AppHandle) {
     if let Some(state) = app.try_state::<ClientState>() {
-        state.release_locks();
-    }
-}
-
-pub fn flush_without_window_capture(app: &AppHandle) {
-    if let Some(state) = app.try_state::<ClientState>() {
-        if let Err(err) = state.flush() {
-            eprintln!("[client-state] failed to flush state: {err}");
-        }
+        state.finish_ownership_release();
     }
 }
 

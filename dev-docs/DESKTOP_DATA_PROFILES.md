@@ -21,13 +21,47 @@ Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tau
 3. Unpackaged (npm/dev) runs — the `dev` profile.
 4. Packaged builds — the remembered choice (made in the profile manager or by the automatic choice), otherwise the automatic choice below, otherwise the default profile.
 
-Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (developer mode, **Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable (the one its `Info.plist` names, which an update may rename) directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
+Updating CodeNomad or changing the update feed never changes the profile. Tauri restarts (**Restart in <name>**, update installation) keep the process environment, so a launch pinned by `CODENOMAD_PROFILE`, its alias or `CLI_CONFIG` reopens the same profile: on macOS the host runs the bundle's executable (the one its `Info.plist` names, which an update may rename) directly in its own process group, without inherited stdio, instead of Tauri's LaunchServices relaunch, which starts the new instance with launchd's environment (`src-tauri/src/macos_relaunch.rs`).
+
+An [automation restart](BROWSER_AUTOMATION.md#desktop-instrumentation) keeps the running profile's exact storage key and configuration source for that launch, without changing the profile manager's next choice.
 
 ### `CODENOMAD_PROFILE` grammar
 
 After trimming ASCII whitespace and lowercasing ASCII letters: 1–64 characters from `a-z`, `0-9`, `.`, `_`, `-`, starting with a letter or digit. Non-ASCII and other characters are rejected. `default` and `stable` both mean the default profile. An invalid value shows an error and quits; it never opens another profile. Both hosts run the shared vectors in `packages/electron-app/electron/main/data-profile-vectors.json`.
 
 ### Storage
+
+Partition commits carry the complete root and any partition bodies not confirmed
+by the renderer's last load or commit. Both hosts verify supplied bodies and
+verify omitted files on disk under the publication transaction; the 256 MiB
+limit applies to the complete graph. Publication and partition collection are
+serialized across windows, retaining the union of their roots. A failed delta
+retries once with all partition bodies.
+After a root rename, readers use the published root even if directory sync
+fails. Durability is reported separately and collection waits for a confirmed
+sync.
+
+Tauri admits client-state IPC to a FIFO worker before yielding the event loop,
+so writes and renderer flush acknowledgements keep delivery order. Admission
+captures the renderer URL and document epoch; page-load start retires the
+previous epoch after any pre-navigation flush. A first claim must carry the
+challenge injected into its committed document. Quit seals the queue and waits
+for a bounded FIFO barrier before releasing ownership. Windows requests the
+renderer flush at session-end query and drains admitted work at confirmed
+session end. Preferences captures native inputs before joining that same
+queue and completes a close once its clear is published, with directory sync
+retried before ownership release. New windows register under the Quit snapshot
+fence, then join the FIFO after native construction. Their initial focus and
+latest geometry are folded into the first publication. A renderer without a
+claim relies on the queue drain during quit. Electron serializes
+renderer loads and publication on its write queue. Both hosts bind
+participating processes to an exact owner generation so
+recovery after a handoff waits only for that generation and unbound records.
+
+Workspace file drafts use a separate `workspace-file-drafts.json` beside the
+profile's client-state envelope. Both hosts serialize atomic draft changes under
+the existing profile ownership guard. Closing an individual window removes its
+tab state while the profile retains file drafts; profile deletion removes both.
 
 The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 
@@ -38,6 +72,13 @@ The alias uses each host's own normalization (Electron lowercases Unicode and tu
 Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. Keep this divergence: changing either fold would move scoped folders. The choices file uses one shared fold (see below).
 
 Every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them and `CODENOMAD_PROFILE` from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
+
+The local desktop renderer confirms session loss with `/api/auth/status`. The
+host requests renewal on its current backend's stdin and matches the private
+stdout response by process generation and request ID. The backend issues a
+fresh session for the expired passwordless desktop bootstrap lineage. The host
+installs the HttpOnly cookie and the renderer verifies it before reconnecting.
+Sign-out or password revocation retires that lineage.
 
 ## Automatic choice
 
@@ -77,7 +118,7 @@ Every other profile has a delete button, disabled while the profile is in use or
 | Profile | Removed | Never touched |
 |---|---|---|
 | Named scope | `<appData>/CodeNomad/scopes/<scope>` (Electron data and both hosts' client state), `<localData>/ai.neuralnomads.codenomad.client-v2/scopes/<scope>` (WebView), `<dataDir>/ai.neuralnomads.codenomad.client.scope.s<hash>` (Tauri locks) | other scopes, `scopes/` itself, `profile-selection/` |
-| Default | Electron `developer-mode-browser-v2/` and legacy `client-state.json` in `<appData>/CodeNomad`; `~/.codenomad/client-state/v2/client-state.json` and `v2/partitions/`; legacy `~/.codenomad/client-state/client-state.json`; WebView `developer-mode/`, `local/`, `remote/`, `browser/` in `client-v2`; legacy Tauri `client-state.json` | `scopes/`, `profile-selection/`, the election folders, lock/marker files; any other entry is kept and reported as not recognized |
+| Default | Electron `developer-mode-browser-v2/` and legacy `client-state.json` in `<appData>/CodeNomad`; `~/.codenomad/client-state/v2/client-state.json`, `v2/workspace-file-drafts.json` and `v2/partitions/`; legacy `~/.codenomad/client-state/client-state.json`; WebView `developer-mode/`, `local/`, `remote/`, `browser/` in `client-v2`; legacy Tauri `client-state.json` | `scopes/`, `profile-selection/`, the election folders, lock/marker files; any other entry is kept and reported as not recognized |
 | Unused lock folder | the folder | — |
 
 The default profile's folders are parents of other roots, so they are never removed recursively: only the children above, which the host code creates, are deleted. Every target must be a plain direct child of a link-free root with the planned name; symlinks and junctions are neither listed nor followed. Links nested inside a removed folder are unlinked without traversal (Node's `fs.rm` and Rust's `remove_dir_all` both treat junctions and symlinks as links; regression tests cover a nested junction/symlink on both hosts).

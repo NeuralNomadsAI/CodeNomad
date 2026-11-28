@@ -2,12 +2,13 @@ import type { Plugin } from "@opencode/plugin/effect"
 import { Effect } from "effect"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 import { MISSION_DOCUMENT_PREFIX, missionSourceKey, type MissionDocument, type MissionSourceCheckpoint } from "../../missions/mission-document"
 import type { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { isolatedMissionPassageJournal } from "../../missions/mission-document-passage-storage"
 import { readMissionLocalSource } from "../../missions/mission-local-sources"
 import { readMissionGithubSource } from "../../missions/mission-github-source"
-import { readMissionRepositorySource } from "../../missions/mission-repository-source"
+import { readMissionRemoteBranch, readMissionRepositorySource } from "../../missions/mission-repository-source"
 import { isMissionGithubCondition } from "../../missions/mission-github-condition"
 import { stableToken } from "../../missions/receipt-identity"
 import { missionLaunchesRepeatedly, missionLaunchModel, requiresMissionCalendar, type MissionCondition } from "../../missions/launch-policy"
@@ -59,9 +60,12 @@ export function createMissionConditionReader(input: {
     const current = (): true => { input.signal.throwIfAborted(); for (const guard of guards) guard(); return true }
     await assertMissionSourceAcyclic(doc, input.store, id => fence.document(sourceKey(doc, id)))
     const previous = doc.checkpoints.find(item => item.key === missionSourceKey(condition))
-    if (condition.kind === "repository-activity") {
+    if (condition.kind === "repository-activity" || condition.kind === "remote-branch-commits") {
       if (!doc.configuration.roots.some(item => item.directory === input.native.location.directory)) return unavailable()
-      const read = await readMissionRepositorySource(condition, input.native.location.directory, previous, input.signal)
+      const reader = condition.kind === "repository-activity"
+        ? readMissionRepositorySource(condition, input.native.location.directory, previous, input.signal)
+        : readMissionRemoteBranch(condition, input.native.location.directory, previous, input.signal)
+      const read = await reader
       guards.push(read.current); current()
       return { ...read, current }
     }
@@ -85,7 +89,7 @@ export function createMissionConditionReader(input: {
     const journal = new MissionJournal(input.storage, doc.projectID, doc.projectCanonical)
     let historical: Awaited<ReturnType<MissionJournal["missionView"]>> | undefined
     if (!document) {
-      fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${condition.missionID}/`)
+      fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${condition.missionID}/`, undefined, !!input.storage.range)
       historical = await journal.missionView(condition.missionID)
       if (historical.discardedEvents || historical.controlUnavailable || historical.notificationUnavailable || !historical.mission) return unavailable()
     }
@@ -166,7 +170,7 @@ export function createMissionConditionReader(input: {
       const receipt = document.history.find(item => item.outcome === "completed")
       if (receipt) { proof = await passage(receipt) ?? null; completed = proof !== null }
     } else {
-      if (!historical) fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${condition.missionID}/`)
+      if (!historical) fence.journal(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/${condition.missionID}/`, undefined, !!input.storage.range)
       const view = historical ?? await journal.missionView(condition.missionID), mission = view.mission
       if (view.discardedEvents || view.controlUnavailable || view.notificationUnavailable || !mission) return unavailable()
       const firstAdmission = document?.oneTime?.firstPlay?.messageID ?? view.events.flatMap(event => event.type === "mission.control-applied"
@@ -192,7 +196,8 @@ export const acquireNativeMissionConditionReader = Effect.fn("missions.acquireCo
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const fence = yield* acquireNativeSourceFence(current)
   const observationFor = yield* acquireNativeSourceObservation(run, current)
-  const storage: MissionStorage = { get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
+  const range = yield* optionalOrdinaryJournalRange(ctx, run)
+  const storage: MissionStorage = { range, get: key => run(ctx.storage.get(key)) as ReturnType<MissionStorage["get"]>,
     scan: value => run(ctx.storage.scan(value)) as ReturnType<MissionStorage["scan"]>, set: async () => { throw new Error("Read-only event source") } }
   return createMissionConditionReader({ store, storage, native, observation, fence, signal, current, observationFor })
 })

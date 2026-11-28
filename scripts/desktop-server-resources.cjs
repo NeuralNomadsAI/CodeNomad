@@ -105,6 +105,8 @@ function stagePackagedServer(options) {
     fs.rmSync(path.join(rootModules, "@neuralnomads", "codenomad"), { recursive: true, force: true })
     fs.cpSync(rootModules, serverModules, { recursive: true, dereference: true })
     if (fs.existsSync(serverOverrides)) fs.cpSync(serverOverrides, serverModules, { recursive: true, dereference: true })
+    // The notices ship with the code they cover (the bundled server includes MIT-licensed OpenCode code).
+    fs.copyFileSync(path.join(serverRoot, "THIRD_PARTY_NOTICES.md"), path.join(stagedServerRoot, "THIRD_PARTY_NOTICES.md"))
     for (const artifact of ["public", "dist"]) {
       fs.cpSync(path.join(serverRoot, artifact), path.join(stagedServerRoot, artifact), { recursive: true })
     }
@@ -122,6 +124,7 @@ function copyPackagedServerResources(options) {
   fs.mkdirSync(serverDest, { recursive: true })
 
   copyRequiredArtifact(serverRoot, serverDest, "package.json", log)
+  copyRequiredArtifact(serverRoot, serverDest, "THIRD_PARTY_NOTICES.md", log)
   copyRequiredArtifact(serverRoot, serverDest, "public", log)
   copyRequiredArtifact(serverRoot, serverDest, "node_modules", log)
   copyServerDist(serverRoot, serverDest, log)

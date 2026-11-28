@@ -1,5 +1,15 @@
-export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; workspaceId?: string }
-type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string }
+import { backendIdOf, backendScoped, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { BackendId } from "../lib/backend-transport"
+import { normalizeWorkspacePath } from "../../../server/src/workspaces/workspace-path-key"
+
+export { normalizeWorkspacePath }
+
+export type ReconcileTabDescriptor = { kind: string; folderPath?: string; occurrence?: number; backendId?: BackendId; workspaceId?: string; serverId?: string }
+type LiveWorkspaceDescriptor = { id: string; folderPath: string; status?: string; backendId?: BackendId; serverId?: string }
+export function matchesRestoredServer(tab: { backendId?: BackendId; serverId?: string }, serverId?: string): boolean {
+  return backendIdOf(tab) === LOCAL_BACKEND_ID || !!tab.serverId && tab.serverId === serverId
+}
+
 export type SessionDescriptor = { id: string; parentId?: string | null }
 export interface RestoredSessionReferences {
   activeParentSessionId?: string
@@ -11,10 +21,12 @@ export interface RestoredSessionReferences {
   generationRecoverySessionIds?: readonly string[]
   expandedSessionIds?: readonly string[]
 }
-export function normalizeWorkspacePath(folderPath: string): string {
-  const windowsLike = /^(?:[A-Za-z]:[/\\]|[/\\]{2})/.test(folderPath)
-  const normalized = windowsLike ? folderPath.replace(/\\/g, "/").toLowerCase() : folderPath
-  return normalized === "/" || /^[a-z]:\/$/.test(normalized) ? normalized : normalized.replace(/\/+$/, "")
+/** One project of one backend: the normalized folder, prefixed by the backend id unless local. */
+export function workspaceIdentity(folderPath: string, backendId?: BackendId): string {
+  return backendScoped(backendId, normalizeWorkspacePath(folderPath))
+}
+export function workspaceInstallationKey(folder: string, backendId?: BackendId, serverId?: string): string {
+  return JSON.stringify([workspaceIdentity(folder, backendId), serverId])
 }
 export function getUnavailableWorkspaceIds(
   localIds: Iterable<string>,
@@ -27,38 +39,26 @@ export function reconcileWorkspaceTabs(
   tabs: readonly ReconcileTabDescriptor[],
   liveWorkspaces: readonly LiveWorkspaceDescriptor[],
 ) {
-  const liveByPath = new Map<string, LiveWorkspaceDescriptor[]>()
+  const liveById = new Map<string, LiveWorkspaceDescriptor>()
   for (const workspace of liveWorkspaces) {
     if (workspace.status === "stopped" || workspace.status === "error") continue
-    const path = normalizeWorkspacePath(workspace.folderPath)
-    liveByPath.set(path, [...(liveByPath.get(path) ?? []), workspace])
+    liveById.set(workspace.id, workspace)
   }
   const nextOccurrences = new Map<string, number>()
-  // A saved record that still exists for the same folder wins: occurrences shift
-  // when another client closes a sibling record of that folder.
-  const byId = new Map<number, string>()
-  for (const [tabIndex, tab] of tabs.entries()) {
-    if (tab.kind !== "workspace" || typeof tab.folderPath !== "string" || !tab.workspaceId) continue
-    const path = normalizeWorkspacePath(tab.folderPath)
-    if (liveByPath.get(path)?.some(workspace => workspace.id === tab.workspaceId) && ![...byId.values()].includes(tab.workspaceId)) {
-      byId.set(tabIndex, tab.workspaceId)
-    }
-  }
-  const claimed = new Set<string>(byId.values())
   return tabs.flatMap((tab, tabIndex) => {
     if (tab.kind !== "workspace" || typeof tab.folderPath !== "string") return []
-    const path = normalizeWorkspacePath(tab.folderPath)
+    const path = workspaceInstallationKey(tab.folderPath, tab.backendId, tab.serverId)
     const inferred = nextOccurrences.get(path) ?? 0
     const occurrence = Number.isInteger(tab.occurrence) && Number(tab.occurrence) >= 0 ? Number(tab.occurrence) : inferred
     nextOccurrences.set(path, Math.max(inferred, occurrence) + 1)
-    const savedId = byId.get(tabIndex)
-    if (savedId) return [{ tabIndex, descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence }, existingWorkspaceId: savedId }]
-    const workspace = liveByPath.get(path)?.[occurrence]
-    const existingWorkspaceId = workspace && !claimed.has(workspace.id) ? workspace.id : null
-    if (existingWorkspaceId) claimed.add(existingWorkspaceId)
+    // Global inventory order cannot establish ownership of another record.
+    const live = tab.workspaceId ? liveById.get(tab.workspaceId) : undefined
+    const existingWorkspaceId = live && matchesRestoredServer(tab, live.serverId)
+      && workspaceInstallationKey(live.folderPath, live.backendId, live.serverId) === path ? live.id : null
+    if (existingWorkspaceId) liveById.delete(existingWorkspaceId)
     return [{
       tabIndex,
-      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence },
+      descriptor: { kind: "workspace" as const, folderPath: tab.folderPath, occurrence, ...(tab.backendId ? { backendId: tab.backendId } : {}) },
       existingWorkspaceId,
     }]
   })

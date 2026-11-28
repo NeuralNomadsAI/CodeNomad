@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { compactMissionMap, missionPanelReports } from "./mission-compact-map"
 import { contentDigest } from "./content-digest"
 import { missionActivityContext } from "./mission-activity-context"
@@ -21,9 +22,25 @@ export function missionPanelHeader(mission: MissionMap) {
   }
   const context = missionActivityContext(mission, { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }), control = context.control
   Object.assign(collections.actors, { order: context.actorPage.order })
+  // Keep the exact version of the full task array without constructing one
+  // JSON string containing every task body.
+  const taskDigest = createHash("sha256").update("[", "utf16le")
+  for (const [index, task] of mission.tasks.entries()) {
+    if (index) taskDigest.update(",", "utf16le")
+    taskDigest.update(JSON.stringify(task), "utf16le")
+  }
+  taskDigest.update("]", "utf16le")
   const tasks = { page: map.taskPage!, pins: map.tasks.filter(task => task.order! >= (map.taskPage?.end ?? 0)).map(task => task.id),
     reportPins: map.reports.filter(report => !map.tasks.some(task => task.key === report.taskKey)).map(report => report.id),
-    version: contentDigest(`${contentDigest(JSON.stringify(mission.tasks))}\0${collections.reports.digest}`) }
+    version: contentDigest(`${taskDigest.digest("base64url")}\0${collections.reports.digest}`) }
   const coordinator = mission.actors.find(actor => actor.kind === "coordinator" && actor.sessionId === mission.coordinatorSessionId)
   return { root, collections, tasks, ...(coordinator ? { coordinator: { ...coordinator, location: { ...coordinator.location }, roles: [...coordinator.roles] } } : {}), ...(control ? { control } : {}) }
+}
+
+export function attachPanelHeaderDocument(header: ReturnType<typeof missionPanelHeader>, document: MissionMap["document"]) {
+  if (!document) return header
+  const text = JSON.stringify(document)
+  return text.length <= 4096 ? { ...header, root: { ...header.root, document } } : {
+    ...header, collections: { ...header.collections, document: { characters: text.length, digest: contentDigest(text), total: 1, array: false } },
+  }
 }

@@ -20,13 +20,20 @@ native.get("old").time.archived = 10
 native.get("done").title = "Completed conversation ready to archive"
 const writes: unknown[] = [], lists: unknown[] = []
 let sequence = 10, failWrite = false
+const dispatch = (type: string, data: { sessionID: string; title?: string }, created = ++sequence) => {
+  ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id, event: {
+    id: `evt_${crypto.randomUUID()}`, type, created,
+    location: { directory: "/repo" }, data, durable: { aggregateID: data.sessionID, seq: sequence, version: 1 },
+  } }])
+}
 const event = (sessionID: string, archived: boolean) => {
   const row = native.get(sessionID), created = ++sequence
   row.time = { created: 1, updated: created, ...(archived ? { archived: created } : {}) }
-  ;(serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: id, event: {
-    id: `evt_${crypto.randomUUID()}`, type: archived ? "session.archived" : "session.unarchived", created,
-    location: { directory: "/repo" }, data: { sessionID }, durable: { aggregateID: sessionID, seq: sequence, version: 1 },
-  } }])
+  dispatch(archived ? "session.archived" : "session.unarchived", { sessionID }, created)
+}
+const rename = (sessionID: string, title: string) => {
+  native.get(sessionID).title = title
+  dispatch("session.renamed", { sessionID, title })
 }
 const client: any = { session: {
   list: async (input: any) => { lists.push(input); return { data: [...native.values()].filter(row =>
@@ -57,6 +64,6 @@ function Fixture() {
 }
 render(() => <Fixture />, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { writes, lists, event, setFilter, fail: (value: boolean) => { failWrite = value },
+;(window as any).fixture = { writes, lists, event, rename, setFilter, fail: (value: boolean) => { failWrite = value },
   flags: () => [...native].map(([key, value]) => [key, value.time.archived]),
   selected: () => activeSessionId().get(id), current: () => sessions().get(id)?.get("done") }

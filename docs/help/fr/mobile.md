@@ -4,11 +4,13 @@ Utilisez l’interface navigateur sur téléphone ou tablette pour poursuivre le
 
 ## Se connecter depuis un téléphone ou une tablette {#connect}
 
+Les serveurs enregistrés sont accessibles dans **Parcourir** depuis un onglet vide et dans Paramètres → Serveurs. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
+
 1. Sur l’hôte, ouvrez **Paramètres → Accès distant → Contrôle à distance**, puis choisissez **Démarrer le contrôle à distance**.
 2. Scannez le QR code d’appairage avec votre appareil mobile et ouvrez le lien dans le navigateur que vous comptez garder.
 3. Sinon, configurez l’[accès direct](remote-access.md), ouvrez l’URL HTTPS accessible et de confiance de l’hôte, puis connectez-vous avec son mot de passe serveur.
 
-Le Contrôle à distance exige un appairage ; les connexions directes nécessitent routage, écoute accessible et authentification. N’utilisez pas `localhost` sur le téléphone pour atteindre votre poste. Perdre les données de site ou changer de profil navigateur peut nécessiter une nouvelle connexion ou un appairage ; voir [Contrôle à distance](remote-control.md).
+Le Contrôle à distance exige un appairage ; les connexions directes nécessitent routage, écoute accessible et authentification. N’utilisez pas `localhost` sur le téléphone pour atteindre votre poste. Perdre les données de site ou changer de profil navigateur peut nécessiter une nouvelle connexion ou un appairage ; voir [Contrôle à distance](remote-control.md). Si le tunnel est bloqué, appairez plutôt l’appareil sur une adresse HTTPS de confiance ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
 ## Installer la PWA {#install-pwa}
 
@@ -28,7 +30,7 @@ Ne désactivez pas l’authentification ou la vérification TLS pour réparer l�
 
 Utilisez les commandes **Volet gauche** et **Volet droit** pour ouvrir navigation et outils. Sur les dispositions étroites, les panneaux recouvrent la conversation au lieu d’imposer une largeur de bureau ; ouvrir un panneau flottant ferme l’autre. Choisir une session dans le panneau flottant des sessions le ferme pour afficher votre choix, même la session déjà affichée ; **Retour** et **Avancer** le laissent ouvert. Les actions d’en-tête passent dans leur menu de débordement si l’espace manque.
 
-La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se redimensionne avec la conversation visible, y compris le clavier à l’écran ; les longs brouillons restent défilables. Sur les appareils uniquement tactiles, l’envoi ne rouvre pas le clavier à l’écran, pour que vous puissiez lire la réponse ; touchez la zone de saisie pour continuer. Pendant qu’une session travaille, le menu **Plus d'actions** de la zone de saisie propose **Mettre le message en file d'attente** ou **Injecter maintenant**, selon ce que votre envoi normal ne fait pas, sans nécessiter de raccourci de clavier physique. Ouvrir une interruption compacte temporairement la zone de saisie sans changer sa hauteur enregistrée ni son brouillon. Répondez aux autorisations/questions dans le dock au-dessus, en gardant son pied d’actions accessible. Voir [Conversations](conversations.md) et [Autorisations](permissions.md).
+La zone de saisie garde Agent, Modèle et Réflexion dans son pied. La taille du champ se calcule d’après la hauteur de la conversation sans le clavier à l’écran. Lorsque le clavier s’ouvre, le champ peut rétrécir temporairement pour laisser de la place aux commandes et aux messages, sans modifier la proportion enregistrée. Les longs brouillons restent défilables. Sur les appareils uniquement tactiles, l’envoi ne rouvre pas le clavier à l’écran, pour que vous puissiez lire la réponse ; touchez la zone de saisie pour continuer. Pendant qu’une session travaille, le menu **Plus d'actions** de la zone de saisie propose **Mettre le message en file d'attente** ou **Injecter maintenant**, selon ce que votre envoi normal ne fait pas, sans nécessiter de raccourci de clavier physique. Ouvrir une interruption compacte temporairement la zone de saisie sans changer sa hauteur enregistrée ni son brouillon. Répondez aux autorisations/questions dans le dock au-dessus, en gardant son pied d’actions accessible. Voir [Conversations](conversations.md) et [Autorisations](permissions.md).
 
 ## Limites de capacité et connectivité {#limits}
 
@@ -43,4 +45,4 @@ La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se 
 
 Gardez le backend accessible. Vérifiez si une action s’est terminée avant de réessayer. Fermer la PWA n’arrête pas un backend autonome ; quitter l’application de bureau hôte et son backend rend le Contrôle à distance indisponible jusqu’au prochain lancement.
 
-Chaque onglet du navigateur, y compris la PWA installée, garde pour cet onglet ses projets ouverts, ses conversations sélectionnées, ses brouillons non envoyés et ses positions de défilement : ils reviennent quand la page se recharge, ou quand le système mobile la recharge après un changement d'application ou un verrouillage de l'écran. Un nouvel onglet, ou une PWA entièrement fermée par le système, s'ouvre sur l'accueil. Désactivez ce comportement pour l'onglet avec **Paramètres → Général → Restaurer l’état précédent**.
+Chaque onglet du navigateur, y compris la PWA installée, garde pour cet onglet ses projets ouverts, ses conversations sélectionnées, ses brouillons non envoyés et ses positions de défilement : ils reviennent quand la page se recharge, ou quand le système mobile la recharge après un changement d'application ou un verrouillage de l'écran. Un nouvel onglet, ou une PWA entièrement fermée par le système, s’ouvre sur un onglet vide. Désactivez ce comportement pour l'onglet avec **Paramètres → Général → Restaurer l’état précédent**.

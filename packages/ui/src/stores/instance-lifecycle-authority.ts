@@ -1,8 +1,15 @@
+import type { BackendId } from "../lib/backend-transport"
+
 export interface InstanceLifecycleAuthorityEvent {
   type: "removed" | "opened" | "unavailable"
   instanceId: string
   folder: string
+  /** Occurrence among the open instances of the same folder on the same backend. */
   occurrence: number
+  /** Absent for the local backend. */
+  backendId?: BackendId
+  serverId?: string
+  projectTab?: true
 }
 
 const listeners = new Set<(event: InstanceLifecycleAuthorityEvent) => void>()
@@ -21,6 +28,6 @@ export function onInstanceLifecycleAuthority(
 
 export function publishInstanceLifecycleAuthority(event: InstanceLifecycleAuthorityEvent): void {
   if (event.type === "opened") openOccurrences.add(event.instanceId)
-  if (event.type !== "opened") openOccurrences.delete(event.instanceId)
+  else openOccurrences.delete(event.instanceId)
   for (const listener of listeners) listener(event)
 }

@@ -41,8 +41,9 @@ async function main() {
       if(name === 'inputs') await page.waitForFunction(()=>document.querySelector('#later')?.textContent === 'Ready now')
       const tree=await cdp.send("Page.getFrameTree")
       const world=await cdp.send("Page.createIsolatedWorld",{frameId:tree.frameTree.frame.id,worldName:"codenomad-webkit"})
-      const read=async(operation:PageOperation)=>{
-        const result=await cdp.send("Runtime.evaluate",{contextId:world.executionContextId,expression:`(function(request){${source}\n})(${JSON.stringify(JSON.stringify(operation))})`,returnByValue:true})
+      const read=async(operation:PageOperation,expectedDocument?:string)=>{
+        const request={...operation,expectedDocument}
+        const result=await cdp.send("Runtime.evaluate",{contextId:world.executionContextId,expression:`(function(request){${source}\n})(${JSON.stringify(JSON.stringify(request))})`,returnByValue:true})
         assert.equal(result.exceptionDetails,undefined,JSON.stringify(result.exceptionDetails))
         return JSON.parse(result.result.value) as {document:string;result:{nodes:SemanticNode[];handle?:string}}
       }
@@ -79,12 +80,12 @@ async function main() {
         assert.match(render(webkit.result.nodes,{query:"Detailed help"}),/First choice/)
         assert.match(render(webkit.result.nodes,{rootBackendNodeId:button.node}),/First choice/)
         assert.match(render(webkit.result.nodes,{budget:200}),/hidden|more/)
-        const handle=(await read({op:"resolve",node:button.node!})).result.handle
+        const handle=(await read({op:"resolve",node:button.node!},webkit.document)).result.handle
         assert.ok(handle)
         await page.evaluate(()=>{location.hash="stable"; history.pushState({},"","?same");})
         assert.equal((await read({op:"checkpoint"})).document,webkit.document)
         await page.evaluate(()=>{const item=document.querySelector("#aria-button")!;item.remove();document.querySelector("main")!.append(item)})
-        assert.equal((await read({op:"resolve",node:button.node!})).result.handle,undefined)
+        assert.equal((await read({op:"resolve",node:button.node!},webkit.document)).result.handle,undefined)
         const recreated=(await read({op:"tree"})).result.nodes.find(node=>node.name === "First choice" && node.role === "button")!
         assert.notEqual(recreated.node,button.node)
         await page.evaluate(()=>{document.open();document.write('<title>Recreated</title><button>New document</button>');document.close()})

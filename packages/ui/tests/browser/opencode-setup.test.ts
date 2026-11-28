@@ -19,6 +19,31 @@ before(async () => {
 })
 after(async () => { await browser?.close(); })
 
+for (const explicit of [false, true]) test(`remote restoration releases only automatic local setup (explicit=${explicit})`, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {
+    state: "missing", binaryPath: "opencode", target: "host", canUpgrade: true,
+    minimumVersion: "2.3.0", latestVersion: "2.3.0", recommendedVersion: "2.3.0",
+  } }))
+  try {
+    await page.goto(url)
+    await page.getByRole("dialog").waitFor()
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    if (explicit) await page.evaluate(() => (window as any).fixture.reopen())
+    await page.evaluate(() => (window as any).fixture.automatic(false))
+    if (explicit) assert.equal(await page.getByRole("dialog").count(), 1, "an explicit local dialog keeps its owner")
+    else await page.getByRole("dialog").waitFor({ state: "detached" })
+    assert.equal(await page.locator(".opencode-setup-reminder").count(), 0)
+    if (!explicit) {
+      await page.evaluate(() => (window as any).fixture.reopen())
+      await page.getByRole("dialog").waitFor()
+    }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 for (const surface of ["recovery", "settings"]) test(`${surface} shows sustained install progress through checking and connection`, async () => {
   const page = await browser.newPage()
   let finishInstall!: () => void, finishCheck!: () => void, finishConnect!: () => void
@@ -53,7 +78,7 @@ for (const surface of ["recovery", "settings"]) test(`${surface} shows sustained
     const progress = page.locator(".opencode-setup-progress")
     await progress.getByText("Installing OpenCode…", { exact: true }).waitFor()
     assert.equal(await progress.getByText(/Keep CodeNomad open/).count(), 1)
-    assert.equal(await progress.locator("svg.animate-spin").count(), 1)
+    assert.equal(await progress.locator(".animate-spin svg").count(), 1)
     assert.equal(await progress.evaluate(el => el.closest('[aria-busy="true"]') === null), true, "live progress must not be suppressed by a busy ancestor")
     await page.clock.fastForward(65_000)
     await progress.getByRole("timer").filter({ hasText: "1:05" }).waitFor()

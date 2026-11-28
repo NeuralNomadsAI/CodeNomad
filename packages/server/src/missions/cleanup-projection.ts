@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto"
 import type { MissionCleanup, MissionCleanupReason, MissionDeletedEvent, MissionEvent } from "./model"
+import { truncateMissionText } from "./truncate-text"
 
 /** Settled cleanups shown after the pending ones. */
 export const SETTLED_CLEANUP_HISTORY = 20
 /** Payload bound of the displayed cleanups. */
 export const MAX_PROJECTED_CLEANUPS = 2_000
+const CLEANUP_OBJECTIVE_LIMIT = 240
+export const cleanupObjective = (objective: string) => truncateMissionText(objective, CLEANUP_OBJECTIVE_LIMIT)
 
 /** The session a mission event makes that mission's member for shared-session cleanup checks. */
 export function cleanupReference(event: MissionEvent): string | undefined {
@@ -120,7 +123,7 @@ function projectDeletion(deletion: MissionDeletedEvent, group: readonly MissionE
   }
   return { missionID: deletion.missionID, deletionID: deletion.id, requestID: deletion.requestID,
     expectedRevision: deletion.expectedRevision, deleteManagedSessions: deletion.deleteManagedSessions ?? false,
-    objective: objective.slice(0, 240), removed, retained, pending, reasons: [...reasons], createdAt: deletion.createdAt,
+    objective: cleanupObjective(objective), removed, retained, pending, reasons: [...reasons], createdAt: deletion.createdAt,
     ...(deletion.documentCleanup ? { documentPending: documentCleanupPending(deletion, group) } : {}) }
 }
 
@@ -128,7 +131,7 @@ export const missionCleanupSchema = {
   type: "object", properties: {
     missionID: { type: "string" }, deletionID: { type: "string" }, requestID: { type: "string" },
     expectedRevision: { type: "integer", minimum: 1 }, deleteManagedSessions: { type: "boolean" },
-    objective: { type: "string", maxLength: 240 }, createdAt: { type: "number" },
+    objective: { type: "string", maxLength: CLEANUP_OBJECTIVE_LIMIT }, createdAt: { type: "number" },
     removed: { type: "integer", minimum: 0 }, retained: { type: "integer", minimum: 0 }, pending: { type: "integer", minimum: 0 },
     documentPending: { type: "boolean" },
     reasons: { type: "array", maxItems: cleanupReasons.length, items: { type: "string", enum: cleanupReasons } },

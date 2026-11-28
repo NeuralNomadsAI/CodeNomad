@@ -1,10 +1,23 @@
 import assert from "node:assert/strict"
-import { it } from "node:test"
+import { before, it, mock } from "node:test"
 import { storage, type OwnerBucket } from "../lib/storage"
 import { normalizeColorScheme } from "../lib/theme-scheme"
 
 type PreferencesModule = typeof import("./preferences")
 let moduleId = 0
+
+before(async () => {
+  // i18n imports the canonical store. Finish its bootstrap before measuring a fresh test instance.
+  mock.method(storage, "loadConfigOwner", async () => ({}))
+  mock.method(storage, "loadStateOwner", async () => ({}))
+  mock.method(storage, "revalidateUiConfigOwner", async () => ({}))
+  try {
+    const canonical = await import("./preferences")
+    await canonical.ensureLoaded()
+  } finally {
+    mock.restoreAll()
+  }
+})
 
 function deferred<T>() {
   let resolve!: (value: T) => void

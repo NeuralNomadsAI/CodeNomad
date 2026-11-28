@@ -1,6 +1,6 @@
 # Unterhaltungen
 
-Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
+Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. Patches mit mehreren Dateien zeigen Änderungen pro Datei bis zur Anzeigegrenze; beim Kopieren der Werkzeugausgabe werden alle Dateien berücksichtigt. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
 
 Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf.
 
@@ -20,6 +20,16 @@ Klicken Sie auf **Bereit** oder **Unterbrochen** (**Ausblenden**), um das Abzeic
 Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Unter **Einstellungen → Allgemein** ist **Untersitzungen automatisch aufklappen** standardmäßig aktiviert. Sichtbare Zweige der ausgewählten Unterhaltung öffnen sich, wenn Untersitzungen zu arbeiten, zu komprimieren oder auf Eingabe zu warten beginnen. Deaktivieren Sie die Option, damit Aktivität keine Zweige öffnet; manuelles Aufklappen und ausdrückliche Navigation bleiben verfügbar. Geöffnete Zweige, auch automatisch geöffnete, werden zur Wiederherstellung gespeichert.
 
 Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die Reihenfolge der Liste. **Vorherige Sitzung** / **Nächste Sitzung** in der Palette durchlaufen stattdessen die sichtbare Liste.
+
+## Unterhaltungen als Favoriten behalten {#favorites}
+
+Bewegen Sie den Mauszeiger über eine Sitzungszeile oder fokussieren Sie sie, um ihre Aktionen anzuzeigen. Auf Touchscreens sind sie direkt sichtbar. Verwenden Sie die Sterntaste oder wählen Sie bei wenig Platz unter **Weitere Aktionen** (⋯) **Zu Favoriten hinzufügen** oder **Aus Favoriten entfernen**.
+
+Im Sitzungsbaum stehen Anfragen, die auf Ihre Eingabe warten, zuerst. Favoriten rücken nur unter Sitzungen derselben Ebene mit derselben übergeordneten Sitzung nach vorn. Jeder Zweig bleibt auf- oder eingeklappt. In der Suche zeigt **Aktivität** passende Favoriten zuerst, auch eingeblendete Untersitzungen. **Name** und **Worktree** folgen ihrer eigenen Reihenfolge.
+
+Wählen Sie in der Sitzungssuche **Nur Favoriten**. **… ausgeblendete Treffer anzeigen** aktiviert beide Sitzungstypen, ohne Suchtext, Worktree oder andere Filter zu ändern. **Zurücksetzen** stellt die voreingestellten Filter und die Sortierung wieder her.
+
+Fenster am selben CodeNomad-Backend teilen die Favoriten für denselben geöffneten Ordner. Die Sitzungsbereinigung behält Favoriten und ihre übergeordneten Sitzungen; explizites Löschen bleibt möglich.
 
 ## Archivieren und wiederherstellen {#archive}
 
@@ -61,8 +71,10 @@ Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrich
 ## Dateien aus Antworten öffnen {#open-files-from-replies}
 
 1. Agent-Antworten verlinken Projektdateien mit relativen und absoluten Pfaden.
-2. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
-3. Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees behalten das normale Linkverhalten.
+2. Auch ein als einfacher Text oder in Inline-Code geschriebener Pfad wird zu einem Link, sobald bekannt ist, dass der Worktree der Unterhaltung die Datei enthält – auch Dateinamen in jedem Schriftsystem; nicht vorhandene Pfade bleiben einfacher Text. In der Desktop-App werden bei einem Projekt auf diesem Computer auch Ordner zu Links.
+3. Ein einfacher Klick öffnet die verlinkte Datei in der Dateivorschau, gelesen aus dem Worktree der Unterhaltung.
+4. In der Desktop-App behält die Dateivorschau bei einem Projekt auf diesem Computer die Textdateien und Bilder, die sie anzeigen kann. Ordner, andere Dateien (Videos, PDFs …), Pfade außerhalb des Worktrees und `file:`-Links werden mit Ihrem System geöffnet, wie immer bei Strg/⌘-Klick und Mittelklick; kann etwas nicht geöffnet werden, erscheint ein Fehler.
+5. Anderswo behalten Klicks mit Zusatztasten (Strg/⌘-Klick, Umschalt-Klick, Mittelklick) und Links außerhalb des Session-Worktrees das normale Linkverhalten.
 
 ## Befehle und Shell-Modus {#commands-shell}
 
@@ -104,6 +116,14 @@ Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbr
 3. Verwenden Sie **Ziel pausieren** oder **Ziel fortsetzen** in dieser Zeile oder senden Sie `/goal pause` oder `/goal resume`. Mit **Ziel entfernen** oder `/goal clear` entfernen Sie das Ziel.
 
 Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
+
+## Sitzungsautomationen mit /automation verfolgen {#automations}
+
+1. Erstellen oder verwalten Sie zeit- oder ereignisgesteuerte Automationen in einer Unterhaltung mit `/automation` (oder über die Automationswerkzeuge des Agenten).
+2. Solange die Unterhaltung Automationen hat, zeigt **Status** sie über **Tokens** (unter **Ziel**, falls eines gesetzt ist): Jede Zeile zeigt ihren Zustand (**Aktiv**, **Pausiert** oder **Erledigt**), den Namen, die nächste Ausführung oder den Auslöser sowie die Anzahl der Ausführungen. Abgeschlossene Automationen bleiben unter **Erledigt (N)** eingeklappt.
+3. Zeigen Sie auf eine Zeile oder fokussieren Sie sie, um Auslöser, Zeitplan und letzte Ausgabe zu lesen, oder klicken Sie darauf, um das Detailfenster zu öffnen. Verwenden Sie **Automation pausieren**, **Automation fortsetzen** oder **Automation löschen** in einer Zeile zur direkten Steuerung.
+
+Es werden nur Automationen der aktiven Unterhaltung angezeigt. Das Löschen kann nicht rückgängig gemacht werden und macht bereits erledigte Arbeit nicht rückgängig. Ohne Automationen oder mit einem OpenCode-Dienst ohne Automations-API erscheint der Block nicht.
 
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 

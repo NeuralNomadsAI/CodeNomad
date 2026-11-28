@@ -86,7 +86,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
                 }
               }}
             >
-              <Show when={!creatingSession()} fallback={<Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" />}>
+              <Show when={!creatingSession()} fallback={<span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" aria-hidden="true" /></span>}>
                 <PlusSquare class="w-4 h-4" />
               </Show>
             </IconButton>
@@ -95,7 +95,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => {
               size="small"
               color="inherit"
               aria-label={props.t("sessionList.filter.ariaLabel")}
-              title={props.t("sessionList.filter.ariaLabel")}
+              title={props.t("sessionList.filter.open")}
               aria-pressed={props.showSearch()}
               onClick={props.onToggleSearch}
             >

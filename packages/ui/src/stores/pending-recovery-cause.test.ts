@@ -2,62 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import {
-  batchIssue, combinePendingFailures, describePendingRecovery, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
+  batchIssue, combinePendingFailures, hydrationCause, PendingRecoveryError, recoveryCauseOf, refusedDirectories,
 } from "./pending-recovery-cause"
-
-// Echoes each key with its parameters so assertions show exactly what the user would read.
-const t = (key: string, params: Record<string, string | number> = {}) =>
-  `${key}(${Object.entries(params).map(([name, value]) => `${name}=${value}`).join(";")})`
-const none = () => []
-
-test("folders are grouped by cause, named by basename and capped with a remainder", () => {
-  const { title, message } = describePendingRecovery({ kind: "directories", directories: [
-    { directory: "D:\\CodeNomad\\.codenomad\\worktrees\\prompt-replay-yield", issue: "not-owned" },
-    ...["a", "b", "c", "d"].map((name) => ({ directory: `/repo/${name}/`, issue: "missing" as const })),
-  ] }, "CodeNomad", (directories) => directories.length === 5 ? ["ISSUES Codenomad"] : [], t)
-  assert.equal(title, "interruption.recoveryIncomplete.title(workspace=CodeNomad)")
-  assert.equal(message, [
-    "interruption.recoveryIssue.notOwned(directories=prompt-replay-yield;detail=)",
-    "interruption.recoveryIssue.missing(directories=a, b, c (+1);detail=)",
-    "interruption.recoverySessions(sessions=ISSUES Codenomad)",
-  ].join(" "))
-})
-
-test("an unanswered folder shows the server detail only when there is one", () => {
-  const describe = (detail?: string) => describePendingRecovery({ kind: "directories", directories: [
-    { directory: "/repo", issue: "unavailable", detail },
-  ] }, "repo", none, t).message
-  assert.equal(describe(), "interruption.recoveryIssue.unavailable(directories=repo;detail=)")
-  assert.equal(describe("HTTP 503"), "interruption.recoveryIssue.unavailableDetail(directories=repo;detail=HTTP 503)")
-})
-
-test("non-folder causes keep their own message and detail", () => {
-  for (const [cause, expected] of [
-    [{ kind: "unstable" }, "interruption.recoveryCause.unstable(detail=)"],
-    [{ kind: "hydration", detail: "worktrees" }, "interruption.recoveryCause.hydration(detail=worktrees)"],
-  ] as const) assert.equal(describePendingRecovery(cause, "repo", none, t).message, expected)
-})
-
-test("an unavailable plugin is one connection-wide notice that names no project", () => {
-  assert.deepEqual(describePendingRecovery({ kind: "unsupported" }, "repo", none, t), {
-    title: "interruption.recoveryUnsupported.title()", message: "interruption.recoveryCause.unsupported()",
-  })
-})
-
-test("folders sharing a name keep their parent so each one stays visible", () => {
-  const { message } = describePendingRecovery({ kind: "directories", directories: [
-    { directory: "/repo/.codenomad/worktrees/app", issue: "missing" },
-    { directory: "/other/app", issue: "missing" },
-    { directory: "/repo/.codenomad/worktrees/app", issue: "missing" },
-  ] }, "repo", none, t)
-  assert.equal(message, "interruption.recoveryIssue.missing(directories=worktrees/app, other/app;detail=)")
-  // Same name and parent: the full paths keep both folders visible and counted.
-  const nested = describePendingRecovery({ kind: "directories", directories: [
-    { directory: "/repo/.codenomad/worktrees/app", issue: "missing" },
-    { directory: "/repo/sub/.codenomad/worktrees/app", issue: "missing" },
-  ] }, "repo", none, t).message
-  assert.equal(nested, "interruption.recoveryIssue.missing(directories=/repo/.codenomad/worktrees/app, /repo/sub/.codenomad/worktrees/app;detail=)")
-})
 
 test("a refused batch keeps each folder's reported status and reason", () => {
   const refused = new HttpResponseError("Directory does not belong to workspace", 403, null, undefined, { directories: [

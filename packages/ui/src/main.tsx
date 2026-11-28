@@ -5,7 +5,7 @@ import { ThemeProvider } from "./lib/theme"
 import { ConfigProvider, ensureLoaded, getAppearancePalette, highContrastPreference, preferences, themePreference } from "./stores/preferences"
 import { InstanceConfigProvider } from "./stores/instance-config"
 import { runtimeEnv } from "./lib/runtime-env"
-import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
+import { getLocaleDirection, I18nProvider, preloadLocaleMessages, type Locale } from "./lib/i18n"
 import { applyColorScheme } from "./lib/theme-scheme"
 import { effectiveAppearance } from "./lib/appearance-preferences"
 import { effectiveHighContrast } from "./lib/high-contrast"
@@ -33,8 +33,11 @@ async function bootstrap() {
     const { installExternalLinkClicks } = await import("./lib/native/external-link-clicks")
     installExternalLinkClicks(window)
   }
+  const dictation = runtimeEnv.windowContext === "dictation"
   let RootComponent: Component = PreferencesWindow
-  if (usesClientState(runtimeEnv)) {
+  if (dictation) {
+    RootComponent = (await import("./components/remote-dictation-window")).RemoteDictationWindow
+  } else if (usesClientState(runtimeEnv)) {
     const [{ initializeClientState }, { runStartupStateCommand }, { installNativeStartupStateCommandHandler }, appModule] = await Promise.all([
       import("./stores/client-state"),
       import("./stores/client-state-owner-commands"),
@@ -50,6 +53,7 @@ async function bootstrap() {
     RootComponent = appModule.default
   }
 
+  let locale: Locale = "en"
   if (typeof document !== "undefined") {
     const applyInitialTheme = () => {
       const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false
@@ -61,11 +65,18 @@ async function bootstrap() {
     try {
       await ensureLoaded()
       applyInitialTheme()
-      await preloadLocaleMessages(preferences().locale)
+      locale = await preloadLocaleMessages(preferences().locale)
     } catch {
       applyInitialTheme()
-      await preloadLocaleMessages()
+      locale = await preloadLocaleMessages()
     }
+  }
+
+  if (dictation) {
+    document.documentElement.lang = locale
+    document.documentElement.dir = getLocaleDirection(locale)
+    render(() => <RootComponent />, mount)
+    return
   }
 
   render(

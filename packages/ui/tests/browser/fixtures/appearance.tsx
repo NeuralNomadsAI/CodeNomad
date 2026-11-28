@@ -36,7 +36,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
       <div class="file-list-item file-list-item-active" tabindex="0">Selected.ts</div>
       <button class="file-viewer-toolbar-icon-button" aria-label="File action">↗</button>
       <div class="git-change-section-header" tabindex="0">Changes</div>
-      <div class="status-process-card" tabindex="0">Background task</div>
+      <article class="status-process-card"><button type="button" class="status-process-command">Background task</button></article>
       <button class="settings-nav-button" data-selected="true">General</button>
     </div>
   </div>

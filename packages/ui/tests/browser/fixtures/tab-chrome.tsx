@@ -9,6 +9,8 @@ import { applyColorScheme, normalizeColorScheme } from "../../../src/lib/theme-s
 import type { AppTabRecord } from "../../../src/stores/app-tabs"
 import AlertDialog from "../../../src/components/alert-dialog"
 import { showChoiceDialog, showConfirmDialog } from "../../../src/stores/alerts"
+import { setSessions } from "../../../src/stores/session-state"
+import { createClientSession } from "../../../src/types/session"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 
@@ -34,6 +36,25 @@ function Fixture() {
     // One wide tab followed by two narrow ones.
     uneven: () => { setOrder([tabs[0], short("docs"), short("api")]); setCount(3) },
     reset: () => { setOrder(tabs); setCount(9) },
+    statusPair(status: "working" | "idle") {
+      const local = short("Local status")
+      const remote = short("Remote status")
+      if (local.kind !== "instance" || remote.kind !== "instance") throw new Error("Expected two project tabs")
+      remote.instance.backendId = "fixture-remote"
+      if (status === "working") {
+        setOrder([local, remote]); setCount(2); setActive(local.id)
+      }
+      setSessions(previous => {
+        const next = new Map(previous)
+        for (const { instance } of [local, remote]) {
+          const row = createClientSession({ id: "status", title: "status", projectID: "fixture", version: "1",
+            location: { directory: instance.folder }, time: { created: 1, updated: 1 },
+            cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }, instance.id)
+          next.set(instance.id, new Map([[row.id, { ...row, status, idleSince: status === "idle" ? Date.now() : null }]]))
+        }
+        return next
+      })
+    },
     palette: (id: string) => applyColorScheme(normalizeColorScheme(id)),
     choice: () => showChoiceDialog("Keep or discard?", [
       { value: "discard", label: "Discard", tone: "danger" },

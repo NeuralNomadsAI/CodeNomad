@@ -7,25 +7,12 @@ import type {
   RecentFolder,
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
+import type { ServerContractMeta } from "./meta-contract"
 export type { MemoryScope, MemoryEntryType, MemoryContent, MemoryEntryHeader, MemoryEntry, MemoryErrorCode, MemoryOperation, MemoryContext, MemorySettings, MemoryVersionedEntry, MemoryUIEntry, MemoryListEntry, MemoryUIListResult, MemoryResult, MemoryApiError } from "./memory/contract"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
 export type { OpenCodeLogsResponse } from "./opencode/logs"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
-export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
-export type { MissionScheduleList } from "./missions/mission-schedule-list"
-export type { MissionScheduleRead } from "./missions/mission-schedule-view"
-export interface MissionScheduleCapability {
-  location: PluginControlLocation
-  api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
-  enabled: boolean
-  origin: string | null
-  provenance?: "environment" | "experimental-block" | "all-flags" | "channel-default"
-  activation: { available: true; targets: Array<{ path: string; scope: "global" | "project" }> }
-    | { available: false; reason: string; targets: []; code?: "schedule-activation-refused";
-      refusal?: { reason: "explicit-off" | "masked"; provenance: "environment" | "experimental-block" | "all-flags" | "channel-default";
-        layer: "environment" | "global" | "project" | "inherited" | "imposed"; path?: string; openable: boolean; configFileID?: string } }
-}
 
 export type {
   MissionActor,
@@ -53,57 +40,6 @@ export type {
   MissionTaskStatus,
   MissionTemplateId,
 } from "./missions/model"
-
-/** Deliberately excludes private config, authority receipts and native Job metadata. */
-export interface MissionRecurrenceSnapshot {
-  version: 1
-  projectID: string
-  schedules: Array<{
-    id: string
-    revision: number
-    title: string
-    state: "running" | "paused" | "interrupted" | "stopped"
-    clock: { time: string; zone: string }
-    nextDueAt: number | null
-    interruptionReason?: "service-restart" | "error"
-    /** Non-blocking display warning: the latest wake failed and is being retried. */
-    lastError?: { code: "wake-failed" | "admission-failed" | "settlement-failed"; at: number }
-    pending: { passageID: string; status: "starting" | "running" | "settling" | "uncertain";
-      trigger?: "daily" | "manual"; reason?: "not-observed" | "admission-failing"
-      missionID?: string; conversationID?: string } | null
-    actions: Array<"play" | "pause" | "stop" | "resume" | "run-now" | "check">
-    controls: import("./missions/recurrence-control-contract").RecurrenceControlStatus[]
-    latestResult: MissionRecurrenceReceipt | null
-    history: MissionRecurrenceReceipt[]
-  }>
-}
-
-export interface MissionRecurrenceCurrent {
-  version: 1
-  ownerRevision?: number
-  projectID: string
-  scheduleID: string
-  passageID: string | null
-  source?: import("./missions/mission-current-source").MissionCurrentSource
-  mission?: import("./missions/mission-panel-map").MissionPanelMap
-  activity?: import("./missions/model").MissionActivityProjection
-}
-export type MissionRecurrenceCurrentContent = ReturnType<typeof import("./missions/recurrence-current").currentRecurrenceContent>
-
-/** Bounded native reference receipts only; never the standing instructions, native transcript or authority. */
-export interface MissionRecurrenceReceipt {
-  passageID: string
-  dueAt: number
-  settledAt: number
-  outcome: "completed" | "failed" | "ended-without-report"
-  /** `interrupted`: a service restart cut the passage and nothing resumed it.
-   * `not-started`: its start message was never admitted and cannot be. */
-  reason?: "interrupted" | "not-started"
-  /** Daily schedule or an explicit Run now. */
-  trigger?: "daily" | "manual"
-  missionID?: string
-  conversationID?: string
-}
 
 /**
  * Canonical HTTP/SSE contract for the CLI server.
@@ -284,12 +220,16 @@ export interface WorktreeListResponse {
 export interface WorktreeCreateRequest {
   slug: string
   fromSlug?: string
+  /** The existing branch's expected tip: refuse a missing or moved branch instead of creating one. */
+  revision?: string
   /** Optional branch name (defaults to slug). */
   branch?: string
 }
 
 export interface WorktreeSessionMoveRequest {
   worktreeSlug: string
+  /** The branch the target must still have checked out when the family moves. */
+  branch?: string
 }
 
 export interface WorktreeSessionMoveResponse {
@@ -435,6 +375,8 @@ export interface FileSystemFileContentResponse {
   path: string
   contents: string
   encoding: "utf-8" | "base64"
+  /** Opaque on-disk version of the bytes read. */
+  version?: string
 }
 
 export interface ConfigFileDescriptor {
@@ -575,6 +517,9 @@ export interface PluginActivationControl {
   global: PluginScopeRuleState
   project: PluginScopeRuleState
   controllingRule?: PluginConfiguredRule
+  /** Only activation rules name this ID: no runtime entry, verified descriptor or declaration defines it, and every
+   * declaration has an exported or verified ID. Its exact rules select nothing and are removable. */
+  orphan?: true
 }
 
 export interface PluginControlTarget {
@@ -601,6 +546,7 @@ export interface PluginActivationMutationRequest {
   pluginId: string
   scope: PluginControlScope
   enabled: boolean
+  managedBy?: "codenomad"
 }
 
 export interface PluginActivationMutationResponse {
@@ -619,9 +565,18 @@ export interface WorkspaceFileResponse {
   /** UTF-8 file contents; binary files should be base64 encoded by the caller. */
   contents: string
   encoding?: "utf-8" | "base64"
+  /** Opaque on-disk version, when the server tracks one; a write echoes it as `expectedVersion`. */
+  version?: string
 }
 
 export type WorkspaceFileSearchResponse = FileSystemEntry[]
+
+export type SessionFavorites = Record<string, string[]>
+export interface SessionFavoritesSnapshot {
+  source: string
+  revision: number
+  records: SessionFavorites
+}
 
 export interface InstanceData {
   messageHistory: string[]
@@ -656,6 +611,11 @@ export interface PreviewSession {
   targetUrl: string
   proxyUrl: string
   createdAt: string
+}
+
+export interface RemotePreviewCapability extends PreviewSession {
+  capability: string
+  contentUrl: string
 }
 
 export interface BinaryRecord {
@@ -742,6 +702,11 @@ export interface SpeechSegment {
   text: string
 }
 
+export type VoiceConversationEngine = "classic" | "gemini-live" | "openai-realtime"
+export type VoiceConversationProvider = "geminiLive" | "openaiRealtime"
+export type PublicVoiceConversationConfig = Record<VoiceConversationProvider, { hasApiKey: boolean; model?: string; voice?: string }>
+export type VoiceConversationCapabilities = Record<VoiceConversationProvider, { configured: boolean }>
+
 export interface SpeechCapabilitiesResponse {
   available: boolean
   configured: boolean
@@ -760,6 +725,9 @@ export interface SpeechCapabilitiesResponse {
   ttsConfigured?: boolean
   sttBaseUrl?: string
   ttsBaseUrl?: string
+  voiceConversation?: VoiceConversationCapabilities
+  desktopVoiceConversationEngine?: boolean
+  desktopLiveVoiceConsent?: Partial<Record<Exclude<VoiceConversationEngine, "classic">, number>>
 }
 
 export interface SpeechTranscriptionResponse {
@@ -769,13 +737,10 @@ export interface SpeechTranscriptionResponse {
   segments?: SpeechSegment[]
 }
 
-export interface SpeechSynthesisResponse {
-  audioBase64: string
-  mimeType: string
-}
-
-export interface YoloStateResponse {
-  enabled: boolean
+export type ConversationPermissionMode = "autonomous" | "supervised"
+export interface ConversationPermissionModeResponse {
+  mode: ConversationPermissionMode
+  rootSessionID?: string
 }
 
 export interface RemoteServerProfile {
@@ -783,6 +748,8 @@ export interface RemoteServerProfile {
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  /** Reach `baseUrl` from this OpenSSH destination, through a forward the local backend owns. */
+  ssh?: { host: string }
   createdAt: string
   updatedAt: string
   lastConnectedAt?: string
@@ -791,6 +758,11 @@ export interface RemoteServerProfile {
 export interface RemoteServerProbeRequest {
   baseUrl: string
   skipTlsVerify?: boolean
+}
+
+export interface RemoteServerBrowseResponse {
+  listing: FileSystemListResponse
+  recents: Array<{ path: string; projectName?: string; lastAccessed: number }>
 }
 
 export interface RemoteServerProbeResponse {
@@ -830,6 +802,8 @@ export interface RemoteControlStatus {
   pairedDevices: number
   lastConnectedAt?: string
   error?: string
+  /** Verified direct HTTPS origins where the host can pair devices without the tunnel; host only. */
+  directOrigins?: string[]
 }
 
 export interface RemoteControlPairing {
@@ -842,6 +816,9 @@ export interface RemoteControlDevice {
   name: string
   createdAt: string
   lastSeenAt: string
+  /** Verified direct HTTPS origin the device paired on; absent for Remote Control tunnel devices. */
+  origin?: string
+  revocationPending?: true
 }
 
 export interface RemoteControlStartResponse {
@@ -865,10 +842,9 @@ export type WorkspaceEventType =
   | "instance.dataChanged"
   | "instance.event"
   | "instance.eventStatus"
-  | "yolo.stateChanged"
-  | "yolo.autoAccepted"
   | "permission.receiptsChanged"
   | "memory.changed"
+  | "panelExtensions.notesChanged"
 
 export interface PermissionReceipt {
   requestId: string
@@ -896,7 +872,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
   | { type: "workspace.error"; workspace: WorkspaceDescriptor }
-  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
+  | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped"; temporaryRetained?: true }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
   | { type: "workspace.filesChanged"; workspaceId: string; changes: WorkspaceDirectoryChange[] }
@@ -909,9 +885,9 @@ export type WorkspaceEventPayload =
   | { type: "instance.dataChanged"; instanceId: string; data: InstanceData }
   | { type: "instance.event"; instanceId: string; event: InstanceStreamEvent }
   | { type: "instance.eventStatus"; instanceId: string; status: InstanceStreamStatus; generation: number; reason?: string }
-  | { type: "yolo.stateChanged"; instanceId: string; sessionId: string; enabled: boolean }
-  | { type: "yolo.autoAccepted"; instanceId: string; sessionId: string; permissionId: string }
   | { type: "permission.receiptsChanged"; instanceId: string; sessionId: string; messageId?: string }
+  /** A package's `panel.notes` changed in some project; frames re-read their own. */
+  | { type: "panelExtensions.notesChanged"; id: string }
 
 export interface NetworkAddress {
   ip: string
@@ -946,9 +922,16 @@ export interface SupportMeta {
   latestServerUrl?: string
 }
 
-export interface ServerMeta {
+/** Contract fields are optional on the wire for servers predating their introduction. */
+export interface ServerMeta extends Partial<ServerContractMeta> {
   /** Whether this request has host-local privileges (loopback, outside Remote Control). */
   localRequest?: boolean
+  /** Whether this client may use the host's saved server profiles. */
+  serversUsable?: boolean
+  /** Whether this client may add, edit or remove the host's server profiles. */
+  serversManageable?: boolean
+  /** Whether this client may submit new remote-server credentials. */
+  secretEntryAllowed?: boolean
   /** Whether this request may open SideCars: local, or a verified direct HTTPS origin the host opted in. */
   sidecarsAllowed?: boolean
   /** URL desktop apps should use to connect (prefers loopback HTTP when enabled). */

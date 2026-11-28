@@ -2,11 +2,14 @@
 
 ## Windows, tabs and the shared service {#windows-tabs}
 
-1. Use **New instance** to open another project/home tab in the current window.
+1. Use **New instance** to open an empty tab in the current window, then choose a project.
 2. Use native **Window → New Window** (`Ctrl+Shift+N` or `Cmd+Shift+N`) for a separate application window.
 3. In **Settings → Advanced**, enable **Focus existing window on second launch** if another launch should focus the most recently used window rather than open a new one.
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
+
+Desktop automation stays on the window the agent inspected, even when you switch windows. The agent can list eligible local windows with `codenomad.inspect({targets:true})` and inspect another by its returned identifier.
+Native pointer and keyboard input in the app window requires its main page. Use the separate browser-preview tools for a conversation's web preview.
 
 Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics. **Help → Support CodeNomad** opens the [Support CodeNomad](sponsor.md) page in your browser.
 
@@ -16,12 +19,12 @@ Pass these arguments after the **desktop executable** (Tauri or Electron), in a 
 
 | Argument | Effect |
 | --- | --- |
-| `--connect-server <server>` | Open a remote CodeNomad server using its HTTP(S) URL, saved name or saved ID. See [connection and sign-in behavior](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Open a separate remote window regardless of `multiBackend`, using an HTTP(S) URL, saved name or saved ID. See [remote connections](remote-access.md#connect-server). |
 | `--folder <path>` | Open an existing project directory. Repeat the argument to open several directories; relative paths use the launch working directory. |
 | `<path> ...` | Open project directories without spelling out `--folder`. **Windows Tauri, when already running:** use `--folder` for every directory. Mixing positional paths with `--folder` also drops the entire folder request. |
 | `--new-window` | Request a new application window, including when another launch would normally focus the existing window. |
 
-`--connect-server=<server>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`; local window restoration is then deferred unless connecting fails.
+`--connect-server=<name-or-url>` and `--folder=<path>` also work. Quote paths or server names containing spaces. To open only the remote window, use `--connect-server` alone, without folders or `--new-window`. An already running local window handles the request; at startup, local window restoration is deferred unless connecting fails.
 
 In **PowerShell**:
 
@@ -47,6 +50,8 @@ Each project tab restores its own right-panel selection, Files mode and Mission 
 The Preferences window does not own a separate restore state: these controls target the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, they follow the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one. When Preferences reopens at launch, they reconnect once that project has finished opening; while the folder is still starting, or open in several tabs, they stay unavailable until you open Preferences from the intended window.
 
 Browser and remote clients use embedded settings.
+
+[Restore remote tabs](projects.md#restore-remote-tabs).
 
 ## Desktop data profiles {#data-profiles}
 

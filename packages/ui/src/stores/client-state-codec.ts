@@ -2,10 +2,15 @@ import type { ScrollSnapshot } from "./message-v2/types"
 import { normalizeSessionCatalog, type PersistedSessionCatalogEntry } from "./session-catalog-persistence"
 import { normalizeRestorableAttachmentRecord, type RestorableAttachment } from "./client-state-attachments-codec"
 import type { PersistedGenerationRecovery } from "./session-generation-recovery"
+import { isBackendId, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { BackendId } from "../lib/backend-transport"
 import { normalizeOutlineIndexes, outlineBudget, type OutlineBudget, type PersistedOutline } from "./session-outline-persistence"
 import { MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, type RestorableTabViewState } from "./tab-view-state-codec"
 
 export interface RestorableWorkspaceTabState {
+  /** Absent for the local backend, so states saved before backend ids decode unchanged. */
+  backendId?: BackendId
+  serverId?: string
   kind: "workspace"; folder: string; occurrence?: number; projectName?: string; binaryPath?: string
   /** The backend workspace record it showed; preferred over `occurrence` while that record exists. */
   workspaceId?: string
@@ -21,8 +26,9 @@ export interface RestorableWorkspaceTabState {
 }
 
 export interface RestorableSidecarTabState { kind: "sidecar"; sidecarId: string }
-export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState
-export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number; homeActive?: boolean }
+interface RestorableBlankTabState { kind: "blank" }
+export type RestorableTabState = RestorableWorkspaceTabState | RestorableSidecarTabState | RestorableBlankTabState
+export interface RestorableSessionState { tabs: RestorableTabState[]; activeTabIndex: number }
 export interface ClientSnapshotV1 {
   version: 1; revision: number; savedAt: number
   layout: Record<string, string>; session: RestorableSessionState | null
@@ -32,7 +38,6 @@ const MAX_TABS = 32, MAX_LAYOUT_ENTRIES = 64, MAX_DRAFTS = 24, MAX_SCROLLS_PER_T
 const MAX_IDLE_MARKERS = 256, MAX_RECOVERY = 256, MAX_EXPANDED = 256, MAX_KEY = 256, MAX_PATH = 4096, MAX_ID = 512
 const MAX_LAYOUT_VALUE = 4096, MAX_DRAFT = 32 * 1024, MAX_ANCHOR_KEY = 1024
 const MAX_STRINGS = 96 * 1024, MAX_SCROLLS = 256, MAX_NEWER_CURSORS = 32, MAX_WINDOW_CURSOR = 1024
-const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
 interface StringBudget { remaining: number; scrollSnapshotsRemaining: number; outlines: OutlineBudget; previews: { remaining: number } }
 
@@ -191,6 +196,8 @@ function normalizeWorkspaceTab(
 
   const result: RestorableWorkspaceTabState = {
     kind: "workspace", folder: identity.folder,
+    ...(identity.backendId ? { backendId: identity.backendId } : {}),
+    ...(identity.serverId ? { serverId: identity.serverId } : {}),
     drafts: attachmentResult.drafts,
     attachments: { ...identity.priorityAttachments, ...attachmentResult.attachments },
     scrollSnapshots, unseenIdleSince, generationRecovery,
@@ -221,16 +228,18 @@ function normalizeWorkspaceTab(
 }
 
 interface WorkspaceIdentity {
-  kind: "workspace"; value: Record<string, unknown>; folder: string
+  kind: "workspace"; value: Record<string, unknown>; folder: string; backendId?: BackendId
+  serverId?: string
   activeParentSessionId?: string; activeSessionId?: string
   prioritySessionIds: string[]; priorityDrafts: Record<string, string>
   priorityAttachments: Record<string, RestorableAttachment[]>
 }
-type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState
+type TabIdentity = WorkspaceIdentity | RestorableSidecarTabState | RestorableBlankTabState
 
 function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | null {
   if (!isRecord(value)) return null
   const kind = value.kind ?? value.type
+  if (kind === "blank") return { kind }
   if (kind === "sidecar") {
     const sidecarId = takeString(value.sidecarId, MAX_ID, budget)
     return sidecarId === undefined ? null : { kind, sidecarId }
@@ -240,13 +249,20 @@ function normalizeIdentity(value: unknown, budget: StringBudget): TabIdentity | 
     .every((key) => isRecord(value[key] ?? {}))) return null
   const folder = takeString(value.folder, MAX_PATH, budget)
   if (folder === undefined) return null
+  // A tab of a malformed backend id is dropped rather than reopened on the local backend.
+  const savedBackendId = value.backendId === LOCAL_BACKEND_ID ? undefined : value.backendId
+  if (savedBackendId !== undefined && (!isBackendId(savedBackendId) || takeString(savedBackendId, MAX_ID, budget) === undefined)) return null
+  const backendId = savedBackendId as BackendId | undefined
+  const serverId = backendId ? takeString(value.serverId, MAX_ID, budget) : undefined
   const activeParentSessionId = value.activeParentSessionId === undefined ? undefined
     : takeString(value.activeParentSessionId, MAX_ID, budget)
   const activeSessionId = value.activeSessionId === undefined ? undefined : takeString(value.activeSessionId, MAX_ID, budget)
-  const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID]
+  const recoveredIds = [...new Set([...Object.keys(value.drafts ?? {}), ...Object.keys(value.attachments ?? {})])]
+    .filter(isRecoveredDraftId).slice(0, MAX_DRAFTS - 2)
+  const prioritySessionIds = [activeSessionId, NO_SESSION_DRAFT_SESSION_ID, ...recoveredIds]
     .filter((id): id is string => Boolean(id))
   return {
-    kind: "workspace", value, folder, activeParentSessionId, activeSessionId,
+    kind: "workspace", value, folder, backendId, serverId, activeParentSessionId, activeSessionId,
     prioritySessionIds, priorityDrafts: Object.create(null), priorityAttachments: Object.create(null),
   }
 }
@@ -287,7 +303,16 @@ export function normalizeRestorableSession(value: unknown): RestorableSessionSta
 function normalizeSession(value: unknown, budget: StringBudget): RestorableSessionState | null {
   if (!isRecord(value) || !Array.isArray(value.tabs) || !Number.isInteger(value.activeTabIndex)) return null
   const requested = Number(value.activeTabIndex)
-  const rawTabs = value.tabs.slice(0, MAX_TABS)
+  const rawTabs = value.tabs
+  // Empty slots use spare capacity; they must not crowd project state out of a snapshot.
+  const chosen = new Set<number>()
+  for (let index = 0; index < rawTabs.length && chosen.size < MAX_TABS; index++) {
+    const tab: unknown = rawTabs[index]
+    if (!isRecord(tab) || (tab.kind ?? tab.type) !== "blank") chosen.add(index)
+  }
+  if (chosen.size < MAX_TABS && requested >= 0 && requested < rawTabs.length) chosen.add(requested)
+  for (let index = 0; index < rawTabs.length && chosen.size < MAX_TABS; index++) chosen.add(index)
+  const indexes = [...chosen].sort((a, b) => a - b)
   const identityByIndex = new Map<number, TabIdentity>()
   const normalizedByIndex = new Map<number, RestorableTabState>()
   const normalizeIdentityAt = (originalIndex: number) => {
@@ -298,26 +323,22 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
   const normalizeTabAt = (originalIndex: number, prioritizeDrafts: boolean) => {
     const identity = identityByIndex.get(originalIndex)
     if (!identity) return
-    const tab = identity.kind === "sidecar"
-      ? identity
-      : normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
+    const tab = identity.kind === "workspace"
+      ? normalizeWorkspaceTab(identity.value, identity, budget, prioritizeDrafts)
+      : identity
     if (tab) normalizedByIndex.set(originalIndex, tab)
   }
-  rawTabs.forEach((_tab, index) => normalizeIdentityAt(index))
-  const priorityOrder = [requested, ...rawTabs.map((_tab, index) => index).filter((index) => index !== requested)]
+  indexes.forEach(normalizeIdentityAt)
+  const priorityOrder = [requested, ...indexes.filter((index) => index !== requested)]
   for (const index of priorityOrder) {
     const identity = identityByIndex.get(index)
     if (identity?.kind === "workspace") reservePriorityDrafts(identity, budget)
   }
   if (rawTabs[requested] !== undefined) normalizeTabAt(requested, true)
-  rawTabs.forEach((_tab, index) => {
+  indexes.forEach((index) => {
     if (index !== requested) normalizeTabAt(index, true)
   })
-  const identities = rawTabs.flatMap((_tab, originalIndex) => {
-    const identity = identityByIndex.get(originalIndex)
-    return identity ? [{ originalIndex, identity }] : []
-  })
-  const normalized = identities.flatMap(({ originalIndex }) => {
+  const normalized = indexes.flatMap((originalIndex) => {
     const tab = normalizedByIndex.get(originalIndex)
     return tab ? [{ originalIndex, tab }] : []
   })
@@ -327,7 +348,7 @@ function normalizeSession(value: unknown, budget: StringBudget): RestorableSessi
   const surviving = normalized.findIndex(({ originalIndex }) => originalIndex === requested)
   const next = normalized.findIndex(({ originalIndex }) => originalIndex > requested)
   const activeTabIndex = !tabs.length ? -1 : surviving >= 0 ? surviving : next >= 0 ? next : tabs.length - 1
-  return { tabs, activeTabIndex, ...(value.homeActive === true ? { homeActive: true } : {}) }
+  return { tabs, activeTabIndex }
 }
 
 export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
@@ -345,3 +366,4 @@ export function decodeClientSnapshot(value: unknown): ClientSnapshotV1 | null {
 export function isFutureClientSnapshot(value: unknown): boolean {
   return isRecord(value) && typeof value.version === "number" && Number.isInteger(value.version) && value.version > 2
 }
+import { NO_SESSION_DRAFT_SESSION_ID, isRecoveredDraftId } from "./local-draft-ids"

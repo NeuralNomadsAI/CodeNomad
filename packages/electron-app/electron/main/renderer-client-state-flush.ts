@@ -52,6 +52,8 @@ export async function flushRendererClientStateBeforeShutdown(
   isPrimary: boolean,
   isTrustedOrigin: (url: string) => boolean,
   timeoutMs = RENDERER_CLIENT_STATE_FLUSH_TIMEOUT_MS,
+  closing: false | "cancel" | "prepare" | "release" | "navigation" | "navigation-cancel" = false,
+  optional = false,
 ): Promise<RendererFlushResult> {
   if (!isPrimary) return "not-primary"
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return "window-unavailable"
@@ -66,8 +68,11 @@ export async function flushRendererClientStateBeforeShutdown(
     window.webContents.executeJavaScript(`(() => {
       if (window.location.origin !== ${expectedOrigin}) throw new Error("Renderer origin changed before client-state flush");
       const flush = window[${callbackName}];
-      if (typeof flush !== "function") throw new Error("Renderer client-state flush callback is unavailable");
-      return flush();
+      if (typeof flush !== "function") {
+        if (${optional}) return;
+        throw new Error("Renderer client-state flush callback is unavailable");
+      }
+      return flush(${JSON.stringify(closing)});
     })()`),
     timeoutMs,
   )

@@ -1,5 +1,7 @@
 import { FastifyInstance } from "fastify"
 import { z } from "zod"
+import { isProjectedInbox, projectInboxUserFiles, USER_FILES_REFERENCE } from "../../opencode/session-pruning/user-file-reference"
+import { BROWSER_CONTROL_EVENT } from "../../opencode/native-browser/attachments"
 import { EventBus } from "../../events/bus"
 import { WorkspaceEventPayload } from "../../api-types"
 import type { ClientConnectionManager } from "../../clients/connection-manager"
@@ -24,11 +26,17 @@ const ConnectionQuerySchema = z.object({
 const PongBodySchema = ConnectionQuerySchema.extend({
   pingTs: z.number().optional(),
 })
+const StreamQuerySchema = ConnectionQuerySchema.extend({
+  userFiles: z.literal(USER_FILES_REFERENCE).optional(),
+})
 
 export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
+  const projections = new WeakMap<WorkspaceEventPayload, WorkspaceEventPayload>()
   app.get("/api/events", (request, reply) => {
     const clientId = ++nextClientId
-    const connection = ConnectionQuerySchema.parse(request.query ?? {})
+    const parsed = StreamQuerySchema.safeParse(request.query ?? {})
+    if (!parsed.success) return reply.code(400).send({ error: "Invalid client connection" })
+    const { userFiles, ...connection } = parsed.data
     deps.logger.debug({ clientId }, "SSE client connected")
 
     for (const [name, value] of Object.entries(reply.getHeaders())) {
@@ -118,6 +126,19 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       }
     }
     const send = (event: WorkspaceEventPayload) => {
+      if (event.type === "instance.event" && event.event.type === BROWSER_CONTROL_EVENT) return
+      // The old editor expects inline data. Recover its inbox from an authoritative
+      // read rather than deliver the preprojected version of an oversized event.
+      if (userFiles !== USER_FILES_REFERENCE && isProjectedInbox(event)) return handleClose(true)
+      if (userFiles === USER_FILES_REFERENCE) {
+        const known = projections.get(event)
+        if (known) event = known
+        else {
+          const projected = projectInboxUserFiles(event)
+          if (projected !== event) projections.set(event, projected)
+          event = projected
+        }
+      }
       deps.logger.debug({ clientId, type: event.type }, "SSE event dispatched")
       if (deps.logger.isLevelEnabled("trace")) {
         deps.logger.trace({ clientId, event }, "SSE event payload")

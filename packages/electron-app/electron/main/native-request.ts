@@ -31,16 +31,20 @@ export function parseNativeRequest(line: string): NativeRequest | undefined {
 export async function dispatchNativeRequest(
   child: ChildProcess,
   request: NativeRequest,
-  handler: (method: string, params: unknown, deadline: number) => Promise<unknown>,
+  handler: (method: string, params: unknown, deadline: number, checkAdmission: () => void) => Promise<unknown>,
   isCurrent: () => boolean,
 ): Promise<void> {
   // Fence side effects as well as responses. Buffered stdout may arrive after
   // shutdown starts, while the old backend is still alive and its pipe writable.
   if (!isCurrent()) return
+  const checkAdmission = () => {
+    if (!isCurrent()) throw new Error("Native backend process is no longer current")
+    if (Date.now() >= request.deadline) throw new Error("Native request expired before execution")
+  }
   let response: Record<string, unknown>
   try {
-    if (Date.now() >= request.deadline) throw new Error("Native request expired before execution")
-    response = { v: 1, id: request.id, ok: true, result: await handler(request.method, request.params, request.deadline) }
+    checkAdmission()
+    response = { v: 1, id: request.id, ok: true, result: await handler(request.method, request.params, request.deadline, checkAdmission) }
   } catch (error) {
     response = {
       v: 1,

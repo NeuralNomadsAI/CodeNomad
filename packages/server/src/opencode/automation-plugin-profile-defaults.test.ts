@@ -348,7 +348,7 @@ test("Windows discovery keys and launches use the effective environment", async 
   let calls = 0
   t.mock.method(childProcess, "execFile", (file: string, _args: string[], options: { env: NodeJS.ProcessEnv }, callback: (error: null, stdout: string) => void) => {
     calls++
-    callback(null, file === "cmd.exe" ? "C:/fixture" : `${options.env.PATH}/windows`)
+    callback(null, file === "cmd.exe" ? "LOCALAPPDATA=C:/fixture\r\n" : `${options.env.PATH}/windows\n`)
   })
   syncBuiltinESMExports()
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
@@ -364,7 +364,7 @@ test("parallel Windows discovery yields the event loop and shares one asynchrono
   let calls = 0, release!: () => void
   t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) => {
     calls++
-    if (file === "cmd.exe") release = () => callback(null, "C:/fixture")
+    if (file === "cmd.exe") release = () => callback(null, "LOCALAPPDATA=C:/fixture\r\n")
     else callback(null, "/fixture-windows")
   })
   syncBuiltinESMExports()
@@ -385,7 +385,7 @@ test("unavailable Windows interop proves absence, while uncertain launches still
   t.mock.method(Date, "now", () => now)
   t.mock.method(childProcess, "execFile", (command: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout?: string) => void) => {
     if (command === missing) callback(Object.assign(new Error("fixture launch failure"), { code }))
-    else callback(null, "C:/fixture")
+    else callback(null, "LOCALAPPDATA=C:/fixture\r\n")
   })
   syncBuiltinESMExports()
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
@@ -420,7 +420,8 @@ test("WSL Windows discovery skips unusable advertisements and refused endpoints,
     return true
   })
   t.mock.method(fs, "rm", async () => { assert.ok(local, "WSL leaves foreign advertisements to their publisher"); pruned++ })
-  t.mock.method(childProcess, "execFile", (_file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) => callback(null, "/fixture-windows"))
+  t.mock.method(childProcess, "execFile", (file: string, _args: string[], _options: unknown, callback: (error: null, stdout: string) => void) =>
+    callback(null, file === "cmd.exe" ? "LOCALAPPDATA=C:/fixture\r\n" : "/fixture-windows\n"))
   t.mock.method(fs, "opendir", async (directory: string) => (async function* () {
     if (directory.startsWith(local ? "/fixture-linux/" : "/fixture-windows/")) yield {
       name: `${registration.startedAt}-${filePID}-windows.json`, isFile: () => true,

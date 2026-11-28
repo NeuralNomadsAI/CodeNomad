@@ -78,6 +78,7 @@ async function openPreferences(host: "electron" | "tauri") {
     } : undefined
     if (${JSON.stringify(host)} === "tauri") {
       w.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: "preferences" }, currentWebview: { label: "preferences" } },
         transformCallback: () => 1,
         invoke: async (command, args) => {
           if (command.startsWith("client_state_")) { w.fixtureHost.clientStateCalls.push(command); return false }

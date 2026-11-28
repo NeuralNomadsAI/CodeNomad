@@ -16,13 +16,19 @@ const [files, setFiles] = createSignal<ReadonlyMap<string, FilePreviewTarget>>(n
 const generations = new Map<string, { value: number }>()
 export type SurfaceGesture = ReturnType<typeof beginGesture>
 
+export function observeSurfaceGesture({ instanceId }: SurfaceContext) {
+  const occurrence = generations.get(instanceId)
+  const generation = occurrence?.value
+  return { current: () => generations.get(instanceId) === occurrence && occurrence?.value === generation && isInstanceOccurrenceOpen(instanceId) }
+}
+
 /** Admit once, before awaiting; only a later gesture or a closed occurrence retires it. */
 export function beginGesture({ instanceId }: SurfaceContext) {
   if (!isInstanceOccurrenceOpen(instanceId)) return { current: () => false }
   const occurrence = generations.get(instanceId) ?? { value: 0 }
   generations.set(instanceId, occurrence)
-  const generation = ++occurrence.value
-  return { current: () => generations.get(instanceId) === occurrence && occurrence.value === generation && isInstanceOccurrenceOpen(instanceId) }
+  occurrence.value++
+  return observeSurfaceGesture({ instanceId, sessionId: null })
 }
 
 /** Passive file reconciliation applies to the current matching target immediately. */

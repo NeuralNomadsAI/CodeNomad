@@ -5,6 +5,21 @@
   background-color: var(--surface-field);
 }
 
+/* When even one line and the controls cannot fit, let the session scroll
+   rather than clipping the field or its actions. */
+.session-view:has(> .prompt-input-container[data-keyboard-crowded]) {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.prompt-input-container[data-keyboard-crowded] {
+  flex-shrink: 0;
+}
+
+.session-view > .mission-transcript-surface {
+  margin-top: var(--keyboard-transcript-inset, 0px);
+}
+
 .prompt-resize-handle {
   position: absolute;
   top: -4px;
@@ -224,6 +239,31 @@
   border-radius: var(--button-radius);
   background-color: var(--accent-primary);
   color: var(--text-inverted);
+}
+
+.voice-button {
+  @apply w-7 h-7 border-none cursor-pointer flex items-center justify-center transition-all flex-shrink-0;
+  border-radius: var(--button-radius);
+  background-color: transparent;
+  color: var(--text-secondary);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.voice-button:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.voice-button.recording {
+  background-color: var(--status-error-bg);
+  color: var(--status-error-fg);
+}
+
+.voice-button:disabled {
+  @apply opacity-40 cursor-not-allowed;
 }
 
 .send-button.shell-mode {

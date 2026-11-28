@@ -3,7 +3,7 @@ import { constants } from "node:fs"
 import { access, chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import { applyEdits, modify, parse, parseTree, type FormattingOptions, type Node as JsonNode, type ParseError } from "jsonc-parser"
+import { applyEdits, createScanner, modify, parse, parseTree, SyntaxKind, type FormattingOptions, type Node as JsonNode, type ParseError } from "jsonc-parser"
 
 export const PLUGIN_CONTROL_MAX_CONFIG_BYTES = 4 * 1024 * 1024
 const MAX_SYMLINK_DEPTH = 16
@@ -100,7 +100,9 @@ export function appendPluginControlRule(document: PluginControlDocument, rule: s
   const value = editPath.length === 1 ? [rule] : rule
   let updated: string
   try {
-    updated = applyEdits(document.text, modify(document.text, editPath, value, { formattingOptions }))
+    updated = editPath.length === 2
+      ? appendPluginEntry(document.text, document.plugins.length, rule, formattingOptions)
+      : applyEdits(document.text, modify(document.text, editPath, value, { formattingOptions }))
   } catch (error) {
     throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
   }
@@ -133,9 +135,9 @@ export function replacePluginControlRules(
   const formattingOptions = inferPluginControlFormatting(document.text)
   let updated = document.text
   try {
-    for (const index of removed) updated = applyEdits(updated, modify(updated, ["plugins", index], undefined, { formattingOptions }))
+    updated = deletePluginEntries(updated, removed)
     if (rule !== undefined) {
-      updated = applyEdits(updated, modify(updated, ["plugins", document.plugins.length - removed.length], rule, { formattingOptions }))
+      updated = appendPluginEntry(updated, document.plugins.length - removed.length, rule, formattingOptions)
     }
   } catch (error) {
     throw new PluginControlDocumentError("Unable to update OpenCode plugins without replacing the document", "invalid", { cause: error })
@@ -150,6 +152,68 @@ export function replacePluginControlRules(
   }
   if (!updated.endsWith("\n")) updated += formattingOptions.eol
   return document.byteOrderMark ? `﻿${updated}` : updated
+}
+
+function appendPluginEntry(text: string, index: number, rule: string, formattingOptions: FormattingOptions): string {
+  const array = parseTree(text, [], { allowTrailingComma: true })?.children
+    ?.find(property => property.children?.[0]?.value === "plugins")?.children?.[1]
+  const last = array?.children?.at(-1)
+  if (last) {
+    const end = last.offset + last.length
+    const lineEnd = text.indexOf("\n", end)
+    const tail = /^([ \t]*,)?[ \t]*\/\/[^\r\n]*\r?$/.exec(text.slice(end, lineEnd))
+    if (lineEnd !== -1 && tail) {
+      const start = text.lastIndexOf("\n", last.offset - 1) + 1
+      const indent = /^[ \t]*/.exec(text.slice(start, last.offset))![0]
+      // Insert the comma before the comment so it remains attached to the original entry.
+      return text.slice(0, end) + (tail[1] ? "" : ",") + text.slice(end, lineEnd + 1)
+        + indent + JSON.stringify(rule) + (tail[1] ? "," : "") + formattingOptions.eol + text.slice(lineEnd + 1)
+    }
+  }
+  return applyEdits(text, modify(text, ["plugins", index], rule, { formattingOptions }))
+}
+
+/**
+ * Deletes `plugins` elements and their separators, keeping surrounding comments.
+ * The parse tree locates elements, including the last one in a compact array.
+ */
+export function deletePluginEntries(text: string, indexes: readonly number[]): string {
+  const root = parseTree(text, [], { allowTrailingComma: true, disallowComments: false })
+  const array = root?.children?.find(property => property.children?.[0]?.value === "plugins")?.children?.[1]
+  const children = array?.type === "array" ? array.children ?? [] : []
+  const removed = new Set(indexes)
+  if (!array || [...removed].some(index => !children[index])) throw new Error("OpenCode plugin entry is missing")
+  const scanner = createScanner(text, true)
+  const edits: Array<{ offset: number; length: number; content: string }> = []
+  const commas = new Map<number, number>()
+  for (let first = 0; first < children.length; first++) {
+    if (!removed.has(first)) continue
+    let last = first
+    while (removed.has(last + 1)) last++
+    // A trailing run takes its preceding separator and leaves any trailing comma with the kept entries.
+    const trailing = last === children.length - 1 && first > 0
+    for (let index = first - Number(trailing); index <= last - Number(trailing); index++) {
+      const node = children[index]!
+      scanner.setPosition(node.offset + node.length)
+      if (scanner.scan() === SyntaxKind.CommaToken) commas.set(index, scanner.getTokenOffset())
+    }
+    first = last
+  }
+  for (const index of removed) {
+    const { offset, length } = children[index]!
+    const end = offset + length, comma = commas.get(index)
+    const start = text.lastIndexOf("\n", offset - 1) + 1, lineEnd = text.indexOf("\n", end)
+    // Remove a whole line only when it contains nothing else, so repeated edits don't pile up blank lines.
+    const lineTail = comma !== undefined && comma < lineEnd ? text.slice(end, comma) + text.slice(comma + 1, lineEnd) : text.slice(end, lineEnd)
+    if (lineEnd !== -1 && /^[ \t]*$/.test(text.slice(start, offset)) && /^[ \t\r]*$/.test(lineTail)) {
+      edits.push({ offset: start, length: lineEnd + 1 - start, content: "" })
+      if (comma !== undefined && comma < lineEnd) commas.delete(index)
+    } else {
+      edits.push({ offset, length, content: "" })
+    }
+  }
+  for (const offset of commas.values()) edits.push({ offset, length: 1, content: "" })
+  return applyEdits(text, edits)
 }
 
 export async function replacePluginControlDocument(

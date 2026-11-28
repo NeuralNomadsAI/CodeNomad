@@ -9,6 +9,7 @@ import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/messa
 import {
   buildRecordDisplayData,
   clearRecordDisplayCacheForInstance,
+  markRecordPartSearchRevealed,
   MESSAGE_PART_REVEAL_STEP,
   revealHiddenRecordParts,
 } from "../stores/message-v2/record-display-cache"
@@ -16,7 +17,10 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import { ensureSessionAncestorsExpanded, sessions, selectSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
+import { openInstanceTabIds } from "../stores/app-tab-membership"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { withHotkey } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
@@ -113,7 +117,7 @@ interface TaskSessionLocation {
 function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string): TaskSessionLocation | null {
   if (!sessionId) return null
 
-  if (preferredInstanceId) {
+  if (preferredInstanceId && openInstanceTabIds().has(preferredInstanceId)) {
     const session = sessions().get(preferredInstanceId)?.get(sessionId)
     if (session) {
       return {
@@ -126,6 +130,8 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 
   const allSessions = sessions()
   for (const [instanceId, sessionMap] of allSessions) {
+    if (!openInstanceTabIds().has(instanceId)
+      || preferredInstanceId && parseInstanceKey(instanceId).backendId !== parseInstanceKey(preferredInstanceId).backendId) continue
     const session = sessionMap?.get(sessionId)
     if (session) {
       return {
@@ -139,6 +145,7 @@ function findTaskSessionLocation(sessionId: string, preferredInstanceId?: string
 }
 
 function navigateToTaskSession(location: TaskSessionLocation) {
+  if (!openInstanceTabIds().has(location.instanceId)) return
   selectInstanceTab(location.instanceId)
   ensureSessionAncestorsExpanded(location.instanceId, location.sessionId)
   selectSessionFromList(location.instanceId, location.sessionId)
@@ -382,11 +389,14 @@ function ToolCallItem(props: ToolCallItemProps) {
   }
 
   const handleDelete = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deleting() || (record()?.status !== "complete" && record()?.status !== "error")) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, props.partId)
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -521,6 +531,7 @@ interface MessageBlockProps {
   thinkingDefaultExpanded: () => boolean
   usageMetricsVisibility: () => VisibilityPreference
   systemMessagesVisibility?: () => VisibilityPreference
+  toolGroupVisibility?: () => VisibilityPreference
   toolVisibility: (toolName: string) => VisibilityPreference
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
@@ -587,6 +598,15 @@ export default function MessageBlock(props: MessageBlockProps) {
     const element = blockRef()
     if (!element) return
 
+    // The active match can land in text beyond a block's rendered window; reveal
+    // its part wholesale so the highlight pass finds (and scrolls to) the hit.
+    const activePartId = relevantActiveMatch
+      ? relevantActiveMatch.partId ?? (relevantActiveMatch.partIndex !== undefined ? current?.partIds[relevantActiveMatch.partIndex] : undefined)
+      : undefined
+    if (activePartId) {
+      markRecordPartSearchRevealed(props.instanceId, relevantActiveMatch!.messageId, activePartId)
+    }
+
     const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, reveal, props.alignInTranscript))
     onCleanup(() => {
       cancelAnimationFrame(frame)
@@ -599,6 +619,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     if (!current) return null
 
     const messageInfoVersion = props.store().state.messageInfoVersion[current.id] ?? 0
+    const groupTools = props.toolGroupVisibility?.() !== "hidden"
 
     const cacheSignature = [
       current.id,
@@ -608,6 +629,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.thinkingDefaultExpanded() ? 1 : 0,
       props.usageMetricsVisibility(),
       props.systemMessagesVisibility?.() ?? "hidden",
+      groupTools,
       props.technicalGroupingSignature?.() ?? "",
     ].join("|")
 
@@ -684,7 +706,7 @@ export default function MessageBlock(props: MessageBlockProps) {
     const rows = groupTranscriptRows(displayData.hiddenCount > 0
       ? [...shown(orderedParts.slice(0, displayData.gapIndex)), null, ...shown(orderedParts.slice(displayData.gapIndex))]
       : shown(orderedParts), (part) => {
-      const kind = transcriptPartKind(part)
+      const kind = transcriptPartKind(part, groupTools)
       if (kind === "content" || kind === "part") return { kind }
       const partId = typeof part.id === "string" ? part.id : ""
       return { kind, groupId: partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined }
@@ -943,23 +965,25 @@ export default function MessageBlock(props: MessageBlockProps) {
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
-                  <Show when={visibleItemKeys().has((item() as ToolDisplayItem).key)}>
-                    <div
-                      class="tool-call-message"
-                      data-key={(item() as ToolDisplayItem).key}
-                      data-part-id={(item() as ToolDisplayItem).partId}
-                      data-delete-technical-selected={technicalCleanupPartKeys().has((item() as ToolDisplayItem).key) ? "true" : undefined}
-                    >
-                      <ToolCallItem
-                        instanceId={props.instanceId}
-                        sessionId={props.sessionId}
-                        isActive={props.isActive}
-                        store={props.store}
-                        messageId={(item() as ToolDisplayItem).messageId}
-                        partId={(item() as ToolDisplayItem).partId}
-                        onContentRendered={props.onContentRendered}
-                      />
-                    </div>
+                  <Show keyed when={visibleItemKeys().has((item() as ToolDisplayItem).key) && item() as ToolDisplayItem}>
+                    {tool => (
+                      <div
+                        class="tool-call-message"
+                        data-key={tool.key}
+                        data-part-id={tool.partId}
+                        data-delete-technical-selected={technicalCleanupPartKeys().has(tool.key) ? "true" : undefined}
+                      >
+                        <ToolCallItem
+                          instanceId={props.instanceId}
+                          sessionId={props.sessionId}
+                          isActive={props.isActive}
+                          store={props.store}
+                          messageId={tool.messageId}
+                          partId={tool.partId}
+                          onContentRendered={props.onContentRendered}
+                        />
+                      </div>
+                    )}
                   </Show>
                 </Match>
                 <Match when={item().type === "exploration"}>
@@ -979,7 +1003,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                       activePartId={activeSearchMatch()?.partId}
                       showHeader={technicalGroupStartsHere((item() as ExplorationDisplayItem).technicalGroup)}
                       expanded={(item() as ExplorationDisplayItem).technicalGroup
-                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, false) ?? false
+                        ? () => props.isTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, props.toolGroupVisibility?.() === "expanded") ?? false
                         : undefined}
                       onExpandedChange={(item() as ExplorationDisplayItem).technicalGroup
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
@@ -1139,11 +1163,14 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     return status === "complete" || status === "error"
   })
   const handleDeleteGroup = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deletingGroup() || !canDeleteGroup()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, groupTools())
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1196,7 +1223,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
             onClick={() => toggle(props.summaryTools![0].key)}
           >
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-            <Show when={!completed(props.summaryTools!)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+            <Show when={!completed(props.summaryTools!)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
             <span class="message-technical-group-title">{label(props.summaryTools!)}</span>
           </button>
           <Show when={canBackgroundGroup()}>
@@ -1242,7 +1269,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 onClick={() => toggle(key)}
               >
                 <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-                <Show when={!completed(props.summaryTools ?? segment.items)}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+                <Show when={!completed(props.summaryTools ?? segment.items)}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
                 <span class="message-technical-group-title">{label(props.summaryTools ?? segment.items)}</span>
               </button>
             </Show>
@@ -1302,7 +1329,7 @@ function CompactionCard(props: CompactionCardProps) {
       aria-label={t("messageBlock.compaction.ariaLabel")}
     >
       <div class="message-compaction-row">
-        <Show when={!isRunning()} fallback={<Loader2 class="message-compaction-icon w-4 h-4 animate-spin" aria-hidden="true" />}>
+        <Show when={!isRunning()} fallback={<span class="inline-flex animate-spin"><Loader2 class="message-compaction-icon w-4 h-4" aria-hidden="true" /></span>}>
           <Show when={!isFailed()} fallback={<XCircle class="message-compaction-icon w-4 h-4" aria-hidden="true" />}>
             <FoldVertical class="message-compaction-icon w-4 h-4" aria-hidden="true" />
           </Show>
@@ -1382,10 +1409,13 @@ function ReasoningGroupCard(props: {
   })
   const handleDeleteGroup = async () => {
     if (deletingGroup() || !canDeleteGroup()) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setDeletingGroup(true)
     try {
       await deleteTechnicalPartGroup(props.instanceId, props.sessionId, summaryParts())
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -1449,7 +1479,7 @@ function ReasoningGroupCard(props: {
             onClick={() => setExpanded(!expanded())}
           >
             <ChevronRight class="message-technical-group-disclosure disclosure-chevron" aria-hidden="true" />
-            <Show when={!props.completed}><Loader2 class="message-technical-group-spinner w-3.5 h-3.5 animate-spin" aria-hidden="true" /></Show>
+            <Show when={!props.completed}><span class="inline-flex animate-spin"><Loader2 class="message-technical-group-spinner w-3.5 h-3.5" aria-hidden="true" /></span></Show>
             <Show when={headerShowsMeta() && agentMeta()}>
               <span class="message-technical-group-meta message-technical-group-meta-agent" title={agentMetaTooltip()}>
                 · {agentMeta()}
@@ -1659,10 +1689,13 @@ function ReasoningCard(props: ReasoningCardProps) {
   const handleDelete = async () => {
     const partId = typeof props.part.id === "string" ? props.part.id : ""
     if (!partId || deleting() || (props.status !== "complete" && props.status !== "error")) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setDeleting(true)
     try {
       await deleteMessagePart(props.instanceId, props.sessionId, props.messageId, partId)
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messagePart.actions.deleteFailedMessage"), {
         title: t("messagePart.actions.deleteFailedTitle"),
         detail: error instanceof Error ? error.message : String(error),

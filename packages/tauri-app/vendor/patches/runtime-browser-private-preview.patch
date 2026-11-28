@@ -1,0 +1,8 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5125,0 +5126,5 @@
++  if browser_guest {
++    webview_builder = webview_builder.with_initialization_script_for_main_only(
++      include_str!("../../../../ui/src/lib/native/remote-preview-guards.cjs"), false);
++  }
++

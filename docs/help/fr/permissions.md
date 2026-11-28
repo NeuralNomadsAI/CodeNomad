@@ -51,25 +51,32 @@ Si un autre client règle une demande, elle peut disparaître ici. Un délai dé
 2. Pour les décisions sans message source, ouvrez **Décisions d’autorisation de la session**.
 3. Utilisez **Charger d’autres décisions** pour continuer, ou **Réessayer** après un échec de lecture.
 
-Les reçus enregistrent les demandes/ressources connues, la décision confirmée et le motif/la provenance disponible. **Décision dans CodeNomad**, **Automatique · Yolo** et **Décision native** distinguent les origines observées ; un règlement natif ne prouve pas un clic utilisateur dans cette fenêtre.
+Les reçus enregistrent les demandes/ressources connues, la décision confirmée et le motif/la provenance disponible. **Décision dans CodeNomad**, **Décision automatique** et **Décision native** distinguent les origines observées ; un règlement natif ne prouve pas un clic utilisateur dans cette fenêtre.
 
 Les reçus sont des annotations CodeNomad en lecture seule, pas des messages natifs ou des éditeurs de règles d’autorisation. Ils sont exclus de la recherche native dans tout l’historique, de la copie des messages et de l’export. Ils ne peuvent pas reconstruire les décisions manquées quand CodeNomad était hors ligne, et un résultat d’outil réussi ne remplace pas un reçu manquant. Supprimer une session retire ses reçus.
 
-## Mode Yolo et portée familiale {#yolo-mode}
+## Mode de permissions par conversation {#conversation-mode}
 
-1. Sélectionnez une conversation et ouvrez **Statut → Mode yolo**.
-2. Activez-le uniquement si l’approbation automatique des autorisations convient à toute la famille.
-3. Désactivez-le avant d’autres travaux non fiables ; vérifiez les demandes en attente et les outils déjà actifs.
+Sélectionnez une conversation, ouvrez **Statut → Permissions** et cliquez sur un mode. Quand la section est repliée, un éclair (Autonome) ou un bouclier (Supervisé) indique le dernier mode connu.
 
-Même si la commande parle d’une session, sa portée effective est la racine de famille résolue et ses descendants : l’activer/le désactiver depuis un enfant affecte cette famille. Une bifurcation native est traitée comme sa propre racine. Ce n’est pas une approbation globale de tous les projets ou conversations indépendantes.
+- **Autonome** — Applique les règles de permissions d’OpenCode.
+- **Supervisé** — Demande confirmation avant que l’agent modifie des fichiers ou exécute des commandes shell. Pour ces actions, les interdictions globales, du projet et de la conversation restent en vigueur, et les règles d’autorisation deviennent des demandes. Les accords **Toujours autoriser** enregistrés par OpenCode restent valables pour les demandes correspondantes.
 
-Yolo approuve **uniquement les autorisations**. Il ne répond pas aux questions ou Forms, ne fournit pas les informations manquantes, ne garantit pas le succès et ne contourne pas les contrôles de propriété du backend. Le backend CodeNomad effectue l’approbation automatique : fermer une fenêtre ne suffit pas à la désactiver si le backend reste actif, et un backend arrêté ne peut pas continuer à approuver. Le réglage familial est enregistré et restauré au prochain chargement de l’espace de travail.
+Les deux modes utilisent les règles de session d’OpenCode, y compris dans son interface terminal lorsqu’elle est connectée au même service et ouverte sur la même conversation. Revenir à **Autonome** retire seulement les règles ajoutées pour la supervision. Les fichiers de configuration d’OpenCode restent inchangés. CodeNomad n’approuve pas automatiquement les demandes, quel que soit le mode.
 
-Désactiver Yolo ne révoque pas une décision déjà acceptée et n’annule pas les effets sur les fichiers/le réseau. Vérifiez les reçus **Automatique · Yolo** et arrêtez explicitement l’exécution au besoin. Pour l’automatisation avec validations humaines, voir [Missions](missions.md).
+Le mode Supervisé n’est pas un bac à sable. Les lectures, les accès hors projet et les outils MCP gardent leurs propres règles. Les demandes ouvertes gardent leurs règles initiales.
+
+Dans un sous-agent, **Permissions** affiche et modifie le mode de la conversation racine. Les sous-agents existants gardent leurs règles quand le mode change ; lorsqu’un sous-agent en lance un autre, le nouveau copie les règles de son parent direct.
+
+Une conversation bifurquée copie les règles de sa source et a son propre mode. Si CodeNomad ne peut pas vérifier quelles règles retirer, la conversation bifurquée les conserve et vous pouvez toujours envoyer des messages.
+
+Si le mode n’est pas confirmé, choisissez **Recharger les permissions**. Pour régler le mode initial, voir [Permissions des nouvelles conversations](settings.md#new-conversation-permissions).
 
 ## Récupérer les demandes manquantes ou périmées {#request-recovery}
 
 1. Vérifiez l’indicateur de connexion et reconnectez-vous au même backend/projet.
 2. Laissez la récupération réconcilier les demandes natives en attente ; les demandes connues et brouillons restent conservés si la couverture est incomplète.
 
-Une réponse incomplète n’est pas une file vide faisant autorité, et l’avertissement n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).
+Les échecs temporaires de récupération sont réessayés en arrière-plan sans créer de notification. Si le plugin OpenCode intégré ne peut pas lister les demandes en attente, un seul avis par backend s’affiche dans l’onglet du navigateur jusqu’à ce que la récupération réussisse.
+
+Une réponse incomplète n’est pas une file vide faisant autorité, et un avis de plugin indisponible n’autorise pas à répéter un prompt, une réponse ou une approbation. Recharger la configuration peut annuler des Forms/autorisations natifs ; ne l’utilisez pas comme bouton d’actualisation habituel des demandes. Voir [Dépannage](troubleshooting.md) et [Configuration d’OpenCode](opencode.md).

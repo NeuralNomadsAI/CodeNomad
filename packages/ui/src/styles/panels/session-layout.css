@@ -535,7 +535,6 @@
 
 .status-indicator.connecting .status-dot {
   background-color: var(--status-warning);
-  animation: pulse 1.5s ease-in-out infinite;
 }
 
 .status-indicator.disconnected .status-dot {
@@ -592,10 +591,6 @@
   background-color: var(--session-status-dot);
 }
 
-.status-indicator.session-status.session-working .status-dot,
-.status-indicator.session-status.session-compacting .status-dot {
-  animation: pulse 1.5s ease-in-out infinite;
-}
 
 .status-indicator.session-status.session-working.session-status-list {
   background-color: var(--session-status-working-bg);
@@ -649,15 +644,6 @@
   to {
     opacity: 0;
   }
-}
-
-.status-indicator.session-yolo-mode {
-  color: var(--session-yolo-accent);
-  background-color: color-mix(in oklab, var(--session-yolo-accent) 14%, transparent);
-}
-
-.status-indicator.session-yolo-mode .status-dot {
-  background-color: var(--session-yolo-accent);
 }
 
 .status-indicator.worktree-indicator {

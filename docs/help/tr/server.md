@@ -8,7 +8,7 @@ Tarayıcı ve tablet erişimi, yürütmeyi ana bilgisayarın dışına taşımaz
 
 1. Node.js 24 LTS ve npm'yi yükleyin.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
-3. OpenCode'u yükleyin veya seçin: **2.3.0** gerekli minimum değer. Bkz. [OpenCode kurulumu](opencode.md).
+3. OpenCode'u yükleyin veya seçin: **2.4.2** gerekli minimum değer. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.
 
 Git olmadan, konuşmalar yalnızca açıkça açılan fiziksel klasörde kullanılabilir durumda kalır; Git ve çalışma ağacı işlemleri başarısız oluyor. Git'i yükleyin ve PATH değişikliğinden sonra arka ucu yeniden başlatın. Çalışma alanı kökü, aracının yürütülmesini değil, açmayı/göz atmayı sınırlar: bkz. [Güvenlik](security.md).
@@ -80,7 +80,7 @@ Bayraklar karşılık gelen ortam değişkenlerini geçersiz kılar. Değer alan
 | `--unrestricted-root` | `CLI_UNRESTRICTED_ROOT` | `false`; tam dosya sistemi taramasına izin ver. Ajan korumalı alan ayarı değil. |
 | `--config <path>` | `CLI_CONFIG` | Çözülmüş etkin varsayılan: `~/.config/codenomad/config.yaml`. Açık yerleştirme için bir dizini veya YAML dosyasını kabul eder. |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | `info`; belgelenen seviyeler: `trace`, `debug`, `info`, `warn`, `error`. |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`; aksi takdirde seçilen dosyaya yazın. |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | `stdout`, ayrıca yapılandırma dosyasının yanındaki `logs/server.log`; seçilen dosya ikisinin de yerini alır. |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | `codenomad`; çalışma zamanı kimlik doğrulama kullanıcı adı. Saklanan bir kimlik doğrulama dosyası, hiçbir çalışma zamanı parolası onu geçersiz kılmadığında, saklanan kullanıcı adını korur. |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Ayarlanmadı; yalnızca çalışma zamanı parolası, yönetilen kimlik doğrulama dosyasına göre önceliklidir. |
 | `--auth-cookie-name <name>` | `CODENOMAD_AUTH_COOKIE_NAME` | `codenomad_session`; Harfler, rakamlar, `_` ve `-` dışındaki karakterler `_` olur. |

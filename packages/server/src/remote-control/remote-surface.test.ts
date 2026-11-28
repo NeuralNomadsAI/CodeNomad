@@ -2,16 +2,148 @@ import assert from "node:assert/strict"
 import crypto from "node:crypto"
 import http from "node:http"
 import net from "node:net"
+import os from "node:os"
+import fs from "node:fs"
+import path from "node:path"
 import test, { type TestContext } from "node:test"
+import { brotliCompressSync, gzipSync } from "node:zlib"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
+import { backendAdmissionFixture, backendAuthorityHeader, backendBootstrap, assertServerCapabilities, assertPrivateBackendReply } from "./test-support/backend-admission"
 
 const HOST = FAKE_TUNNEL_HOST
 const ORIGIN = `https://${HOST}`
+
+for (const reason of ["flag-off", "server-request", "foreign-origin", "missing-origin"] as const) {
+  test(`server-profile persistence admission: ingress ${reason} cannot patch or delete saved profiles`, async t => {
+    const f = await backendAdmissionFixture(t, reason !== "flag-off")
+    const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+    const cookie = await pair(target(), code)
+    const headers: Record<string, string> = { cookie, "content-type": "application/json" }
+    if (reason !== "missing-origin" && reason !== "server-request") headers.origin = reason === "foreign-origin" ? "https://foreign.test" : ORIGIN
+    if (reason === "server-request") headers["x-codenomad-server-request"] = "1"
+    const stateFile = path.join(f.directory, "state.yaml")
+    const before = fs.readFileSync(stateFile, "utf8")
+    const snapshot = structuredClone(f.settings.getDoc("state"))
+    for (const [url, payload] of [
+      ["/api/storage/state/ui", { remoteServers: [] }],
+      ["/api/storage/state/ui", { remoteServers: null }],
+      ["/api/storage/state", { ui: { remoteServers: [] } }],
+      ["/api/storage/state", { ui: { remoteServers: null } }],
+      ["/api/storage/state", { ui: null }],
+    ] as const) {
+      const result = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(payload) })
+      assert.equal(fs.readFileSync(stateFile, "utf8"), before, `${reason} ${url}: persisted a refused profile change`)
+      assert.deepEqual(f.settings.getDoc("state"), snapshot, `${reason} ${url}: changed cached state`)
+      assert.ok([401, 403, 404].includes(result.status), `${reason} ${url}: ${result.status} ${result.body}`)
+    }
+    assert.equal(f.io(), 0)
+  })
+}
+
+test("server-profile persistence admission: enabled paired ingress may manage saved profiles", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  const remoteServers = [{ id: "managed", baseUrl: f.remotes[0]!.origin, skipTlsVerify: true, ssh: { host: "fixture-host" } }]
+  for (const [url, payload] of [
+    ["/api/storage/state/ui", { remoteServers }],
+    ["/api/storage/state", { ui: { remoteServers } }],
+  ] as const) {
+    const result = await send(target(), url, { method: "PATCH", headers, body: JSON.stringify(payload) })
+    assert.equal(result.status, 200, result.body)
+    assert.deepEqual(f.settings.getOwner("state", "ui").remoteServers, remoteServers)
+  }
+  const deleted = await send(target(), "/api/storage/state", { method: "PATCH", headers, body: JSON.stringify({ ui: null }) })
+  assert.equal(deleted.status, 200, deleted.body)
+  assert.equal(f.settings.getOwner("state", "ui").remoteServers, undefined)
+  assert.equal(f.io(), 0)
+})
+
+test("multi-backend admission: paired ingress browses, connects and relays colliding A/B IDs", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const headers = { cookie, origin: ORIGIN, "content-type": "application/json" }
+  t.mock.method(os, "homedir", () => f.directory)
+  const ssh = await send(target(), "/api/remote-servers/ssh-hosts", { headers: { cookie } })
+  assert.equal(ssh.status, 200, ssh.body)
+  assert.deepEqual(JSON.parse(ssh.body), { hosts: ["fixture-host"] })
+  const probe = await send(target(), "/api/remote-servers/probe", { method: "POST", headers,
+    body: JSON.stringify({ baseUrl: f.remotes[0]!.origin }) })
+  assert.equal(probe.status, 200, probe.body)
+  assert.equal(JSON.parse(probe.body).ok, true)
+  for (const id of ["A", "B"]) {
+    for (const action of ["connect", "browse"]) {
+      const response = await send(target(), `/api/remote-servers/${id}/${action}`, { method: "POST", headers, body: "{}" })
+      assert.equal(response.status, 200, `${id}/${action}: ${response.body}`)
+      assertPrivateBackendReply(response.body, response.headers)
+    }
+    const bootstrap = await send(target(), `/api/backends/${id}/api/meta`, {
+      headers: { cookie, [backendAuthorityHeader]: backendBootstrap },
+    })
+    assert.equal(bootstrap.status, 200, bootstrap.body)
+    const proof = String(bootstrap.headers[backendAuthorityHeader])
+    assert.match(proof, /^[A-Za-z0-9_-]{43}$/)
+    for (const route of ["/api/workspaces", "/workspaces/same-workspace/instance/api/session/same-session"]) {
+      const response = await send(target(), `/api/backends/${id}${route}`, { headers: { cookie, [backendAuthorityHeader]: proof } })
+      assert.equal(response.status, 200, response.body)
+      const body = JSON.parse(response.body)
+      assert.equal((Array.isArray(body) ? body[0] : body).server, id)
+      assertPrivateBackendReply(response.body, response.headers)
+    }
+    assert.equal((await send(target(), `/api/remote-servers/${id}/forget`, { method: "POST", headers, body: "{}" })).status, 200)
+  }
+  const meta = await send(target(), "/api/meta", { headers: { cookie } })
+  assertServerCapabilities(JSON.parse(meta.body), true, true)
+  for (const remote of f.remotes) for (const request of remote.state.requests) {
+    assert.equal(request.headers.cookie?.includes(cookie), undefined)
+    assert.equal(request.headers[backendAuthorityHeader], undefined)
+  }
+})
+
+test("multi-backend admission: ingress rejects hostile provenance and explicit server protocol before IO", async t => {
+  const f = await backendAdmissionFixture(t)
+  const { target, code, manager } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const before = f.io()
+  const hostileHeaders: Record<string, string>[] = [
+    { origin: "https://foreign.test" }, { origin: "null" }, { referer: "https://foreign.test/page" },
+    { "x-codenomad-server-request": "1" },
+    { origin: "https://foreign.test", "x-forwarded-for": "127.0.0.1", "x-forwarded-host": HOST, "x-forwarded-proto": "https" },
+  ]
+  for (const extra of hostileHeaders) {
+    const response = await send(target(), "/api/backends/A/api/meta", { headers: { cookie, ...extra } })
+    assert.ok([403, 404].includes(response.status), `${JSON.stringify(extra)}: ${response.status}`)
+  }
+  for (const pathname of ["/api/backends/A/api/backends/B/api/meta", "/api/backends/A/api/remote-%73ervers/probe",
+    "/api/backends/A/api/auth/password", "/api/backends/A/preview-capabilities"]) {
+    assert.equal((await send(target(), pathname, { headers: { cookie } })).status, 404, pathname)
+  }
+  assert.equal(f.io(), before)
+  manager.revokeDevice(manager.devices()[0]!.id)
+  for (const credential of [undefined, cookie]) {
+    const response = await send(target(), "/api/backends/A/api/meta", { headers: credential ? { cookie: credential } : {} })
+    assert.ok([401, 404].includes(response.status), String(response.status))
+  }
+  assert.equal(f.io(), before)
+})
+
+test("multi-backend admission: ingress feature-off refuses before remote IO", async t => {
+  const f = await backendAdmissionFixture(t, false)
+  const { target, code } = await startRemoteSurface(t, { settings: f.settings })
+  const cookie = await pair(target(), code)
+  const response = await send(target(), "/api/backends/A/api/meta", { headers: { cookie } })
+  assert.ok([403, 404].includes(response.status))
+  assert.equal(f.io(), 0)
+  assertServerCapabilities(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body), false, false)
+})
 
 interface Reply {
   status: number
   headers: http.IncomingHttpHeaders
   body: string
+  bytes: Buffer
 }
 
 // Speaks plain HTTP to the ingress, as the in-process TLS terminator does.
@@ -22,10 +154,12 @@ function send(target: string, pathname: string, options: { method?: string; head
       hostname, port: Number(port), path: pathname, method: options.method ?? "GET",
       headers: { host: HOST, ...options.headers },
     }, (response) => {
-      let body = ""
-      response.setEncoding("utf8")
-      response.on("data", (chunk) => { body += chunk })
-      response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }))
+      const chunks: Buffer[] = []
+      response.on("data", (chunk: Buffer) => chunks.push(chunk))
+      response.on("end", () => {
+        const bytes = Buffer.concat(chunks)
+        resolve({ status: response.statusCode ?? 0, headers: response.headers, body: bytes.toString(), bytes })
+      })
     })
     request.on("error", reject)
     request.end(options.body)
@@ -44,14 +178,17 @@ async function pair(target: string, code: string): Promise<string> {
 }
 
 test("an unpaired remote browser reaches only the pairing surface", async (t) => {
-  const { target } = await startRemoteSurface(t)
+  const { target, code } = await startRemoteSurface(t)
   assert.equal((await send(target(), "/api/test/echo")).status, 401)
-  const page = await send(target(), "/", { headers: { accept: "text/html" } })
-  assert.equal(page.status, 302)
-  assert.equal(page.headers.location, "/remote-pair")
-  const pairPage = await send(target(), "/remote-pair")
-  assert.equal(pairPage.status, 200)
-  assert.equal(pairPage.headers["cache-control"], "no-store")
+  const headers = { accept: "text/html", referer: "https://outside.invalid/link" }
+  for (const method of ["GET", "HEAD"]) {
+    const page = await send(target(), "/", { method, headers })
+    assert.equal(page.status, 302)
+    assert.equal(page.headers.location, "/remote-pair")
+    const pairPage = await send(target(), "/remote-pair", { method, headers })
+    assert.equal(pairPage.status, 200)
+    assert.equal(pairPage.headers["cache-control"], "no-store")
+  }
   // Password login is a host-only surface, so it cannot be guessed remotely.
   const login = await send(target(), "/api/auth/login", {
     method: "POST",
@@ -61,6 +198,15 @@ test("an unpaired remote browser reaches only the pairing surface", async (t) =>
   assert.equal(login.status, 404)
   // Recovery is told to pair again rather than to offer password login.
   assert.deepEqual(JSON.parse((await send(target(), "/api/auth/status")).body), { authenticated: false, pairingRequired: true })
+  const cookie = await pair(target(), code)
+  for (const method of ["GET", "HEAD"]) {
+    const headers = { cookie, accept: "text/html", referer: "https://outside.invalid/previews/external" }
+    assert.equal((await send(target(), "/remote-pair", { method, headers })).status, 200)
+    const httpReferer = { ...headers, referer: `http://${HOST}/previews/external` }
+    assert.equal((await send(target(), "/remote-pair", { method, headers: httpReferer })).headers["referrer-policy"], "no-referrer")
+    assert.equal((await send(target(), "/?source=external", { method, headers })).status, 200)
+    assert.equal((await send(target(), "/;source=external", { method, headers })).status, 200)
+  }
 })
 
 test("the static UI bundle stays public while HTML entry points require pairing", async (t) => {
@@ -72,6 +218,91 @@ test("the static UI bundle stays public while HTML entry points require pairing"
   assert.equal((await send(target(), "/index.html")).status, 401)
   assert.equal((await send(target(), "/api/test/echo.json")).status, 401)
   assert.equal((await send(target(), "/sidecars/example/app.js")).status, 404)
+})
+
+test("negotiates precompressed static assets without loosening HTML entry admission", async t => {
+  const { target, code, registryPath } = await startRemoteSurface(t)
+  const ui = path.join(path.dirname(registryPath), "ui")
+  const wasm = Buffer.from("static byte fixture ".repeat(200))
+  const br = brotliCompressSync(wasm)
+  const gzip = gzipSync(wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "app.wasm.br"), br)
+  fs.writeFileSync(path.join(ui, "app.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm"), wasm)
+  fs.writeFileSync(path.join(ui, "only-gzip.wasm.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive#1.gz"), gzip)
+  fs.writeFileSync(path.join(ui, "archive%.gz"), gzip)
+  const index = fs.readFileSync(path.join(ui, "index.html"))
+  fs.writeFileSync(path.join(ui, "index.html.br"), brotliCompressSync(index))
+  fs.mkdirSync(path.join(ui, "nested.assets"))
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html"), index)
+  fs.writeFileSync(path.join(ui, "nested.assets", "index.html.br"), brotliCompressSync(index))
+
+  const variants = [
+    ["/app.wasm", "br, gzip", "br", br],
+    ["/app.wasm", "gzip, br", "br", br],
+    ["/app.wasm", "gzip, *", "br", br],
+    ["/app.wasm", "br;q=0, gzip", "gzip", gzip],
+    ["/app.wasm", "br;q=0.2, gzip;q=0.8", "gzip", gzip],
+    ["/app.wasm", "gzip;q=0, *;q=1, identity;q=0", "br", br],
+    ["/app.wasm", "identity", undefined, wasm],
+    ["/app.wasm", "identity;q=1, br;q=0.1", undefined, wasm],
+    ["/only-gzip.wasm", "br, gzip", "gzip", gzip],
+  ] as const
+  for (const [route, accept, encoding, bytes] of variants) {
+    const headers = { "accept-encoding": accept }
+    const response = await send(target(), route, { headers })
+    assert.equal(response.status, 200)
+    assert.equal(response.headers["content-encoding"], encoding)
+    assert.equal(response.headers["content-type"], "application/wasm")
+    assert.match(String(response.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+    assert.deepEqual(response.bytes, bytes)
+    const head = await send(target(), route, { method: "HEAD", headers })
+    assert.equal(head.headers["content-encoding"], encoding)
+    assert.equal(Number(head.headers["content-length"]), bytes.length)
+    assert.equal(head.bytes.length, 0)
+  }
+  const headers = { "accept-encoding": "br" }
+  for (const extra of [{}, { range: "bytes=9999-" }, { "if-match": '"unrelated"' }] as Record<string, string>[]) {
+    const rejected = await send(target(), "/only-gzip.wasm", { headers: { "accept-encoding": "br, identity;q=0", ...extra } })
+    assert.equal(rejected.status, 406)
+    assert.equal(rejected.bytes.length, 0)
+    assert.match(String(rejected.headers.vary), /(?:^|,\s*)accept-encoding(?:,|$)/i)
+  }
+  assert.equal((await send(target(), "/archive%231.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
+  assert.equal((await send(target(), "/archive%25.gz", { headers: { "accept-encoding": "br, identity;q=0" } })).status, 406)
+  for (const url of ["/index.html", "/index.html.br"]) {
+    assert.equal((await send(target(), url, { headers })).status, 401)
+  }
+  assert.equal((await send(target(), "/absent.wasm", { headers })).status, 404)
+  const hidden = await send(target(), "/nested.assets", { headers })
+  assert.equal(hidden.status, 404)
+  assert.equal(hidden.headers["cache-control"], "no-store")
+  const cookie = await pair(target(), code)
+  const rangedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "br", range: "bytes=0-0" } })
+  assert.equal(rangedHead.status, 200)
+  assert.equal(Number(rangedHead.headers["content-length"]), brotliCompressSync(index).length)
+  const rangedFallback = await send(target(), "/settings", {
+    method: "POST", headers: {
+      cookie, origin: ORIGIN, "accept-encoding": "br", range: "bytes=0-0",
+      "if-modified-since": String(rangedHead.headers["last-modified"]),
+    },
+  })
+  assert.equal(rangedFallback.status, 200)
+  assert.deepEqual(rangedFallback.bytes, index)
+  const rejectedHead = await send(target(), "/", { method: "HEAD", headers: { cookie, "accept-encoding": "identity;q=0" } })
+  assert.equal(rejectedHead.status, 406)
+  assert.equal(Number(rejectedHead.headers["content-length"] ?? 0), 0)
+  assert.equal(rejectedHead.headers["content-type"], undefined)
+  for (const route of ["/", "/settings"]) {
+    const page = await send(target(), route, { headers: { "accept-encoding": "br, identity;q=0", cookie, accept: "text/html" } })
+    assert.equal(page.status, 200)
+    assert.equal(page.headers["content-encoding"], "br")
+    assert.equal(page.headers["cache-control"], "no-store")
+    assert.match(String(page.headers["content-type"]), /^text\/html\b/)
+    assert.deepEqual(page.bytes, brotliCompressSync(index))
+  }
 })
 
 test("pairing requires the public origin and issues a host-only secure cookie once", async (t) => {
@@ -282,6 +513,8 @@ test("web previews reach Remote Control through their capability while the host 
   // A paired device's root-relative asset resolves through the preview named by its Referer.
   const asset = () => send(target(), "/assets/probe.json", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
   assert.equal((await asset()).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/remote-pair", { headers: { cookie, referer: `/previews/${token}/page` } })).body, "{\"ok\":true}")
+  assert.equal((await send(target(), "/;version=1", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })).body, "{\"ok\":true}")
 
   const live = await upgrade(target(), `/previews/${token}/ws`)
   assert.equal(live.status, 101)
@@ -302,7 +535,34 @@ test("web previews reach Remote Control through their capability while the host 
   assert.equal((await upgrade(target(), `/previews/${token}/ws`)).status, 404)
   assert.notEqual((await asset()).body, "{\"ok\":true}")
   assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, true)
-  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined]])
+  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined], ["GET", "/remote-pair", undefined], ["GET", "/;version=1", undefined]])
+})
+
+test("a shared HTTP listener preserves same-origin previews and admits external HTTPS entry links", async t => {
+  const host = "direct.fixture.test"
+  const origin = `https://${host}`
+  const { app, authManager, manager, previewManager } = await startRemoteSurface(t, { allowedOrigins: [origin], configureApp(app) {
+    app.addHook("onRequest", (request, _reply, done) => {
+      const socket = request.raw.socket
+      socket.destroy ??= () => { socket.emit("close"); return socket }
+      done()
+    })
+  } })
+  const upstream = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+  const referer = `http://${host}/previews/${token}/page`
+  const session = `${authManager.getCookieName()}=${authManager.createSession("codenomad").id}`
+  const direct = manager.exchangeDirectPairing(new URL(manager.createDirectPairing(origin).url).hash.slice(1), origin, undefined)
+  assert.ok(direct)
+  for (const url of ["/remote-pair", "/;version=1"]) {
+    const http = await app.inject({ url, headers: { host, referer, cookie: session, "sec-fetch-site": "same-origin" } })
+    assert.deepEqual(http.json(), { ok: true })
+    const entryResponse: { statusCode: number; headers: Record<string, unknown> } = await app.inject({
+      url, headers: { host, referer, cookie: `__Host-codenomad_device=${direct.token}`,
+      accept: "text/html", "sec-fetch-site": "cross-site" } })
+    assert.equal(entryResponse.statusCode, 200)
+    assert.match(String(entryResponse.headers["content-type"]), /^text\/html/)
+  }
 })
 
 test("web previews served through Remote Control stay on the preview origin", async (t) => {

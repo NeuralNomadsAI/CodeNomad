@@ -111,6 +111,17 @@ describe("message technical part grouping", () => {
     ])
   })
 
+  it("disables only tool grouping, preserving reasoning runs and standalone tool order", () => {
+    const parts = [
+      part("read", "tool", "read"), part("grep", "tool", "grep"),
+      part("r1", "reasoning"), part("r2", "reasoning"),
+      part("bash", "tool", "bash"), part("shell", "tool", "shell"),
+    ]
+    assert.deepEqual(rowIds(groupTranscriptRows(parts, value => ({ kind: transcriptPartKind(value, false) }))), [
+      ["part", "read"], ["part", "grep"], ["reasoning", ["r1", "r2"]], ["part", "bash"], ["part", "shell"],
+    ])
+  })
+
   it("selects only technical parts between the previous boundary and the targeted response", () => {
     const items: TechnicalCleanupTranscriptItem[] = [
       null,

@@ -28,13 +28,13 @@ Workspace `.mmd` files open as diagrams. Use **Show source** to edit and **Show 
 3. Edit and choose **Save**, or press **Ctrl/Cmd+S** while the editor has focus.
 4. If the file changed externally, review the overwrite confirmation; choose **Cancel** to keep your draft without overwriting that change.
 
-Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care.
+Save writes the actual file in the browsed checkout, including a linked worktree; it does not send a prompt or stage/commit the edit. The conflict dialog says **File was modified by the agent. Overwrite agent's changes?**; treat any external writer's changes with the same care. Save checks the file version before replacing it; if a change is detected while saving, the save is refused and your draft is kept so you can **Refresh** or **Save** again.
 
-Dirty source drafts are retained in renderer memory by project instance, directory and path when readers are closed or switched. Filesystem refreshes do not silently replace them. This is not durable file storage: save or copy important edits before restarting/reloading the client. Explicit **Refresh** warns before discarding unsaved edits.
+With **Restore previous state** enabled, reopen the same file in the same project and checkout after restarting the desktop app to recover your draft. If the file changed on disk, CodeNomad keeps the draft and flags the conflict. The original changes only when you explicitly save. Each desktop profile retains up to 32 drafts, with a total limit of 256 KiB. If the window stays open because a draft could not be kept, save your edits or copy them before discarding the draft. **Refresh** asks before discarding a draft.
 
 Closing the reader with its trailing close button returns to the conversation; the composer remains available below the reader. Hiding the panel with **Right panel**, or a window too narrow for it, leaves the reader open with the freed width; showing the panel again keeps it as it was. Changing session/worktree clears the selected reader, not a promise to save its draft. Opening a browser preview replaces the reader; opening a file returns that view to chat mode.
 
-Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained; save important drafts before a reload. Files mode is restored per tab; diff and wrap preferences remain shared.
+Reader replacement and closure affect only the current project tab. Duplicate tabs can read different files or keep a file beside chat/web/Mission content. Source/rendered choice, editor selection and scroll survive tab switches while their in-memory target/model is retained. Files mode is restored per tab; diff and wrap preferences remain shared.
 
 ## Read-only and bounded previews {#preview-limits}
 

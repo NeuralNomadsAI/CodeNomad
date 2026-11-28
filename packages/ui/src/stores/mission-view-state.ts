@@ -7,20 +7,12 @@ import { compactMissionKey as key } from "./tab-view-state-migration"
 export interface MissionReaderTarget {
   /** For `playbook`, the playbook id, read without any Mission. */
   missionId: string
-  kind: "overview" | "task" | "report" | "change" | "recurrence" | "playbook"
+  kind: "overview" | "task" | "report" | "change" | "playbook"
   itemId?: string
   /** `playbook` only: the task-session policy whose coordinator contract is shown. */
   taskMode?: "native" | "independent"
-  /** Exact isolated passage scope; never a native session selector. */
-  recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string; owner?: "daily" | "scheduled" }
-  /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
-  instanceId?: string
-  projectID?: string
-  /** Configuration reader for a calendar-owned schedule without a current passage. */
-  scheduleOwner?: "scheduled"
 }
-/** One selection at a time: a row (`selected`, a schedule) or, instead, one task of a
- * Mission or passage (`selectedTask`, its Mission id beside it). */
+/** One selection at a time: a row (`selected`) or, instead, one task of a Mission (`selectedTask`, its Mission id beside it). */
 export interface MissionTaskSelectionKey { missionId: string; taskId: string }
 /** `expanded`: the rows whose chevron shows their children, newest last (at most `MAX_EXPANDED`). */
 type ProjectView = RestorableTabMissionView
@@ -42,8 +34,8 @@ export function navigateMissionProjectView(instanceId: string, patch: Partial<Pr
 export function updateMissionProjectView(instanceId: string, patch: Partial<ProjectView>): void {
   const previous = missionProjectView(instanceId)
   const value = { ...previous, ...patch }
-  if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.selectedScheduled === value.selectedScheduled && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
+  if (previous.selected === value.selected && previous.reader === value.reader
+    && previous.selectedTask === value.selectedTask && previous.expanded === value.expanded
     && previous.disclosures === value.disclosures) return
   updateTabViewState(instanceId, { missions: value })
 }
@@ -181,49 +173,4 @@ export function forgetMissionView(instanceId: string, missionId: string): void {
     selectedTask: view.selectedTask?.missionId === missionId ? undefined : view.selectedTask,
     reader: view.reader?.missionId === missionId ? undefined : view.reader,
   })
-}
-
-export type ScheduleOwner = "daily" | "scheduled"
-const [scheduleSeenVersion, setScheduleSeenVersion] = createSignal(0)
-const scheduleSeen = new Map<string, ReadonlySet<string>>()
-function scheduleSeenKey(scope: string, owner: ScheduleOwner, id: string) {
-  return `mission-passage-seen-${key(JSON.stringify([scope, owner, id]))}`
-}
-function readScheduleSeen(scope: string, owner: ScheduleOwner, id: string): ReadonlySet<string> | undefined {
-  scheduleSeenVersion()
-  const storageKey = scheduleSeenKey(scope, owner, id)
-  if (!scheduleSeen.has(storageKey)) {
-    try {
-      const value: unknown = JSON.parse(readClientLayoutValue(storageKey) ?? "null")
-      if (Array.isArray(value) && value.every(item => typeof item === "string" && item.length <= 240))
-        scheduleSeen.set(storageKey, new Set(value))
-    } catch { /* A missing positive acknowledgement leaves new results unread. */ }
-  }
-  return scheduleSeen.get(storageKey)
-}
-function saveScheduleSeen(scope: string, owner: ScheduleOwner, id: string, values: ReadonlySet<string>): void {
-  const storageKey = scheduleSeenKey(scope, owner, id)
-  scheduleSeen.set(storageKey, values)
-  const saved: string[] = []
-  for (const value of [...values].reverse()) {
-    if (JSON.stringify([...saved, value]).length > MAX_LAYOUT_VALUE_LENGTH) break
-    saved.unshift(value)
-  }
-  writeClientLayoutValue(storageKey, JSON.stringify(saved))
-  setScheduleSeenVersion(value => value + 1)
-}
-/** As for one-time Missions, the first loaded historical success starts seen.
- * Each schedule seeds independently because the unified inventory is paged. */
-export function seedScheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID?: string): void {
-  if (readScheduleSeen(scope, owner, id)) return
-  saveScheduleSeen(scope, owner, id, new Set(passageID ? [passageID] : []))
-}
-export function scheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID: string): boolean {
-  return readScheduleSeen(scope, owner, id)?.has(passageID) ?? true
-}
-/** Capture the displayed passage before invoking this, including for late callbacks.
- * Retain exact positive identities: acknowledging A can never acknowledge B. */
-export function markScheduleSuccessSeen(scope: string, owner: ScheduleOwner, id: string, passageID: string): void {
-  const previous = readScheduleSeen(scope, owner, id) ?? new Set<string>()
-  if (!previous.has(passageID)) saveScheduleSeen(scope, owner, id, new Set([...previous, passageID]))
 }

@@ -4,17 +4,18 @@ import type { OpenCodeClient, PermissionRequest } from "@opencode/client"
 import type { WorkspacePendingRequestsResponse } from "../../../server/src/api-types"
 import { PENDING_REQUEST_SNAPSHOT_TIMEOUT_MS } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
+import { backgroundReads } from "../lib/background-read-queue"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { sdkManager } from "../lib/sdk-manager"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied,
   addPendingForm, sendFormReply, sendFormCancel,
-  incompletePendingRecovery, clearReloadableInstanceState,
+  incompletePendingRecovery, needsPendingRequestLiveness, clearReloadableInstanceState, activeInstanceId, setActiveInstanceId,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
-import { sessions, seedRestoredSessionSelection, setSessions } from "./session-state"
+import { sessions, seedRestoredSessionSelection, setSessions, selectActiveSession } from "./session-state"
 import { createClientSession } from "../types/session"
 import { captureWorktreeMoveReconciliation, getPendingWorktreeLocations, getPendingWorktreeSlug, getWorktrees, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
 import { sseManager } from "../lib/sse-manager"
@@ -36,13 +37,10 @@ const deferred = <T>() => {
   return { promise, resolve }
 }
 const emptyLocation = (directory: string) => ({ location: { directory }, permissions: [], forms: [] })
-// Harness instances live in /pending-fixture, so the warning title names that project.
-// Newest first, like the notification history.
-const recoveryWarnings = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace: "pending-fixture" }))
 
 let sequence = 0
-function harness() {
-  const id = `pending-fixture-${++sequence}`, directory = "/pending-fixture"
+function harness(directory = "/pending-fixture") {
+  const id = `pending-fixture-${++sequence}`
   const calls: string[] = []
   const client = {
     permission: { request: { list: async ({ location }: any) => { calls.push(`permission:${location.directory}`); return { location, data: [] } } } },
@@ -187,8 +185,7 @@ test("obsolete and foreign history can be excluded without repeated warnings or 
   const h = harness()
   try {
     const deleted = "/deleted-temporary-history", foreign = `${h.directory}/foreign-fixture`, subdirectory = `${h.directory}/idle-subdirectory`
-    const warnings = () => recoveryWarnings().length
-    const before = warnings()
+    const before = getToastHistory().length
     setSessions((previous) => new Map(previous).set(h.id, new Map([deleted, foreign, subdirectory].map((directory, index) => {
       const session = createClientSession({ id: `history-${index}`, title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
       return [session.id, session]
@@ -204,7 +201,7 @@ test("obsolete and foreign history can be excluded without repeated warnings or 
     await syncPendingRequests(h.id)
     await syncPendingRequests(h.id)
     assert.equal(incompletePendingRecovery().has(h.id), false)
-    assert.equal(warnings(), before, "two successful recoveries with excluded hints must not emit the incomplete warning")
+    assert.equal(getToastHistory().length, before, "two successful recoveries with excluded hints must not emit any notice")
     assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["idle"])
     assert.deepEqual(getFormQueue(h.id).map((request) => request.id), ["idle"])
     assert.equal(sessions().get(h.id)?.size, 3, "excluding a recovery hint never deletes its historical session")
@@ -257,13 +254,13 @@ test("recovery reconciles stale inventoried worktrees before warning about remov
         ? optional?.includes(directory) ? { directory, status: "excluded" as const } : { directory, status: "error" as const, reason: "missing" as const }
         : { directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [permission("other")], forms: [form("other")] }] }) }
     }
-    const before = recoveryWarnings().length
+    const before = getToastHistory().length
     await syncPendingRequests(h.id)
     await syncPendingRequests(h.id)
     assert.equal(refreshes, 1)
     assert.equal(reads, 3, "only the changed inventory warrants one new loaded-only snapshot")
     assert.equal(incompletePendingRecovery().has(h.id), false)
-    assert.equal(recoveryWarnings().length, before)
+    assert.equal(getToastHistory().length, before)
     assert.equal(sessions().get(h.id)?.get(history.id)?.location.directory, deleted)
     assert.equal(sessions().get(h.id)?.get(history.id)?.title, history.title)
     assert.deepEqual(getWorktrees(h.id).map(entry => entry.slug), ["root"])
@@ -302,7 +299,7 @@ for (const unsupported of [false, true]) test(`a failed inventory-only retry pre
 
 for (const provenance of ["selected", "working", "permission", "form"] as const) {
   test(`missing inventoried ${provenance} locations remain required without inventory-driven exclusion`, async () => {
-    const h = harness(), original = serverApi.fetchWorktrees
+    const h = harness(`/pending-required-${provenance}`), original = serverApi.fetchWorktrees
     const deleted = `${h.directory}/required-worktree`
     try {
       serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" }] })
@@ -383,7 +380,7 @@ test("a settled move clears selector busy state without releasing unreconciled d
 
 for (const disposition of ["native-deleted", "authoritative-remove", "outside-project", "stale-resident"] as const) {
   test(`complete post-move scope reconciles an absent ${disposition} family member`, async () => {
-    const h = harness(), original = serverApi.fetchWorktrees, originalClient = sdkManager.createClient
+    const h = harness(`/pending-move-${disposition}`), original = serverApi.fetchWorktrees, originalClient = sdkManager.createClient
     const target = `${h.directory}/removed-target`
     try {
       serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "target", directory: target, kind: "worktree" }] })
@@ -511,88 +508,73 @@ test("a failed partial family move retains source/target authority until complet
   } finally { serverApi.fetchWorktrees = original; sdkManager.createClient = originalClient; h.cleanup() }
 })
 
-test("the recovery warning needs consecutive incomplete attempts and a success re-arms it", async () => {
-  const h = harness()
-  const warnings = () => recoveryWarnings().length
+test("transient recovery failures stay silent in notifications while retaining incomplete state and queues", async () => {
+  const h = harness("/pending-silent-transient")
   try {
-    const before = warnings()
-    const fail = async () => {
-      serverApi.getPendingRequests = async () => { throw new Error("Temporary transport failure") }
+    addPermissionToQueue(h.id, permission("known"), h.directory)
+    addPendingForm(h.id, form("known"), h.directory)
+    const before = getToastHistory().length
+    const failures = [
+      () => { throw new Error("Temporary transport failure") },
+      () => { throw new DOMException("aborted", "AbortError") },
+      () => { throw new HttpResponseError("Unavailable", 503, null, "timeout") },
+      () => { throw new HttpResponseError("Directory does not belong to workspace", 403, null, undefined, { directories: [{ directory: h.directory, status: "error", reason: "missing" }] }) },
+    ]
+    for (const fail of failures) {
+      serverApi.getPendingRequests = async () => fail()
       await assert.rejects(syncPendingRequests(h.id))
+      await assert.rejects(syncPendingRequests(h.id))
+      assert.equal(incompletePendingRecovery().has(h.id), true)
     }
-    const succeed = async () => {
-      serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
-      await syncPendingRequests(h.id)
-    }
-    await fail()
-    assert.equal(incompletePendingRecovery().has(h.id), true, "Incomplete state is immediate even without a warning")
-    assert.equal(warnings(), before, "One transient failure does not warn")
-    await succeed()
-    await fail()
-    assert.equal(warnings(), before, "Alternating success/failure never warns")
-    await fail()
-    assert.equal(warnings(), before + 1)
-    await fail()
-    assert.equal(warnings(), before + 1, "A persistent failure warns once")
-    await succeed()
-    await fail()
-    await fail()
-    assert.equal(warnings(), before + 2, "A new persistent failure after recovery warns again")
-  } finally { h.cleanup() }
-})
+    assert.equal(getToastHistory().length, before, "transient failures never create toasts or history entries")
+    assert.deepEqual(getPermissionQueue(h.id).map(item => item.id), ["known"])
+    assert.deepEqual(getFormQueue(h.id).map(item => item.id), ["known"])
 
-test("the recovery warning names its cause, the folders and the sessions that required them", async () => {
-  const h = harness()
-  try {
-    // The live case: an active session in a checkout the server cannot verify for this project.
-    const foreign = `${h.directory}/.codenomad/worktrees/prompt-replay-yield`
-    const active = createClientSession({ id: "issues", title: "ISSUES Codenomad", location: { directory: foreign }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
-    const idle = createClientSession({ id: "idle", title: "Idle elsewhere", location: { directory: foreign }, time: { created: 1, updated: 1 } } as any, h.id)
-    setSessions((previous) => new Map(previous).set(h.id, new Map([[active.id, active], [idle.id, idle]])))
-    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => directory === foreign
-      ? { directory, status: "error" as const, reason: "not-owned" as const }
-      : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) })
-    const before = recoveryWarnings().length
-    await assert.rejects(syncPendingRequests(h.id))
-    await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    assert.equal(recoveryWarnings()[0]?.message, `${tGlobal("interruption.recoveryIssue.notOwned", { directories: "prompt-replay-yield" })} ${
-      tGlobal("interruption.recoverySessions", { sessions: "ISSUES Codenomad" })}`, "only the session that made the folder required is named")
-
-    // A success re-arms the warning; a whole failed batch then names each folder with its own cause.
-    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })),
+    })
     await syncPendingRequests(h.id)
-    serverApi.getPendingRequests = async () => { throw new DOMException("aborted", "AbortError") }
-    await assert.rejects(syncPendingRequests(h.id))
-    await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 2)
-    const message = recoveryWarnings()[0]?.message ?? ""
-    const [timeoutPrefix] = tGlobal("interruption.recoveryIssue.timeout", { directories: "\u0000" }).split("\u0000")
-    assert(message.startsWith(timeoutPrefix), message)
-    for (const name of ["pending-fixture", "prompt-replay-yield", "ISSUES Codenomad"]) assert(message.includes(name), message)
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.equal(getToastHistory().length, before)
   } finally { h.cleanup() }
 })
 
-test("a refused batch shows each folder's real reason and leaves excluded history out", async () => {
-  const h = harness()
+test("needsPendingRequestLiveness skips idle recovered projects and activates for incomplete, busy or queued ones", async () => {
+  const h = harness("/pending-liveness-gate")
   try {
-    const gone = `${h.directory}/.codenomad/worktrees/gone`, history = "/old-history"
-    const active = createClientSession({ id: "active", title: "Active", location: { directory: gone }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
-    const old = createClientSession({ id: "old", title: "Old", location: { directory: history }, time: { created: 1, updated: 1 } } as any, h.id)
-    setSessions((previous) => new Map(previous).set(h.id, new Map([[active.id, active], [old.id, old]])))
-    serverApi.getPendingRequests = async () => {
-      throw new HttpResponseError("Directory does not belong to workspace", 403, null, undefined, { directories: [
-        { directory: gone, status: "error", reason: "missing" }, { directory: history, status: "excluded" },
-      ] })
-    }
-    const before = recoveryWarnings().length
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })),
+    })
+    await syncPendingRequests(h.id)
+    assert.equal(needsPendingRequestLiveness(h.id), false, "idle recovered project does not need 30-second polling")
+
+    addPermissionToQueue(h.id, permission("queued"), h.directory)
+    assert.equal(needsPendingRequestLiveness(h.id), true, "queued permission needs liveness polling")
+    await syncPendingRequests(h.id)
+    assert.equal(needsPendingRequestLiveness(h.id), false)
+
+    const working = createClientSession({ id: "working", title: "Working", location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "working")
+    setSessions(previous => new Map(previous).set(h.id, new Map([[working.id, working]])))
+    assert.equal(needsPendingRequestLiveness(h.id), true, "running session needs liveness polling")
+    const idle = createClientSession({ id: "working", title: "Working", location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, "idle")
+    setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, idle]])))
+    assert.equal(needsPendingRequestLiveness(h.id), false)
+
+    setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, { ...idle, generationRecovery: "pending" }]])))
+    assert.equal(needsPendingRequestLiveness(h.id), true, "acknowledged prompt awaiting execution start needs liveness polling")
+    setSessions(previous => new Map(previous).set(h.id, new Map([[idle.id, idle]])))
+    assert.equal(needsPendingRequestLiveness(h.id), false)
+
+    serverApi.getPendingRequests = async () => { throw new HttpResponseError("Unavailable", 503, null, "timeout") }
     await assert.rejects(syncPendingRequests(h.id))
-    await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    const message = recoveryWarnings()[0]?.message ?? ""
-    assert(message.includes(tGlobal("interruption.recoveryIssue.missing", { directories: "gone" })), message)
-    assert(!message.includes("old-history"), "an excluded optional hint is not reported")
-    assert(!message.includes(tGlobal("interruption.recoveryIssue.notOwned", { directories: "gone" })), "not mislabelled as outside the project")
+    assert.equal(needsPendingRequestLiveness(h.id), true, "incomplete recovery needs liveness retries")
+    assert.equal(needsPendingRequestLiveness(h.id, true), true, "hidden windows keep retrying incomplete recovery")
+    serverApi.getPendingRequests = async (_id, directories) => ({
+      supported: true, directories: directories.map(directory => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })),
+    })
+    await syncPendingRequests(h.id)
+    setSessions(previous => new Map(previous).set(h.id, new Map([[working.id, working]])))
+    assert.equal(needsPendingRequestLiveness(h.id, true), false, "hidden windows skip already-recovered projects")
   } finally { h.cleanup() }
 })
 
@@ -625,7 +607,7 @@ test("an unavailable recovery plugin is one notice across reconnects and project
 })
 
 test("history transport failures remain errors and a late known request fences historical exclusion", async () => {
-  const h = harness()
+  const h = harness("/pending-historical-coverage")
   try {
     const directory = "/historical-directory"
     const session = createClientSession({ id: "history", title: "History", location: { directory }, time: { created: 1, updated: 1 } } as any, h.id)
@@ -941,4 +923,53 @@ test("ambiguous global Form reply is not replayed and recovery keeps location au
     assert.equal(replies, 1)
     assert.equal(getFormQueue(h.id)[0]?.location?.directory, h.directory)
   } finally { sdkManager.createClient = originalClient; h.cleanup() }
+})
+
+test("activating a session in a directory the last recovery never covered triggers a fresh scan", async () => {
+  const h = harness()
+  try {
+    const batches: string[][] = []
+    serverApi.getPendingRequests = async (_id, directories) => {
+      batches.push([...directories])
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    // A first completed scan covers only the root (no sessions loaded yet).
+    await syncPendingRequests(h.id)
+    assert.deepEqual(batches.flat(), [h.directory])
+    // Opening a session whose worktree directory was never scanned must not
+    // wait for the slow liveness sweep: activation itself starts a new scan.
+    setSessions(new Map([[h.id, new Map([["ses-worktree", createClientSession(
+      { id: "ses-worktree", title: "Worktree", location: { directory: `${h.directory}/unscanned-tree` }, time: { created: 1, updated: 1 } } as any, h.id)]])]]))
+    selectActiveSession(h.id, "ses-worktree")
+    for (let i = 0; i < 1000 && !batches.flat().includes(`${h.directory}/unscanned-tree`); i++) {
+      await new Promise<void>((done) => setImmediate(done))
+    }
+    assert.ok(batches.flat().includes(`${h.directory}/unscanned-tree`),
+      "session activation must scan the session's own directory")
+  } finally { h.cleanup() }
+})
+
+test("the shown project's recovery does not wait behind occupied background reads", async () => {
+  const shown = harness("/pending-shown"), other = harness("/pending-other")
+  const hold = deferred<void>(), previous = activeInstanceId()
+  const blockers = [0, 1].map(() => backgroundReads.run(new AbortController().signal, () => hold.promise))
+  try {
+    const read: string[] = []
+    serverApi.getPendingRequests = async (id, directories) => {
+      read.push(id)
+      return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [emptyLocation(directory)] })) }
+    }
+    setActiveInstanceId(shown.id)
+    const waiting = syncPendingRequests(other.id)
+    await syncPendingRequests(shown.id)
+    assert.deepEqual(read, [shown.id])
+    hold.resolve()
+    await Promise.all([...blockers, waiting])
+    assert.deepEqual(read, [shown.id, other.id])
+  } finally {
+    hold.resolve()
+    setActiveInstanceId(previous)
+    await Promise.allSettled(blockers)
+    other.cleanup(); shown.cleanup()
+  }
 })

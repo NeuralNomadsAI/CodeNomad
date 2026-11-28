@@ -1,6 +1,6 @@
 # Konuşmalar
 
-Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini işler. **Mesaj içeriği** saklanan parçaları silmeden görünürlüğü değiştirir; [Geçmiş](history.md#operation-reference) görünüm kontrolleriyle temizliği ayırır.
+Mesajlar Markdown, kod, farklar ve desteklenen araç sonucu görüntülerini işler. Çok dosyalı yamalar değişiklikleri görüntüleme sınırına kadar dosya dosya gösterir; araç çıktısı kopyalandığında tüm dosyalar dahil edilir. **Mesaj içeriği** saklanan parçaları silmeden görünürlüğü değiştirir; [Geçmiş](history.md#operation-reference) görünüm kontrolleriyle temizliği ayırır.
 
 Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gösterir; süre, adım çalışırken canlı olarak sayılır ve bir saniyenin altındaki süreler gösterilmez. **Mesaj içeriği** içinde **Tokenlar** gösterildiğinde (**Her şey** hazır ayarı bunu gösterir), her ajan mesajı son metninden sonra tek bir token ve maliyet satırıyla biter. Bu satır, yüklenmiş konuşma dökümü içinde mesajı ve **Bu yanıttan araçları ve akıl yürütmeyi kaldır** eyleminin kapsadığı araçları ve akıl yürütmeyi içeren mesajları toplar; akıl yürütme ve önbellek sayıları için satırı genişletin.
 
@@ -20,6 +20,16 @@ Konuşmayı açmadan gördüğünüzü belirtmek için **Boşta** veya **Kesildi
 Normal gezinme hiyerarşiktir; arama/filtre sonuçları her konuşmanın kendi kimliği ve çalışma ağacıyla düz listelenir. **Ayarlar → Genel** içindeki **Alt oturumları otomatik genişlet** varsayılan olarak açıktır. Alt oturumlar çalışmaya, sıkıştırmaya veya girdi beklemeye başladığında seçili konuşmanın görünen dalları açılır. Etkinliğin dalları açmasını önlemek için seçeneği kapatın; elle genişletme ve açık gezinme kullanılabilir kalır. Otomatik açılanlar dahil açık dallar geri yüklemek üzere kaydedilir.
 
 Geri/İleri, liste sırası değil, proje sekmesi başına, pencere başına ziyaret geçmişidir. Paletin **Önceki Session** / **Sonraki Session**'si bunun yerine görünür listeyi döndürür.
+
+## Konuşmaları favorilerde tutun {#favorites}
+
+Eylemleri görmek için işaretçiyi oturum satırının üzerine getirin veya satıra odaklanın. Dokunmatik ekranda eylemler doğrudan görünür. Yıldız düğmesini kullanın veya yer darsa **Diğer eylemler** (⋯) menüsünden **Favorilere ekle** ya da **Favorilerden çıkar** seçeneğini seçin.
+
+Oturum ağacında önce yanıtınızı bekleyen istekler gelir. Favoriler yalnızca aynı üst oturuma bağlı, aynı düzeydeki oturumlar arasında öne çıkar. Dallar açık veya kapalı kalır. Aramada **Etkinlik**, gösterilen alt oturumlar dâhil eşleşen favorilere öncelik verir. **Ad** ve **Çalışma ağacı** kendi sıralamalarını kullanır.
+
+Oturum aramasında **Yalnızca favoriler** seçeneğini kullanın. Gizli eşleşmeleri gösterme düğmesi aramayı, çalışma ağacını ve diğer filtreleri değiştirmeden her iki oturum türünü açar. **Sıfırla**, varsayılan filtre ve sıralamayı geri yükler.
+
+Aynı CodeNomad sunucusunda aynı klasörü açan pencereler favorileri paylaşır. Oturum temizliği favorileri ve üst oturumlarını korur; açıkça silmek yine mümkündür.
 
 ## Arşivleme ve geri yükleme {#archive}
 
@@ -61,8 +71,10 @@ Taslaklar paylaşılan OpenCode mesajları değil, istemci çalışma durumudur.
 ## Yanıtlardan dosya açma {#open-files-from-replies}
 
 1. Aracı yanıtları proje dosyalarına göreli ve mutlak yollarla bağlantı verir.
-2. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree’sinden okuyarak dosya önizlemesinde açar.
-3. Değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree’si dışındaki bağlantılar normal bağlantı davranışını korur.
+2. Düz metin olarak veya satır içi kod içinde yazılan bir yol da, sohbetin worktree'sinin dosyayı içerdiği bilindiğinde bağlantı olur; herhangi bir yazı sisteminden dosya adları da tanınır. Var olmayan yollar düz metin olarak kalır. Masaüstü uygulamasında, bu bilgisayardaki bir proje için klasörler de bağlantıya dönüşür.
+3. Düz bir tıklama, bağlantılı dosyayı sohbetin worktree'sinden okuyarak dosya önizlemesinde açar.
+4. Masaüstü uygulamasında, bu bilgisayardaki bir proje için dosya önizlemesi gösterebildiği metin dosyalarını ve görselleri açar. Klasörler, diğer dosyalar (videolar, PDF'ler…), worktree dışındaki yollar ve `file:` bağlantıları, Ctrl/⌘ tıklama ve orta tıklamada her zaman olduğu gibi sisteminizle açılır; açılamazlarsa bir hata görünür.
+5. Diğer durumlarda değiştirici tıklamalar (Ctrl/⌘, Shift, orta tıklama) ve oturumun worktree'si dışındaki bağlantılar normal bağlantı davranışını korur.
 
 ## Komutlar ve Shell modu {#commands-shell}
 
@@ -104,6 +116,14 @@ Kapatmak ana oturumu kesmeden bekleyen yan isteği iptal eder. Etkin konuşmadan
 3. O satırda **Hedefi duraklat** veya **Hedefi sürdür** öğesini kullanın ya da `/goal pause` veya `/goal resume` gönderin. Hedefi kaldırmak için **Hedefi temizle** öğesini veya `/goal clear` komutunu kullanın.
 
 Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başlar. OpenCode; oturumu durdurduğunuzda, bir çalıştırma başarısız olduğunda, ilerleme durduğunda, tur sınırına ulaşıldığında veya hizmet yeniden başladığında hedefi kendisi de duraklatır; devam etmek için sürdürün. Duraklatmak veya temizlemek, yapılmış işi geri almaz. Hedef yoksa veya hedef desteği olmayan bir OpenCode hizmetinde satır görünmez.
+
+## /automation ile oturum otomasyonlarını izleyin {#automations}
+
+1. Bir konuşmada `/automation` ile (veya ajanın otomasyon araçlarıyla) zamanlanmış ya da olay tabanlı otomasyonlar oluşturun veya yönetin.
+2. Konuşmanın otomasyonları olduğu sürece **Durum**, bunları **Tokenlar** üzerinde (etkin bir hedef varsa **Hedef** altında) listeler: her satır durumu (**Etkin**, **Duraklatıldı** veya **Tamamlandı**), adı, sonraki çalıştırmayı ya da kuralı ve çalıştırma sayısını gösterir. Tamamlananlar açılana kadar **Tamamlananlar (N)** altında katlı kalır.
+3. Tetikleyiciyi, zamanlamayı ve son çıktıyı görmek için satırın üzerine gelin veya odaklanın ya da ayrıntı penceresini açmak için tıklayın. Satırdaki **Otomasyonu duraklat**, **Otomasyonu sürdür** veya **Otomasyonu sil** düğmeleriyle doğrudan yönetin.
+
+Yalnızca etkin konuşmaya ait otomasyonlar gösterilir. Bir otomasyonu silmek geri alınamaz ve yapılmış işi geri çevirmez. Otomasyon yoksa veya otomasyon API'sini sunmayan bir OpenCode hizmetinde blok görünmez.
 
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 

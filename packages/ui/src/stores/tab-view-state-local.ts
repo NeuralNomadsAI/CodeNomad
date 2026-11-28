@@ -1,8 +1,9 @@
 import { clientStateIsPrimary, readClientLayoutValue, removeClientLayoutValue, writeClientLayoutValue } from "./client-state"
-import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { workspaceIdentity } from "./app-session-reconciliation"
+import { parseInstanceKey, projectScope } from "../lib/backend-identity"
+import { legacyProjectIdentity, readLegacyMissionView } from "./tab-view-state-migration"
 import { LEGACY_SESSION_PREVIEWS_KEY, MAX_TAB_PREVIEW_STORAGE, normalizeTabViewState, parseLegacySessionPreviews, tabPreviewModes,
   type RestorableTabViewState } from "./tab-view-state-codec"
-import { readLegacyMissionView } from "./tab-view-state-migration"
 import { importSessionBrowsers } from "./session-browser-persistence"
 
 const KEY = "opencode-session-tab-views-v1"
@@ -20,9 +21,11 @@ function read(): Record<string, RestorableTabViewState> {
       const view = normalizeTabViewState(value, budget)
       return view ? [[key, view] as const] : []
     })
-    const imported = importSessionBrowsers(entries.map(([, view]) => view).reverse())
-    const result = Object.fromEntries(entries.map(([key, view]) => [key, imported ? tabPreviewModes(view) : view]))
-    if (imported && entries.some(([, view]) => Object.values(view.previews ?? {}).some(p => p.targetUrl))) {
+    const localKeys = new Set([...scopes].filter(([id]) => parseInstanceKey(id).backendId === "local").map(([, key]) => key))
+    const localEntries = entries.filter(([key]) => localKeys.has(key))
+    const imported = importSessionBrowsers(localEntries.map(([, view]) => view).reverse())
+    const result = Object.fromEntries(entries.map(([key, view]) => [key, imported && localKeys.has(key) ? tabPreviewModes(view) : view]))
+    if (imported && localEntries.some(([, view]) => Object.values(view.previews ?? {}).some(p => p.targetUrl))) {
       try { window.localStorage.setItem(KEY, JSON.stringify(result)) } catch { /* Resource URLs are already durable. */ }
     }
     return result
@@ -30,7 +33,8 @@ function read(): Record<string, RestorableTabViewState> {
 }
 
 export function bindLocalTabView(instanceId: string, folder: string) {
-  const path = normalizeWorkspacePath(folder)
+  const { backendId } = parseInstanceKey(instanceId)
+  const path = workspaceIdentity(folder, backendId)
   // Allocation and closure share the bound inventory, including while backend DELETE is pending.
   const occurrence = [...scopes.values()].filter(key => JSON.parse(key)[0] === path).length
   const key = scopes.get(instanceId) ?? JSON.stringify([path, occurrence])
@@ -38,7 +42,7 @@ export function bindLocalTabView(instanceId: string, folder: string) {
   if (clientStateIsPrimary()) return
   const current = read()[key]
   if (occurrence !== 0) return current
-  const legacy = readLegacyMissionView(folder, readClientLayoutValue)
+  const legacy = readLegacyMissionView(projectScope({ folder, backendId }), readClientLayoutValue)
   if (!legacy) return current
   const view = current ?? legacy.view
   if (saveLocalTabView(instanceId, view) && readClientLayoutValue(legacy.key) === legacy.source)
@@ -97,7 +101,7 @@ export function adoptLocalLegacyPreview(instanceId: string, sessionId: string) {
       const tuple: unknown = JSON.parse(key)
       if (Array.isArray(tuple) && tuple.length === 2 && tuple.every(part => typeof part === "string")) [path, session] = tuple
     } catch { /* A project-wide record uses its folder directly. */ }
-    if (normalizeWorkspacePath(path) !== folder) continue
+    if (legacyProjectIdentity(path) !== folder) continue
     if (session === sessionId) exact = entry
     else if (session === undefined) fallback = entry
   }

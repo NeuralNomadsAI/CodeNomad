@@ -24,7 +24,7 @@ export const MISSION_INDEX_STALE_AFTER_MS = 60_000
 export type SynchronousHint<T> = T extends { then(...args: never[]): unknown } ? never : T
 
 /** One mission range read by its journal; `uncertain` when its deletion record was unreadable. */
-export interface MissionIndexRange { view: MissionView; uncertain: boolean }
+export interface MissionIndexRange { view: MissionView; uncertain: boolean; first?: Pick<MissionEvent, "createdAt" | "id"> }
 
 /** The journal's unlocked readers; the index calls them under the append exclusion. */
 export interface MissionIndexSource {
@@ -212,8 +212,8 @@ export class MissionJournalIndex {
   }
 }
 
-function put(state: State, { view }: MissionIndexRange): void {
-  const entry = entryOf(view)
+function put(state: State, { view, first }: MissionIndexRange): void {
+  const entry = entryOf(view, first)
   if (!entry) return
   state.entries.set(entry.missionID, entry)
   for (const sessionID of entry.refs.keys()) {
@@ -223,7 +223,7 @@ function put(state: State, { view }: MissionIndexRange): void {
   }
 }
 
-function entryOf(view: MissionView): Entry | undefined {
+function entryOf(view: MissionView, first?: OrderToken): Entry | undefined {
   const { events, mission } = view
   // A purged or empty range holds nothing a cross-mission question can see.
   if (!events.length && !view.discardedEvents) return undefined
@@ -232,7 +232,6 @@ function entryOf(view: MissionView): Entry | undefined {
     const kinds = refs.get(sessionID) ?? []
     if (!kinds.includes(kind)) refs.set(sessionID, [...kinds, kind].sort((a, b) => KINDS.indexOf(a) - KINDS.indexOf(b)))
   }
-  let first: MissionEvent | undefined
   for (const event of events) {
     if (!first || compareEvents(event, first) < 0) first = event
     if (event.type === "mission.created") {

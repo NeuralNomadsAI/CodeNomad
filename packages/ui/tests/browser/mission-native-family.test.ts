@@ -139,8 +139,6 @@ async function setup(label: string, narrow = false, independent = false, task = 
     requests.push({ method: request.method(), path: pathname, source: new URL(request.url()).searchParams.get("panelSource"), ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
-    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
-    if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
     if (pathname === "/api/workspaces/native-family/integrations") return route.fulfill({ json: { location, catalog: { state: "fresh" }, integrations: [] } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.
@@ -531,10 +529,9 @@ test("390px RTL red Mission row selects the exact same-active-child permission b
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".shell-panel-toggle--right button:visible").tap()
-    const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
-    await pickMission(page, "A")
-    await (await selectedSchedule).json()
-    // The red row opens the exact correlated permission; the global one is never a Mission's.
+    // A Mission without tasks carries its family's question on its own flag as soon as it is
+    // listed, before any selection: the red row opens the exact correlated permission, and
+    // the global one is never a Mission's.
     const row = missionRow(page, "Objective A")
     await row.locator('.mission-row-flag[data-mark="permission"]').waitFor()
     await row.locator(".mission-row-select").tap()

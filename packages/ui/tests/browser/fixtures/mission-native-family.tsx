@@ -15,13 +15,12 @@ import { sdkManager } from "../../../src/lib/sdk-manager"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
-import { panelExtensionsApi } from "../../../src/lib/panel-extensions-api"
-import { observePanelReads } from "../panel-read-fixture"
+import { observeBackendPanelReads } from "../panel-read-fixture"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { markSessionListsRestored } from "./session-list-restored"
 import "../../../src/index.css"
 
-const panelReadCancelled = observePanelReads(panelExtensionsApi)
+const panelReadCancelled = observeBackendPanelReads()
 
 // Production whole-InstanceShell foundation, independent of the concurrent
 // mission-cross-navigation fixture. Native HTTP/SSE transport remains fake.
@@ -101,7 +100,10 @@ function Fixture() {
   window.missionNativeFamily = {
     snapshot, emit, measureComposer,
     panelReadCancelled,
-    transport: status => (serverEvents as unknown as { emitTransportStatus(status: string): void }).emitTransportStatus(status),
+    transport: status => {
+      const transport = serverEvents as unknown as { emitTransportStatus(status: string): void }
+      transport.emitTransportStatus(status)
+    },
     statusKnown: (sessionId, known) => setSessions(previous => {
       const next = new Map(previous), catalog = new Map(next.get(id)), session = catalog.get(sessionId)
       if (session) catalog.set(sessionId, { ...session, runtimeStatusKnown: known })

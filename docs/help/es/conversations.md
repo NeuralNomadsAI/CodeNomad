@@ -1,6 +1,6 @@
 # Conversaciones
 
-Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
+Los mensajes muestran Markdown, código, diferencias e imágenes compatibles de resultados de herramientas. Los parches de varios archivos muestran los cambios por archivo hasta el límite de visualización; al copiar la salida de la herramienta se incluyen todos los archivos. **Contenido de los mensajes** cambia la visibilidad sin eliminar las partes almacenadas; [Historial](history.md#operation-reference) distingue los controles de visualización de la limpieza.
 
 Los encabezados de razonamiento y de herramientas muestran cuánto duró cada paso, con un contador en vivo mientras se ejecuta; no se muestran duraciones inferiores a un segundo. Cuando **Tokens** se muestra en **Contenido de los mensajes** (el preajuste **Todo** lo muestra), cada mensaje del agente termina con una línea de tokens y coste después de su texto final. Esa línea suma el mensaje y los mensajes que contienen las herramientas y el razonamiento que cubre su acción **Eliminar herramientas y razonamientos de esta respuesta**, dentro de la transcripción cargada; despliégala para ver los recuentos de razonamiento y de caché.
 
@@ -20,6 +20,16 @@ Haz clic en una insignia **Inactiva** o **Interrumpido** (**Descartar**) para re
 La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. En **Ajustes → General**, **Expandir subsesiones automáticamente** está activado por defecto. Las ramas visibles de la conversación seleccionada se abren cuando las subsesiones empiezan a trabajar, compactar o esperar una respuesta. Desactiva la opción para que la actividad no abra ramas; la expansión manual y la navegación explícita siguen disponibles. Las ramas abiertas, incluidas las abiertas automáticamente, se guardan para restaurarlas.
 
 Atrás/Adelante es un historial de visitas por pestaña de proyecto y ventana, no el orden de la lista. En cambio, **Sesión anterior** / **Siguiente sesión** en la paleta recorren cíclicamente la lista visible.
+
+## Guardar conversaciones en favoritos {#favorites}
+
+Pasa el puntero por una fila de sesión o enfócala para ver sus acciones. En pantallas táctiles están visibles directamente. Usa el botón de la estrella o, si falta espacio, abre **Más acciones** (⋯) y elige **Añadir a favoritos** o **Quitar de favoritos**.
+
+En el árbol van primero las solicitudes que esperan tu respuesta. Los favoritos solo suben entre sesiones del mismo nivel y con la misma sesión padre. Cada rama conserva su estado expandido o contraído. En la búsqueda, **Actividad** da prioridad a los favoritos que coinciden, incluidas las subsesiones que se muestran. **Nombre** y **Worktree** siguen su propio orden.
+
+En la búsqueda de sesiones, elige **Solo favoritas**. **Mostrar … resultados ocultos** habilita ambos tipos de sesión sin cambiar la búsqueda, el worktree ni los demás filtros. **Restablecer** recupera los filtros y el orden predeterminados.
+
+Las ventanas conectadas al mismo servidor CodeNomad que abren la misma carpeta comparten los favoritos. La limpieza conserva los favoritos y sus antecesores; eliminarlos explícitamente sigue siendo posible.
 
 ## Archivar y restaurar {#archive}
 
@@ -61,8 +71,10 @@ Los borradores son estado de trabajo del cliente, no mensajes nativos compartido
 ## Abrir archivos desde las respuestas {#open-files-from-replies}
 
 1. Las respuestas del agente enlazan archivos del proyecto con rutas relativas y absolutas.
-2. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
-3. Los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
+2. Una ruta escrita como texto sin formato o dentro de código en línea también se convierte en un enlace cuando se sabe que el worktree de la conversación contiene el archivo, incluidos nombres de archivo en cualquier sistema de escritura; las rutas inexistentes permanecen como texto sin formato. En la aplicación de escritorio, para un proyecto en este equipo, las carpetas también se convierten en enlaces.
+3. Un clic normal abre el archivo enlazado en la vista previa del archivo, leído del worktree de la conversación.
+4. En la aplicación de escritorio, para un proyecto en este equipo, la vista previa del archivo conserva los archivos de texto y las imágenes que puede mostrar. Las carpetas, los demás archivos (vídeos, PDF…), las rutas fuera del worktree y los enlaces `file:` se abren con tu sistema, como siempre con Ctrl/⌘-clic y el clic central; si no se pueden abrir, aparece un error.
+5. En los demás casos, los clics con modificadores (Ctrl/⌘-clic, Mayús-clic, clic central) y los enlaces fuera del worktree de la sesión mantienen el comportamiento normal de los enlaces.
 
 ## Comandos y modo shell {#commands-shell}
 
@@ -104,6 +116,14 @@ Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principa
 3. Usa **Pausar objetivo** o **Reanudar objetivo** en esa línea, o envía `/goal pause` o `/goal resume`. Usa **Borrar objetivo** o `/goal clear` para quitar el objetivo.
 
 Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
+
+## Seguir automatizaciones de la sesión con /automation {#automations}
+
+1. Crea o gestiona automatizaciones programadas o por eventos en una conversación con `/automation` (o mediante las herramientas de automatización del agente).
+2. Mientras la conversación tiene automatizaciones, **Estado** las muestra encima de **Tokens** (debajo de **Objetivo** si hay uno activo): cada fila muestra su estado (**Activa**, **En pausa** o **Finalizada**), el nombre, la próxima ejecución o regla y el número de ejecuciones. Las finalizadas permanecen plegadas bajo **Finalizadas (N)** hasta que las despliegues.
+3. Pasa el puntero por una fila o dale el foco para ver su disparador, programación y última salida, o haz clic para abrir la ventana de detalles. Usa **Pausar automatización**, **Reanudar automatización** o **Eliminar automatización** en la fila para controlarla directamente.
+
+Solo se muestran las automatizaciones de la conversación activa. Eliminar una automatización es irreversible y no deshace el trabajo ya realizado. Sin automatizaciones, o con un servicio de OpenCode sin API de automatizaciones, el bloque no aparece.
 
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 

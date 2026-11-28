@@ -40,6 +40,7 @@ async function setup(value = mission()) {
     : route.request().url().includes("/missions")
     ? { available: true, missions: panelMissions([current]), generatedAt: 1, discardedEvents: 0 }
     : route.request().method() === "PATCH" ? route.request().postDataJSON() : {}) }))
+  await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).track3))
   // Like every journal write, a replaced map has a newer revision.

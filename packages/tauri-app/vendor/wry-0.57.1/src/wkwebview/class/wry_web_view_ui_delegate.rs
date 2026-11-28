@@ -117,6 +117,10 @@ define_class!(
     #[unsafe(method(_webView:runBeforeUnloadConfirmPanelWithMessage:initiatedByFrame:completionHandler:))]
     fn before_unload(&self, webview: &WryWebView, message: &objc2_foundation::NSString,
       frame: &WKFrameInfo, completion: &Block<dyn Fn(objc2::runtime::Bool)>) {
+      if crate::preview_origin::private_preview_host(&unsafe { frame.securityOrigin().host() }.to_string()) {
+        completion.call((false.into(),));
+        return;
+      }
       if !self.ivars().preview_dialogs { completion.call((true.into(),)); return; }
       self.javascript_confirm(objc2::sel!(webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:), webview, message, frame, completion);
     }
@@ -246,6 +250,13 @@ define_class!(
       handler: &block2::Block<dyn Fn(*const NSArray<NSURL>)>,
     ) {
       unsafe {
+        // CodeNomad: a panel the page opens during an agent's page action is cancelled unseen.
+        if crate::wkwebview::file_panels::file_panels_refused(
+          _webview as *const WryWebView as *const std::ffi::c_void,
+        ) {
+          (*handler).call((null_mut(),));
+          return;
+        }
         if let Some(mtm) = MainThreadMarker::new() {
           let open_panel = NSOpenPanel::openPanel(mtm);
           open_panel.setCanChooseFiles(true);
@@ -464,6 +475,9 @@ impl WryWebViewUIDelegate {
 fn preview_print(webview: &WryWebView) {
   // Use the same public print operation as Wry's host-initiated printing.
   unsafe {
+    if webview.URL().and_then(|url| url.absoluteString()).is_some_and(|url| crate::preview_origin::private_preview_url(&url.to_string())) {
+      return;
+    }
     if webview.window().is_none()
       || objc2_app_kit::NSPrintOperation::currentOperation(MainThreadMarker::new().unwrap())
         .is_some()

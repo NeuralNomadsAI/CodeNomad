@@ -42,7 +42,7 @@ Lässt sich ein zugehöriger Worktree oder Unterhaltungsort nicht überprüfen, 
 Wählen Sie im Dialog für Startfehler **OpenCode-Einstellungen öffnen**, um Programmdatei und Version zu prüfen; wechseln Sie für eigene Umgebungswerte zu **Erweitert → Umgebungsvariablen**.
 
 1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie die Karte **OpenCode-Version** (installierte Version und Status des laufenden Dienstes), dann die gewählte Programmdatei unter **OpenCode-Binärdatei**.
-2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.3.0**; empfohlene/qualifizierte Version: **2.3.0**.
+2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.4.2**; empfohlene/qualifizierte Version: **2.4.2**.
 3. Weicht die installierte CLI vom laufenden Dienst ab, entscheiden Sie ausdrücklich über einen Neustart des gemeinsamen Dienstes.
 
 **OpenCode-Dienst neu starten** ist unter **Fehlerbehebung** verfügbar und benötigt Bestätigung. Es unterbricht aktive Arbeit in jedem verbundenen Client, behält aber Sitzungsverlauf. Konfigurationsneuladen ist separat: Es behält den Prozess, erstellt aber geladene Locations neu und storniert offene Fragen/Berechtigungen. Beides ist keine harmlose Aktualisierung.
@@ -85,7 +85,7 @@ Lesen Sie bei abgebrochener/teilweiser Bereinigung Fortschritt/Belege vor weiter
 ## Logs und sichere Diagnosen {#diagnostics}
 
 1. Öffnen Sie **Einstellungen → OpenCode → OpenCode-Protokolle anzeigen**. Die globale Datei `opencode.log` des ausgewählten Ausführungshosts wird mit `opencode debug paths log` ermittelt. Es zeigt höchstens die letzten 128 KiB; **Aktualisieren** liest die Datei erneut.
-2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md).
+2. Wählen Sie unter **Einstellungen → OpenCode** nur bei Bedarf an mehr Details den vorgesehenen **Standard-Log-Level**. Für eigenständiges CodeNomad-Logging verwenden Sie die [Logging-Optionen der Server-CLI](server.md). Der CodeNomad-Server führt außerdem ein eigenes Log in `logs/server.log` neben seiner Konfigurationsdatei (standardmäßig `~/.config/codenomad`); die vorherige volle Datei heißt `server.previous.log`.
 3. Öffnen Sie **Einstellungen → Info → Diagnose** und verwenden Sie **Fehler melden**, **In Zwischenablage kopieren** oder **.txt herunterladen**.
 
 Ausführliche Logs können Pfade, Ausgaben und Anwendungsdaten offenlegen. Schwärzen Sie Zugangsdaten, Kopplungslinks, Netzwerkadressen, private Pfade und Unterhaltungsinhalte vor Teilen von Logs/Aufnahmen. Der vollständige Diagnosebericht enthält Pfade/Adressen; das vorausgefüllte Fehlerformular schließt sie bewusst aus. Siehe [Fehler melden](support.md#report-a-bug).

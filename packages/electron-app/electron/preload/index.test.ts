@@ -28,6 +28,9 @@ test("CLI event disposers remove only their own wrapper listeners", () => {
     ["onCliStatus", "cli:status"],
     ["onCliError", "cli:error"],
     ["onBrowserOpenRequest", "browser-target:open"],
+    ["onBrowserOpenSettled", "browser-target:open-settled"],
+    ["onBrowserOpenDiscovery", "browser-target:discover"],
+    ["onNotificationClick", "notifications:click"],
   ] as const) {
     const calls: string[] = []
     const disposeFirst = api![subscribe]((value: string) => calls.push(`first:${value}`))
@@ -58,9 +61,9 @@ test("Preferences preload exposes only section and frame controls", () => {
 
   const api = exposed.get("electronAPI") as Record<string, Function>
   assert.deepEqual(Object.keys(api), [
-    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "renewManagedSession", "deviceSpeech", "openDialog", "showNotification", "onNotificationClick", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
-    "openerStartupState", "memoryCleanup", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
+    "openerStartupState", "memoryCleanup", "selectServer", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
     "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
@@ -73,7 +76,9 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.acceptPreferencesRequest({ section: "providers" })
   api.resolvePreferencesTransition(4, true)
   api.openerStartupState("read")
+  api.deviceSpeech({ action: "read" })
   api.memoryCleanup({ id: "one", scope: "global", workspaceId: "a", directory: "/repo" })
+  api.selectServer({ id: "a", baseUrl: "https://a.test", skipTlsVerify: false })
   api.listOtherDataProfiles()
   api.deleteOtherDataProfiles(["default"])
   api.setNextLaunchDataProfile("dev")
@@ -82,7 +87,8 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.toggleMaximizeWindow()
   api.closeWindow()
   assert.deepEqual(invoked, [
-    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "preferences:memoryCleanup",
+    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState",
+    "device-speech:request", "preferences:memoryCleanup", "preferences:selectServer",
     "data-profiles:listOthers", "data-profiles:deleteOthers", "data-profiles:setNextLaunch", "data-profiles:relaunch",
     "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
   ])
@@ -135,6 +141,8 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(typeof expose([]).getZoomFactor, "function")
   assert.equal(typeof expose(["--codenomad-window-context=preferences"]).getZoomFactor, "function")
   assert.equal(expose(["--codenomad-window-context=remote"]).getZoomFactor, undefined)
+  assert.equal(typeof expose([]).deviceSpeech, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).deviceSpeech, undefined)
   // Data-profile management belongs to local and Preferences windows, never remote content.
   for (const operation of ["listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile"]) {
     assert.equal(typeof expose([])[operation], "function", operation)
@@ -173,5 +181,40 @@ test("count-only badge bridge is exposed to local and remote main renderers, nev
     if (context === "preferences") { assert.equal(api!.setNotificationBadge, undefined); continue }
     api!.setNotificationBadge(12)
     assert.deepEqual(calls, [["notifications:setBadge", 12]])
+  }
+})
+
+test("remote dictation uses separate fixed bridge channels for the remote and trusted dialog", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  for (const context of ["local", "preferences", "remote", "dictation"]) {
+    const exposed = new Map<string, unknown>()
+    const calls: unknown[][] = []
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args) }, webUtils: {},
+      }),
+      process: { argv: [`--codenomad-window-context=${context}`] },
+    })
+    const api = exposed.get("electronAPI") as Record<string, Function>
+    assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), context)
+    const read = { action: "read" }
+    const cancel = { action: "cancel" }
+    if (context === "remote") {
+      assert.equal(api.deviceSpeech, undefined)
+      api.remoteDictation(read)
+      assert.equal(api.remoteMicrophoneLease, true)
+      assert.deepEqual(calls, [["remote-dictation:request", read]])
+    } else {
+      assert.equal(api.remoteDictation, undefined)
+      assert.equal(api.remoteMicrophoneLease, undefined)
+    }
+    if (context === "dictation") {
+      assert.deepEqual(Object.keys(api), ["deviceSpeech", "requestMicrophoneAccess", "settleRemoteDictation"])
+      api.deviceSpeech(read)
+      api.requestMicrophoneAccess()
+      api.settleRemoteDictation(cancel)
+      assert.deepEqual(calls, [["device-speech:request", read], ["media:requestMicrophoneAccess"], ["remote-dictation:settle", cancel]])
+    } else assert.equal(api.settleRemoteDictation, undefined)
   }
 })

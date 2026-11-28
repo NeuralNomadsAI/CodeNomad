@@ -46,8 +46,7 @@ test(`${feature} shim publication after an awaited payload recheck ${retire ? "r
   })
   syncBuiltinESMExports()
   const installing = installDesktopPluginPresence(feature, bundle, paths,
-    () => { if (!current) throw new Error("connection retired") }, undefined,
-    feature === "missions" ? Buffer.from("provider") : undefined)
+    () => { if (!current) throw new Error("connection retired") }, undefined)
   const settled = retire ? assert.rejects(installing, /connection retired/) : installing.then(stop => { stops.push(stop) })
   await rechecking
   assert.equal((await readdir(leases)).length, oldLeases.length + 1)
@@ -344,7 +343,7 @@ test("existing WSL storage resolution uses the surviving overlapping lifecycle c
   assert.equal((await readdir(path.join(data, "automation", "presence"))).length, 2)
 })
 
-for (const wsl of [false, true]) test(`Missions installs retained provider/runtime manifests in ${wsl ? "WSL native" : "host"} paths`, async t => {
+for (const wsl of [false, true]) test(`Missions installs its shim over one that named artifacts, in ${wsl ? "WSL native" : "host"} paths`, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-carrier-payload-"))
   const config = path.join(root, "config"), data = path.join(root, "outside")
   const paths = { config, data, ...(wsl ? { nativeData: "/linux/literal%20name #日本語",
@@ -352,67 +351,31 @@ for (const wsl of [false, true]) test(`Missions installs retained provider/runti
   const stops: Array<() => Promise<void>> = []
   t.after(async () => { await Promise.all(stops.map(stop => stop())); await rm(root, { recursive: true, force: true }) })
   const entry = path.join(config, "plugins", "codenomad-missions.ts")
-  // Start with the deployed one-argument shim and a lease owned by an older backend.
+  // Exercise a managed shim that names its artifacts and a live older lease.
   stops.push(await installDesktopPluginPresence("missions", Buffer.from("old-runtime"), paths))
   const oldLeases = await readdir(path.join(data, "missions", "presence"))
-  const runtime = Buffer.from("new-runtime"), provider = Buffer.from("local-provider")
-  const lifecycle = new DesktopPluginLifecycle("missions", async () => runtime, async () => provider)
+  const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
+  const oldSource = await readFile(entry, "utf8"), oldSha = hash(Buffer.from("old-runtime"))
+  const nativeDirectory = wsl ? `${paths.nativeData}/missions` : path.join(data, "missions")
+  const join = wsl ? path.posix.join : path.join
+  await writeFile(entry, oldSource.replace(/\)\n$/, `, ${JSON.stringify({ runtime: { file: join(nativeDirectory, `${oldSha}.mjs`), sha256: oldSha } })})\n`))
+  const runtime = Buffer.from("new-runtime")
+  const lifecycle = new DesktopPluginLifecycle("missions", async () => runtime)
   stops.push(() => lifecycle.stop())
   await lifecycle.start(paths)
   const source = await readFile(entry, "utf8")
-  const [presence, artifacts] = JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)![1]}]`)
-  const nativeDirectory = wsl ? `${paths.nativeData}/missions` : path.join(data, "missions")
-  const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex")
-  const join = wsl ? path.posix.join : path.join
-  assert.equal(presence, join(nativeDirectory, "presence"))
-  assert.deepEqual(artifacts, {
-    provider: { file: join(nativeDirectory, `${hash(provider)}.provider.mjs`), sha256: hash(provider) },
-    runtime: { file: join(nativeDirectory, `${hash(runtime)}.mjs`), sha256: hash(runtime) },
-  })
-  const imported = JSON.parse(/from (".+")\n/.exec(source)![1])
-  assert.equal(wsl ? decodeURIComponent(new URL(imported).pathname) : fileURLToPath(imported), artifacts.runtime.file)
-  for (const [role, bytes] of [["runtime", runtime], ["provider", provider]] as const)
-    assert.deepEqual(await readFile(path.join(data, "missions", (wsl ? path.posix : path).basename(artifacts[role].file))), bytes)
-  const reopened = await installDesktopPluginPresence("missions", runtime, paths, () => {}, undefined, provider)
+  assert.deepEqual(JSON.parse(`[${/export default desktopPlugin\((.+)\)\n$/.exec(source)![1]}]`), [join(nativeDirectory, "presence")])
+  const imported = JSON.parse(/from (".+")\n/.exec(source)![1]), file = join(nativeDirectory, `${hash(runtime)}.mjs`)
+  assert.equal(wsl ? decodeURIComponent(new URL(imported).pathname) : fileURLToPath(imported), file)
+  assert.deepEqual(await readFile(path.join(data, "missions", `${hash(runtime)}.mjs`)), runtime)
+  const reopened = await installDesktopPluginPresence("missions", runtime, paths)
   stops.push(reopened)
-  assert.equal(await readFile(entry, "utf8"), source, "the two-argument managed shim is stable on reopen")
+  assert.equal(await readFile(entry, "utf8"), source, "the managed shim is stable on reopen")
   await reopened(); await lifecycle.stop()
   assert.deepEqual(await readdir(path.join(data, "missions", "presence")), oldLeases)
-  assert.equal((await readdir(path.join(data, "missions"))).filter(name => name.endsWith(".mjs")).length, 3)
-  const upgrade = await installDesktopPluginPresence("missions", Buffer.from("future-runtime"), paths, () => {}, undefined, Buffer.from("future-provider"))
+  assert.equal((await readdir(path.join(data, "missions"))).filter(name => name.endsWith(".mjs")).length, 2)
+  const upgrade = await installDesktopPluginPresence("missions", Buffer.from("future-runtime"), paths)
   stops.push(upgrade)
   await upgrade()
-  assert.equal((await readdir(path.join(data, "missions"))).filter(name => name.endsWith(".mjs")).length, 5, "updates retain old carrier bytes")
-})
-
-test("corrupt provider payload is repaired before a Missions shim or another lease is published", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-carrier-corrupt-"))
-  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
-  const runtime = Buffer.from("runtime"), provider = Buffer.from("provider")
-  const stop = await installDesktopPluginPresence("missions", runtime, paths, () => {}, undefined, provider)
-  t.after(async () => { await stop(); await rm(root, { recursive: true, force: true }) })
-  const entry = path.join(paths.config, "plugins", "codenomad-missions.ts"), source = await readFile(entry, "utf8")
-  const file = path.join(paths.data, "missions", `${createHash("sha256").update(provider).digest("hex")}.provider.mjs`)
-  await writeFile(file, "tampered")
-  const repaired = await installDesktopPluginPresence("missions", runtime, paths, () => {}, undefined, provider)
-  await repaired()
-  assert.deepEqual(await readFile(file), provider)
-  assert.equal(await readFile(entry, "utf8"), source)
-  assert.equal((await readdir(path.join(paths.data, "missions", "presence"))).length, 1)
-})
-
-test("concurrent Missions installers repair a truncated provider before publishing their manifests", async t => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provider-race-"))
-  t.after(() => rm(root, { recursive: true, force: true }))
-  const data = path.join(root, "data"), runtime = Buffer.from("runtime"), provider = Buffer.alloc(256 * 1024, 9)
-  const hash = createHash("sha256").update(provider).digest("hex")
-  const directory = path.join(data, "missions"), payload = path.join(directory, `${hash}.provider.mjs`)
-  await mkdir(directory, { recursive: true })
-  await writeFile(payload, provider.subarray(0, 64 * 1024))
-  const results = await Promise.allSettled([0, 1, 2, 3].map(index =>
-    installDesktopPluginPresence("missions", runtime, { config: path.join(root, `config-${index}`), data }, () => {}, () => "", provider)))
-  for (const result of results) if (result.status === "fulfilled") await result.value()
-  assert.deepEqual(results.map(result => result.status === "rejected" ? String(result.reason) : "ok"), ["ok", "ok", "ok", "ok"])
-  assert.deepEqual(await readFile(payload), provider)
-  assert.equal((await readdir(directory)).filter(name => name.endsWith(".tmp")).length, 0)
+  assert.equal((await readdir(path.join(data, "missions"))).filter(name => name.endsWith(".mjs")).length, 3, "updates retain old runtime bytes")
 })

@@ -11,6 +11,7 @@ import { cachedForeignProbe, probeForeignCommand } from "./foreign-probe"
 import { InstallationBusyError } from "./installation-lock"
 import { BinaryResolver } from "../settings/binaries"
 import type { SettingsService } from "../settings/service"
+import { RECOMMENDED, newerPatch } from "../opencode/runtime-version-fixture"
 
 const windows = process.platform === "win32"
 
@@ -140,19 +141,19 @@ test("legacy npm OpenCode is replaced in its prefix only after explicit consent,
     let registered = 0
     const options = { ...host, node: process.execPath, npm: "fixture-npm.js", execute: installer(prefix, calls), probe,
       registerPath: async () => { registered++ } }
-    await assert.rejects(installSharedOpenCode("2.3.0", options),
+    await assert.rejects(installSharedOpenCode(RECOMMENDED, options),
       (error: unknown) => error instanceof LegacyReplacementError && error.code === "legacy_replacement_required")
     assert.deepEqual(calls, [])
     assert.ok(existsSync(command), "nothing changes without consent")
 
     for (const stale of [{ path: command, version: "1.18.9" }, { path: path.join(home, "other", "opencode.cmd"), version: "1.18.10" }]) {
-      await assert.rejects(installSharedOpenCode("2.3.0", { ...options, replaceLegacy: stale }),
+      await assert.rejects(installSharedOpenCode(RECOMMENDED, { ...options, replaceLegacy: stale }),
         (error: unknown) => error instanceof LegacyReplacementError && error.code === "legacy_replacement_required")
     }
     assert.deepEqual(calls, [], "consent applies only to the exact installation shown")
 
-    assert.equal(await installSharedOpenCode("2.3.0", { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), npmExecutable(prefix))
-    assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.3.0"])
+    assert.equal(await installSharedOpenCode(RECOMMENDED, { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), npmExecutable(prefix))
+    assert.deepEqual(calls, ["uninstall opencode-ai", `install @opencode/cli@${RECOMMENDED}`])
     assert.equal(registered, 1)
     assert.equal(existsSync(path.join(prefix, ".codenomad-opencode-install.lock")), false)
     assert.equal(resolveDefaultInstallation(host).source, "path")
@@ -169,14 +170,14 @@ test("an OpenCode 2 installation failure after removing 1.x is reported and rema
     let offline = true
     const options = { ...host, node: process.execPath, npm: "fixture-npm.js", probe, registerPath: async () => {},
       execute: installer(prefix, calls, () => offline ? new Error("ENOTFOUND registry.npmjs.org") : undefined) }
-    await assert.rejects(installSharedOpenCode("2.3.0", { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), (error: unknown) =>
+    await assert.rejects(installSharedOpenCode(RECOMMENDED, { ...options, replaceLegacy: { path: command, version: "1.18.10" } }), (error: unknown) =>
       error instanceof LegacyReplacementError && error.code === "legacy_removed_install_failed" && /ENOTFOUND/.test(error.message))
-    assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.3.0"], "never retried through another mechanism")
+    assert.deepEqual(calls, ["uninstall opencode-ai", `install @opencode/cli@${RECOMMENDED}`], "never retried through another mechanism")
     assert.equal(existsSync(path.join(prefix, ".codenomad-opencode-install.lock")), false)
     assert.deepEqual(sharedInstallationPlan(host), { prefix }, "retry is an ordinary installation without the removed package")
     offline = false
-    await installSharedOpenCode("2.3.0", options)
-    assert.deepEqual(calls.slice(2), ["install @opencode/cli@2.3.0"])
+    await installSharedOpenCode(RECOMMENDED, options)
+    assert.deepEqual(calls.slice(2), [`install @opencode/cli@${RECOMMENDED}`])
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
@@ -196,9 +197,9 @@ for (const form of ["symlink", "hardlink"] as const) test(`winget OpenCode 1.x (
       ...(form === "symlink" ? { packageId: "SST.opencode" } : {}) } })
 
     const calls: string[] = []
-    await installSharedOpenCode("2.3.0", { ...wingetHost, node: process.execPath, npm: "fixture-npm.js", probe,
+    await installSharedOpenCode(RECOMMENDED, { ...wingetHost, node: process.execPath, npm: "fixture-npm.js", probe,
       execute: installer(prefix, calls), registerPath: async () => {} })
-    assert.deepEqual(calls, ["install @opencode/cli@2.3.0"])
+    assert.deepEqual(calls, [`install @opencode/cli@${RECOMMENDED}`])
     assert.deepEqual(resolveDefaultInstallation(wingetHost), { path: npmExecutable(prefix), source: "managed" })
     assert.equal(sharedInstallationPlan(wingetHost).prefix, prefix, "the managed installation keeps receiving updates")
     assert.equal(await readFile(winget.target, "utf8"), "1.19.0")
@@ -221,9 +222,9 @@ test("winget OpenCode first on PATH with npm OpenCode 1.x behind it replaces onl
     assert.equal(plan.foreign?.source, "winget")
     const calls: string[] = []
     const options = { ...wingetHost, node: process.execPath, npm: "fixture-npm.js", probe, execute: installer(prefix, calls), registerPath: async () => {} }
-    await assert.rejects(installSharedOpenCode("2.3.0", options), /explicit confirmation/)
-    await installSharedOpenCode("2.3.0", { ...options, replaceLegacy: { path: plan.legacy!.command, version: "1.18.10" } })
-    assert.deepEqual(calls, ["uninstall opencode-ai", "install @opencode/cli@2.3.0"])
+    await assert.rejects(installSharedOpenCode(RECOMMENDED, options), /explicit confirmation/)
+    await installSharedOpenCode(RECOMMENDED, { ...options, replaceLegacy: { path: plan.legacy!.command, version: "1.18.10" } })
+    assert.deepEqual(calls, ["uninstall opencode-ai", `install @opencode/cli@${RECOMMENDED}`])
     assert.deepEqual(resolveDefaultInstallation(wingetHost), { path: npmExecutable(prefix), source: "managed" })
     assert.equal(await readFile(winget.target, "utf8"), "1.19.0")
   } finally { await rm(home, { recursive: true, force: true }) }
@@ -232,13 +233,13 @@ test("winget OpenCode first on PATH with npm OpenCode 1.x behind it replaces onl
 test("valid foreign OpenCode 2 keeps PATH precedence; unusable foreign commands yield to managed OpenCode 2", async () => {
   const { home, env, host, prefix } = await environment("foreign-")
   try {
-    await cliFixture(prefix, "2.3.0")
+    await cliFixture(prefix, RECOMMENDED)
     const foreign = path.join(home, "tools", windows ? "opencode.exe" : "opencode")
     await mkdir(path.dirname(foreign), { recursive: true })
     await writeFile(foreign, "foreign", { mode: 0o755 })
     env.PATH = [path.dirname(foreign), npmCommandDirectory(prefix)].join(path.delimiter)
     // Valid OpenCode 2, custom labels and unknown (not yet probed or timed out) keep PATH precedence.
-    for (const probeForeign of [() => ({ valid: true, version: "2.3.1" }), () => ({ valid: true, version: "local-build" }), () => undefined]) {
+    for (const probeForeign of [() => ({ valid: true, version: newerPatch() }), () => ({ valid: true, version: "local-build" }), () => undefined]) {
       assert.deepEqual(resolveDefaultInstallation({ ...host, probeForeign }), { path: foreign, source: "path" })
       assert.deepEqual(sharedInstallationPlan({ ...host, probeForeign }), {})
     }
@@ -343,7 +344,7 @@ test("opencode-ai 1.0-1.15.0 Node-launcher installs are recognized and every nat
     await chmod(nested, 0o444)
     const calls: string[] = []
     try {
-      await assert.rejects(installSharedOpenCode("2.3.0", { ...host, node: process.execPath, npm: "fixture-npm.js", probe,
+      await assert.rejects(installSharedOpenCode(RECOMMENDED, { ...host, node: process.execPath, npm: "fixture-npm.js", probe,
         execute: installer(prefix, calls), registerPath: async () => {}, replaceLegacy: { path: command, version: "1.15.0" } }),
       (error: unknown) => error instanceof InstallationBusyError && error.code === "installation_in_use")
     } finally { await chmod(nested, 0o644) }
@@ -358,7 +359,7 @@ test("npm uninstall failures report whether OpenCode 1.x is still installed", as
     const command = await legacyFixture(prefix)
     env.PATH = npmCommandDirectory(prefix)
     const consent = { path: command, version: "1.18.10" }
-    const attempt = (execute: (node: string, args: string[]) => Promise<void>) => installSharedOpenCode("2.3.0", {
+    const attempt = (execute: (node: string, args: string[]) => Promise<void>) => installSharedOpenCode(RECOMMENDED, {
       ...host, node: process.execPath, npm: "fixture-npm.js", probe, execute, registerPath: async () => {}, replaceLegacy: consent })
     const failure = (npmCode?: string) => Object.assign(new Error("OpenCode installation failed (1)"), npmCode ? { npmCode } : {})
     for (const code of ["EBUSY", "EPERM"]) {

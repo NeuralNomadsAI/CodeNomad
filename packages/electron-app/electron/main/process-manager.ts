@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "child_process"
+import { randomUUID } from "node:crypto"
 import { app } from "electron"
 import { createRequire } from "module"
 import { EventEmitter } from "events"
@@ -31,6 +32,7 @@ const mainFilename = fileURLToPath(import.meta.url)
 const mainDirname = path.dirname(mainFilename)
 
 const BOOTSTRAP_TOKEN_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:"
+const MANAGED_SESSION_PREFIX = "CODENOMAD_MANAGED_SESSION:"
 const SERVER_SHUTDOWN_COMPLETE = "CODENOMAD_SHUTDOWN_STATUS:complete"
 const SERVER_SHUTDOWN_INCOMPLETE = "CODENOMAD_SHUTDOWN_STATUS:incomplete"
 const SESSION_COOKIE_NAME_PREFIX = "codenomad_session"
@@ -166,11 +168,12 @@ export class CliProcessManager extends EventEmitter {
   private bootstrapToken: string | null = null
   private authCookieName = `${SESSION_COOKIE_NAME_PREFIX}_${process.pid}_${Date.now()}`
   private requestedStop = false
+  private managedSessionRequest?: { child: ChildProcess; id: string; settle(value?: string): void }
   private cancelPendingStart?: (error: Error) => void
   private shutdownStatus: "complete" | "incomplete" | null = null
   private lifecycle = new SerializedLifecycle()
 
-  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number) => Promise<unknown>) {
+  constructor(private readonly nativeRequestHandler?: (method: string, params: unknown, deadline: number, checkAdmission: () => void) => Promise<unknown>) {
     super()
   }
 
@@ -518,9 +521,9 @@ export class CliProcessManager extends EventEmitter {
           void dispatchNativeRequest(
             child,
             request,
-            (method, params, deadline) => method === "opencode.service.start"
+            (method, params, deadline, checkAdmission) => method === "opencode.service.start"
               ? startNativeService(params, deadline)
-              : this.nativeRequestHandler?.(method, params, deadline) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
+              : this.nativeRequestHandler?.(method, params, deadline, checkAdmission) ?? Promise.reject(new Error(`Unsupported native method: ${method}`)),
             () => this.child === child && !this.requestedStop,
           )
         }
@@ -540,6 +543,14 @@ export class CliProcessManager extends EventEmitter {
         this.emit("shutdownIncomplete")
         continue
       }
+      if (trimmed.startsWith(MANAGED_SESSION_PREFIX)) {
+        const match = /^([a-f0-9-]{36}) ([-_A-Za-z0-9]{43}|-)$/.exec(trimmed.slice(MANAGED_SESSION_PREFIX.length))
+        const pending = this.managedSessionRequest
+        if (stream === "stdout" && pending && pending.child === child && match?.[1] === pending.id)
+          pending.settle(match[2] === "-" ? undefined : match[2])
+        continue
+      }
+
       if (trimmed.startsWith(BOOTSTRAP_TOKEN_PREFIX)) {
         const token = trimmed.slice(BOOTSTRAP_TOKEN_PREFIX.length).trim()
         if (token && !this.bootstrapToken) {
@@ -573,6 +584,28 @@ export class CliProcessManager extends EventEmitter {
       return null
     }
     return match[1] ?? null
+  }
+
+  async renewManagedSession(install: (url: string, session: string) => Promise<void>): Promise<boolean> {
+    const child = this.child, url = this.status.url
+    const current = () => !!child && this.child === child && !this.requestedStop
+      && this.status.state === "ready" && this.status.url === url
+    if (!current() || !url || !child?.stdin?.writable || this.managedSessionRequest) return false
+    const id = randomUUID()
+    const session = await new Promise<string | undefined>(resolve => {
+      const settle = (value?: string) => {
+        if (this.managedSessionRequest?.id !== id) return
+        this.managedSessionRequest = undefined
+        clearTimeout(timer)
+        resolve(value)
+      }
+      const timer = setTimeout(settle, 3000)
+      this.managedSessionRequest = { child, id, settle }
+      child.stdin!.write(`codenomad:renew-session ${id}\n`, error => { if (error) settle() })
+    })
+    if (!session || !current()) return false
+    await install(url, session)
+    return current()
   }
 
   private updateStatus(patch: Partial<CliStatus>) {

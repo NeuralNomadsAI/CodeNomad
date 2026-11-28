@@ -1,6 +1,6 @@
 import { Show, createContext, createMemo, createSignal, onCleanup, onMount, useContext, type Accessor, type JSX } from "solid-js"
 import { Portal } from "solid-js/web"
-import { ArrowUpRight, BookmarkPlus, Loader2 as LoaderCircle, PauseCircle, Eye, FastForward, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
+import { ArrowUpRight, BookmarkPlus, Loader2 as LoaderCircle, PauseCircle, Eye, Pause, Pencil, Play, RefreshCw, Square, Trash2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import type { MissionPrimaryAction } from "./mission-lifecycle-controls"
@@ -8,8 +8,6 @@ import type { MissionBriefSaveTrigger } from "./mission-model-library"
 
 /** The Missions header's selection line: a selected item's toolbar mounts there. */
 export const MissionActionSlot = createContext<Accessor<HTMLElement | undefined>>()
-/** True while an open task reader's toolbar owns the selection line (a schedule's passage task). */
-export const MissionTaskToolbarActive = createContext<Accessor<boolean>>()
 
 function primaryIcon(key?: string): JSX.Element {
   if (key === "pause") return <Pause class="h-3.5 w-3.5" aria-hidden="true" />
@@ -18,32 +16,29 @@ function primaryIcon(key?: string): JSX.Element {
 }
 
 /** The selected Mission/schedule's icon toolbar, mounted in the header's selection
- * line: contextual Play/Pause (or recovery), Stop and, for schedules only, Run now,
+ * line: contextual Play/Pause (or recovery), Stop,
  * then the summary reader, coordinator conversation and delete, then the shared
  * overflow menu (update request, interrupt now, save as brief, edit). Inapplicable buttons stay in
  * place, disabled. Optional secondary text actions stay in the detail; command feedback
  * is announced and joins the primary button's tooltip. */
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader?: () => void
-  primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
+  primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; check?: MissionPrimaryAction; onOpenConversation?: () => void
   /** Names Open conversation's target when it is not the coordinator's. */
   openLabel?: string
   /** Interrupts a graceful Pause's still-running steps at once. */
   interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean; deleteBusy?: boolean
-  runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
+  secondary?: JSX.Element; feedback?: JSX.Element
   /** The brief name form belongs to the deliberately revealed task detail. */
   secondaryInDetail?: boolean
   /** Opens the selected Mission's inline brief name field (in `secondary`). */
   saveBrief?: MissionBriefSaveTrigger
   /** Renders in place instead of in the header's selection line. */
   inline?: boolean
-  /** An open task reader's toolbar, which takes the line from its schedule's. */
-  task?: boolean
 }) {
   const { t } = useI18n()
   const slot = useContext(MissionActionSlot)
-  const taskOwned = useContext(MissionTaskToolbarActive)
   // A refreshed action object must keep the SVG beneath an already-held pointer.
   const primaryKey = createMemo(() => props.primary?.key)
   const primaryLabel = () => props.primary ? props.primary.ariaLabel ?? props.primary.label : t("missionsPanel.action.start")
@@ -77,22 +72,22 @@ export function MissionActionBar(props: {
     { key: "edit", get label() { return t("missionsPanel.picker.edit") }, get icon() { return <Pencil class="h-3.5 w-3.5" /> },
       get disabled() { return !props.onEdit || props.editDisabled }, onSelect: () => props.onEdit?.() },
   ]
+  const checkItem: ActionOverflowMenuItem = {
+    key: "check", get label() { return props.check?.label ?? t("missionsPanel.action.checkStatus") },
+    get description() { return props.check?.ariaLabel }, get icon() { return <RefreshCw class="h-3.5 w-3.5" /> },
+    get disabled() { return !props.check || props.check.disabled || props.check.busy }, onSelect: () => props.check?.onSelect(),
+  }
+  const menuItems = createMemo(() => props.check ? [...menu, checkItem] : menu)
   let bar: HTMLDivElement | undefined
   const toolbar = () => <div ref={bar} class="mission-action-bar" role="toolbar" aria-label={props.label}>
     <button type="button" class="mission-control-icon-button" aria-label={primaryLabel()} title={[primaryLabel(), feedbackText()].filter(Boolean).join(" — ")}
       disabled={!props.primary || props.primary.disabled || props.primary.busy} aria-busy={props.primary?.busy || undefined} onClick={() => void props.primary?.onSelect()}>
-      <Show when={props.primary?.busy} fallback={primaryIcon(primaryKey())}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.primary?.busy} fallback={primaryIcon(primaryKey())}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={stopLabel()} title={stopLabel()}
       disabled={!props.stop || props.stop.disabled || props.stop.busy} aria-busy={props.stop?.busy || undefined} onClick={() => void props.stop?.onSelect()}>
-      <Show when={props.stop?.busy} fallback={<Square class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.stop?.busy} fallback={<Square class="h-3.5 w-3.5" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
-    <Show when={props.runNow}>{runNow =>
-      <button type="button" class="mission-control-icon-button" aria-label={runNow().ariaLabel ?? runNow().label} title={runNow().ariaLabel ?? runNow().label}
-        disabled={runNow().disabled || runNow().busy} aria-busy={runNow().busy || undefined} onClick={() => void runNow().onSelect()}>
-        <Show when={runNow().busy} fallback={<FastForward class="h-3.5 w-3.5" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
-      </button>}
-    </Show>
     <button type="button" class="mission-control-icon-button icon-toggle mission-overview-toggle" aria-pressed={props.reading}
       aria-label={t("missionsPanel.overview")} title={t("missionsPanel.overview")} disabled={!props.onToggleReader} onClick={() => props.onToggleReader?.()}>
       <Eye class="h-3.5 w-3.5" aria-hidden="true" />
@@ -103,21 +98,17 @@ export function MissionActionBar(props: {
     </button>
     <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
       disabled={!props.onDelete || props.deleteDisabled || props.deleteBusy} aria-busy={props.deleteBusy || undefined} onClick={() => props.onDelete?.()}>
-      <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><LoaderCircle class="h-3.5 w-3.5 animate-spin" aria-hidden="true" /></Show>
+      <Show when={props.deleteBusy} fallback={<Trash2 class="h-4 w-4" aria-hidden="true" />}><span class="inline-flex animate-spin"><LoaderCircle class="h-3.5 w-3.5" aria-hidden="true" /></span></Show>
     </button>
-    <ActionOverflowMenu label={t("messageItem.actions.more")} items={menu} triggerClass="mission-control-icon-button" />
+    <ActionOverflowMenu label={t("messageItem.actions.more")} items={menuItems()} triggerClass="mission-control-icon-button" />
   </div>
   const mount = () => props.inline ? undefined : slot?.()
-  // A schedule's toolbar yields the line while one of its passage tasks' reader is open.
-  const yielded = () => !props.inline && !props.task && Boolean(taskOwned?.())
   // Live announcements and recovery buttons share the persistent header owner;
   // folding the task content must preserve their accessibility and reachability.
   const feedback = <div ref={feedbackRoot} class="mission-action-feedback">{props.feedback}</div>
   const secondary = <Show when={props.secondary}><div class="mission-action-texts">{props.secondary}</div></Show>
   return <>
-    <Show when={!yielded()}>
-      <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
-    </Show>
+    <Show when={mount()} keyed fallback={toolbar()}>{element => <Portal mount={element}>{toolbar()}</Portal>}</Show>
     <Show when={props.secondaryInDetail}>{secondary}</Show>
     <Show when={mount()} keyed fallback={<><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</>}>{element =>
       <Portal mount={element}><Show when={!props.secondaryInDetail}>{secondary}</Show>{feedback}</Portal>}</Show>

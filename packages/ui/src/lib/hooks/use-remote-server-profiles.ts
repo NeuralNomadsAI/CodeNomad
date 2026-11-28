@@ -1,4 +1,4 @@
-import { createSignal } from "solid-js"
+import { createEffect, createSignal, onCleanup } from "solid-js"
 import { serverApi } from "../api-client"
 import { useI18n } from "../i18n"
 import { openRemoteServerWindow, type RemoteWindowOpenOptions } from "../native/remote-window"
@@ -6,22 +6,135 @@ import { splitPairingLink } from "../remote-pairing-link"
 import { canOpenRemoteWindows, isTauriHost } from "../runtime-env"
 import { showAlertDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
+import { carriesCredentials, classifyCodeNomadLink, codeNomadLinkName } from "../codenomad-link"
+import { RemoteServerInUseError, RemoteServerRequestError } from "../remote-server-request"
+import { requestServerRemoval } from "../native/server-selection"
+import type { RemoteServerProfile } from "../../../../server/src/api-types"
+import { normalizeExplicitOrigin } from "../../../../server/src/opencode/servers/origin"
+import { secretEntryAllowed } from "../server-meta"
+import { sameServerSelection } from "../native/server-selection-intent"
+
+function assertRemoteSecretEntry() {
+  if (!secretEntryAllowed()) throw new RemoteServerProbeError("secret_entry_forbidden")
+}
 
 export type RemoteServerInput = {
   id?: string
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  ssh?: { host: string }
+}
+
+export class RemoteServerProbeError extends Error {
+  constructor(readonly code: string) { super(code); this.name = "RemoteServerProbeError" }
+}
+
+export function remoteServerErrorKey(error: unknown): string {
+  if (error instanceof RemoteServerInUseError) return "remoteRestore.inUse"
+  const code = error instanceof RemoteServerProbeError || error instanceof RemoteServerRequestError ? error.code : "unreachable"
+  return code === "save" ? "settings.preferenceSaveFailed"
+    : code === "secret_entry_forbidden" ? "remoteBrowse.secretEntryForbidden"
+    : code === "required" ? "settings.servers.dialog.errorRequired"
+    : code === "credentials" ? "folderSelection.browseMenu.errorCredentials"
+    : code === "invalid" ? "folderSelection.browseMenu.errorInvalid"
+    : code === "tls_error" ? "remoteBrowse.tlsError"
+    : code === "auth" || code === "needs_credentials" ? "authRecovery.credentials"
+    : code === "pairing_expired" ? "remoteBrowse.pairingExpired"
+    : code === "pairing_rate_limited" ? "remoteBrowse.pairingRateLimited"
+    : code === "pairing_unavailable" ? "remoteBrowse.pairingUnavailable" : "remoteBrowse.unreachable"
+}
+
+/** Profile CRUD for the host. Owning views additionally fence their publication and focus. */
+export function useRelayServerProfiles() {
+  const config = useConfig()
+  let alive = true
+  const controllers = new Set<AbortController>()
+  const enabled = () => alive && config.preferences().multiBackend === true
+  const same = (a: RemoteServerProfile, b?: RemoteServerProfile) => !!b && sameServerSelection(a, b)
+  const capture = (profile?: RemoteServerProfile) => {
+    const controller = new AbortController()
+    controllers.add(controller)
+    const current = () => enabled() && !controller.signal.aborted && (!profile || same(profile, config.remoteServers().find(p => p.id === profile.id)))
+    return { signal: controller.signal, current, assert: () => { if (!current()) throw new DOMException("Obsolete server operation", "AbortError") },
+      dispose: () => controllers.delete(controller) }
+  }
+  createEffect(() => { if (!enabled()) for (const controller of controllers) controller.abort() })
+  onCleanup(() => { alive = false; for (const controller of controllers) controller.abort(); controllers.clear() })
+  const submitServer = async (input: RemoteServerInput, viewCurrent: () => boolean = () => true) => {
+    input = { ...input, ssh: input.ssh ? { ...input.ssh } : undefined }
+    if (!enabled()) throw new DOMException("Server settings disabled", "AbortError")
+    if (!input.baseUrl.trim()) throw new RemoteServerProbeError("required")
+    if (carriesCredentials(input.baseUrl)) throw new RemoteServerProbeError("credentials")
+    const link = classifyCodeNomadLink(input.baseUrl)
+    if (!link) throw new RemoteServerProbeError("invalid")
+    if (link.kind === "pairing") assertRemoteSecretEntry()
+    const ssh = input.ssh ? { host: input.ssh.host.trim() } : undefined
+    if (ssh && !/^[A-Za-z0-9_.@:/[\]%+][A-Za-z0-9_.@:/[\]%+-]{0,254}$/.test(ssh.host)) throw new RemoteServerProbeError("invalid")
+    const saved = input.id ? config.remoteServers().find(p => p.id === input.id) : config.remoteServers().find(p => p.baseUrl === link.baseUrl && p.ssh?.host === ssh?.host)
+    if (input.id && !saved) throw new DOMException("Removed server", "AbortError")
+    const op = capture(saved)
+    const current = () => op.current() && viewCurrent()
+    const assert = () => { op.assert(); if (!viewCurrent()) throw new DOMException("Closed server edit", "AbortError") }
+    const skipTlsVerify = link.kind === "pairing" ? false : input.skipTlsVerify
+    try {
+      assert()
+      let baseUrl = link.kind === "address" && saved?.baseUrl === input.baseUrl.trim() ? saved.baseUrl : link.baseUrl
+      if (!ssh && (!saved || link.kind === "pairing" || saved.baseUrl !== baseUrl || saved.skipTlsVerify !== skipTlsVerify || saved.ssh)) {
+        const probe = await serverApi.probeRemoteServer({ baseUrl, skipTlsVerify }, op.signal)
+        assert()
+        if (!probe.ok) throw new RemoteServerProbeError(probe.errorCode ?? "unreachable")
+        baseUrl = probe.normalizedUrl
+      }
+      assert()
+      let profile: RemoteServerProfile
+      try {
+        profile = await config.saveRemoteServerProfile({ id: saved?.id, name: input.name.trim() || (!input.id && saved?.name) || codeNomadLinkName(baseUrl), baseUrl, skipTlsVerify, ssh }, current)
+      } catch (error) {
+        if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
+        throw error instanceof RemoteServerInUseError ? error : new RemoteServerProbeError("save")
+      }
+      // The write may have changed the captured policy. Connect requires the committed exact new policy.
+      if (!enabled() || !viewCurrent() || profile.baseUrl !== baseUrl || profile.skipTlsVerify !== skipTlsVerify
+        || profile.ssh?.host !== ssh?.host || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
+      if (link.kind === "pairing") {
+        assertRemoteSecretEntry()
+        await serverApi.connectRemoteServer(profile.id, { pairingLink: link.entryUrl }, op.signal)
+      }
+      if (!enabled() || !viewCurrent() || !same(profile, config.remoteServers().find(p => p.id === profile.id))) throw new DOMException("Obsolete saved server", "AbortError")
+      return profile
+    } finally { op.dispose() }
+  }
+  const removeServer = async (profile: RemoteServerProfile, viewCurrent: () => boolean = () => true) => {
+    const op = capture({ ...profile })
+    try {
+      op.assert()
+      try { await requestServerRemoval(profile, () => op.current() && viewCurrent(), op.signal) }
+      catch (error) { op.assert(); throw error instanceof RemoteServerInUseError ? error : new RemoteServerProbeError("save") }
+    } finally { op.dispose() }
+  }
+  return { remoteServers: config.remoteServers, enabled, capture, submitServer, removeServer }
 }
 
 export function useRemoteServerProfiles() {
   const { t } = useI18n()
-  const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected, removeRemoteServerProfile } = useConfig()
+  const { remoteServers, saveRemoteServerProfile, markRemoteServerConnected } = useConfig()
   const [connectingServerId, setConnectingServerId] = createSignal<string | null>(null)
 
   const saveServer = async (input: RemoteServerInput, requestedWindow: boolean, windowOptions: RemoteWindowOpenOptions = {}) => {
+    if (input.ssh !== undefined) {
+      if (requestedWindow) throw new Error(t("folderSelection.servers.dialog.errorConnect"))
+      const name = input.name.trim()
+      const host = input.ssh.host.trim()
+      if (!name || !host) throw new Error(t("folderSelection.servers.dialog.errorRequired"))
+      let baseUrl: string
+      try { baseUrl = normalizeExplicitOrigin(input.baseUrl.trim()) }
+      catch { throw new Error(t("folderSelection.servers.dialog.errorConnect")) }
+      return saveRemoteServerProfile({ ...input, name, baseUrl, ssh: { host } })
+    }
     // A Remote Control pairing code is consumed by the window that opens it, so a pairing link opens one where possible.
     const pairing = splitPairingLink(input.baseUrl)
+    if (pairing && !secretEntryAllowed()) throw new Error(t("remoteBrowse.secretEntryForbidden"))
     const openWindow = requestedWindow || (pairing !== null && canOpenRemoteWindows())
     if (openWindow && !canOpenRemoteWindows()) {
       throw new Error("Remote server windows can only be opened from a local desktop window")
@@ -52,6 +165,7 @@ export function useRemoteServerProfiles() {
           : undefined
 
       try {
+        if (pairing && !secretEntryAllowed()) throw new Error(t("remoteBrowse.secretEntryForbidden"))
         await openRemoteServerWindow(profile, pairing?.entryUrl ?? proxySession?.windowUrl, proxySession?.sessionId, windowOptions)
       } catch (error) {
         if (proxySession) void serverApi.deleteRemoteProxySession(proxySession.sessionId).catch(() => {})
@@ -81,5 +195,13 @@ export function useRemoteServerProfiles() {
     }
   }
 
-  return { remoteServers, connectingServerId, saveServer, connectSavedServer, removeRemoteServerProfile }
+  return { remoteServers, connectingServerId, saveServer, connectSavedServer,
+    removeRemoteServerProfile: (id: string) => {
+      const profile = remoteServers().find(entry => entry.id === id)
+      if (profile) void requestServerRemoval(profile).catch(error =>
+      showAlertDialog(error instanceof Error ? error.message : String(error), {
+        title: t("folderSelection.servers.errorTitle"), variant: "warning",
+      }))
+    },
+  }
 }

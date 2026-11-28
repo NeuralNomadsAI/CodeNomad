@@ -28,6 +28,9 @@ const AdvancedSettings = new URLSearchParams(location.search).has("advanced")
   ? (await import("../../../src/components/settings/advanced-settings-section")).AdvancedSettingsSection : undefined
 const [selectedSession, setSelectedSession] = createSignal(sessionId)
 const calls: Array<{ kind: string; slug?: string; path?: string; message?: string }> = []
+serverApi.fetchServerMeta = async () => ({
+  serverId: sessionStorage.getItem("fixture-server-id") ?? "git-history-fixture",
+}) as Awaited<ReturnType<typeof serverApi.fetchServerMeta>>
 const savedFiles = new Map<string, string>()
 serverApi.writeWorkspaceFile = async (_id, path, contents, options) => {
   calls.push({ kind: "save", path, slug: options?.directory, message: contents })

@@ -37,19 +37,30 @@ export class ClientStateNavigationController {
   ): Promise<void> {
     const { window } = this
     if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return
+    const flush = (phase: "navigation" | "navigation-cancel") => flushRendererClientStateBeforeShutdown(
+      window,
+      this.dependencies.clientStateManager.isPrimary,
+      this.dependencies.isTrustedOrigin,
+      undefined,
+      phase,
+      phase === "navigation-cancel",
+    )
+    const cancel = async () => { await flush("navigation-cancel").catch(this.dependencies.reportFlushError) }
 
     try {
-      await flushRendererClientStateBeforeShutdown(
-        window,
-        this.dependencies.clientStateManager.isPrimary,
-        this.dependencies.isTrustedOrigin,
-      )
+      await flush("navigation")
     } catch (error) {
       this.dependencies.reportFlushError(error)
+      await cancel()
+      return
     }
 
-    if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return
-    await operation(window, generation)
+    if (this.lifecycle.stopped || window.isDestroyed() || window.webContents.isDestroyed()) return cancel()
+    try { await operation(window, generation) } catch (error) {
+      await cancel()
+      throw error
+    }
+    if (!this.isCurrent(generation)) await cancel()
   }
 }
 

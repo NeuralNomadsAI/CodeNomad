@@ -16,15 +16,20 @@ mod native_request;
 // claims, generations, leases, native loads, visibility and captures are real.
 #[cfg(not(windows))]
 mod local_windows {
-    #[derive(Clone)]
-    pub(crate) struct Record {
-        pub(crate) label: String,
+    use tauri::Manager;
+
+    pub(crate) fn browser_open_candidates(
+        _app: &tauri::AppHandle,
+    ) -> Result<Vec<(String, String)>, String> {
+        Ok(vec![(super::OWNER.into(), "fixture-window".into())])
     }
-    pub(crate) struct LocalWindows(pub(crate) Vec<Record>);
-    impl LocalWindows {
-        pub(crate) fn records(&self) -> Vec<Record> {
-            self.0.clone()
-        }
+
+    pub(crate) fn browser_open_window_current(
+        app: &tauri::AppHandle,
+        label: &str,
+        incarnation: &str,
+    ) -> bool {
+        label == super::OWNER && incarnation == "fixture-window" && app.get_webview(label).is_some()
     }
 }
 #[cfg(not(windows))]
@@ -50,11 +55,11 @@ const OTHER: &str = "local-22222222-2222-4222-8222-222222222222";
 #[cfg(not(windows))]
 const SESSION: &str = "fixture-session";
 #[cfg(not(windows))]
-#[path = "../../tests/browser-parent/mobile-native.rs"]
-mod mobile_fixture;
-#[cfg(not(windows))]
 #[path = "../src/menu_labels.rs"]
 mod menu_labels;
+#[cfg(not(windows))]
+#[path = "../../tests/browser-parent/mobile-native.rs"]
+mod mobile_fixture;
 #[cfg(not(windows))]
 struct AppState {
     menu_labels: menu_labels::MenuLabels,
@@ -91,8 +96,9 @@ fn register(
     owner: &str,
     id: &str,
     url: &str,
+    open_request_id: Option<&str>,
 ) -> Result<(), String> {
-    let input: BrowserTargetRegistration = serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"url":url,"bounds":bounds(),"visible":false})).unwrap();
+    let input: BrowserTargetRegistration = serde_json::from_value(json!({"sessionId":SESSION,"registrationId":id,"instanceId":open_request_id.map(|_| "fixture-tab"),"url":url,"bounds":bounds(),"visible":false,"openRequestId":open_request_id})).unwrap();
     controller.register(&app.get_window(owner).ok_or("Fixture owner closed")?, input)?;
     update(app, controller, owner, id, true)
 }
@@ -138,13 +144,15 @@ fn capture_at_revocation(
         std::time::Instant::now() + Duration::from_secs(15),
         move || {
             fence.check()?;
-            if reads.fetch_add(1, Ordering::SeqCst) == 2 {
-                if close {
-                    controller.unregister(&app, OWNER, &id)?;
-                } else {
-                    update(&app, &controller, OWNER, &id, false)?;
-                }
+            if reads.fetch_add(1, Ordering::SeqCst) != 2 {
+                return Ok(());
             }
+            if close {
+                controller.unregister(&app, OWNER, &id)?;
+            } else {
+                update(&app, &controller, OWNER, &id, false)?;
+            }
+            // Resolve the revoked registration before probing could queue another UI read.
             controller
                 .handle_native(
                     &app,
@@ -169,9 +177,6 @@ fn main() {
     let live = Arc::new(Mutex::new(String::new()));
     let generation = Arc::new(AtomicU64::new(1));
     tauri::Builder::default()
-        .manage(local_windows::LocalWindows(vec![local_windows::Record {
-            label: OWNER.into(),
-        }]))
         .manage(embedded_view::StorageIdentity::new(
             "parent-fixture".into(),
             args[3].clone(),
@@ -187,19 +192,38 @@ fn main() {
             }
             create_primary(app, OWNER, &args[2]);
             create_primary(app, OTHER, &args[2]);
+            controller.observe_owner(&app.get_window(OWNER).unwrap())?;
+            let view = app.get_webview(OWNER).unwrap();
+            let discovery = controller.clone();
+            view.listen("browser-target:discover", move |event| {
+                let payload: Value = serde_json::from_str(event.payload()).unwrap();
+                let request = payload["requestID"].as_str().unwrap();
+                assert!(discovery.claim_open(OWNER, request, browser_controller::OpenResponse::Discover {
+                    instance_id: Some("fixture-tab".into()),
+                }).unwrap());
+            });
             let open_app = app.handle().clone();
             let open_controller = controller.clone();
             let open_live = live.clone();
-            app.listen("browser-target:open", move |event| {
+            view.listen("browser-target:open", move |event| {
                 let payload: Value = serde_json::from_str(event.payload()).unwrap();
                 let request = payload["requestID"].as_str().unwrap().to_string();
-                if !open_controller.claim_open(OWNER, &request) {
-                    return;
-                }
+                use browser_controller::OpenResponse;
+                let instance_id = payload["instanceId"].as_str().unwrap().to_string();
                 let app = open_app.clone();
                 let controller = open_controller.clone();
                 let live = open_live.clone();
                 std::thread::spawn(move || {
+                    assert!(controller.change_ownership(&app, OWNER, browser_controller::OwnershipAction::Ready {
+                        session_id: SESSION.into(), instance_id: instance_id.clone(), request_id: request.clone(),
+                    }).unwrap().is_some());
+                    let existing = live.lock().unwrap().clone();
+                    if !existing.is_empty() && update(&app, &controller, OWNER, &existing, true).is_ok() {
+                        assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {
+                            instance_id, registration_id: existing,
+                        }).unwrap());
+                        return;
+                    }
                     let id = format!("fixture-{}", uuid::Uuid::new_v4());
                     let result = register(
                         &app,
@@ -207,12 +231,16 @@ fn main() {
                         OWNER,
                         &id,
                         payload["url"].as_str().unwrap(),
+                        Some(&request),
                     );
                     if result.is_ok() {
-                        *live.lock().unwrap() = id;
+                        *live.lock().unwrap() = id.clone();
+                        assert!(controller.claim_open(OWNER, &request, OpenResponse::Target {
+                            instance_id, registration_id: id,
+                        }).unwrap());
                     } else {
                         eprintln!("open fixture failed: {result:?}");
-                        controller.release_open(&app, OWNER, &request);
+                        controller.release_open(OWNER, &request);
                     }
                 });
             });
@@ -286,6 +314,16 @@ fn main() {
                             "fixture.hide" => {
                                 update(&app, &controller, OWNER, &id, false).map(|()| Value::Null)
                             }
+                            "fixture.window-hide" | "fixture.window-show" => {
+                                let window = app.get_window(OWNER).ok_or("Fixture window missing")?;
+                                if request.method == "fixture.window-hide" {
+                                    controller.hide_owner(&window)
+                                } else {
+                                    window.show()
+                                }
+                                .map(|()| Value::Null)
+                                .map_err(|error| error.to_string())
+                            }
                             "fixture.overlay" => {
                                 app.get_webview(OWNER)
                                     .ok_or("Fixture renderer missing")?
@@ -306,6 +344,7 @@ fn main() {
                                 OTHER,
                                 "fixture-duplicate",
                                 &format!("{}/ok", args[2]),
+                                None,
                             )
                             .map(|()| Value::Null),
                             "fixture.removeDuplicate" => controller
@@ -332,13 +371,7 @@ fn main() {
                                 generation.store(2, Ordering::SeqCst);
                                 Ok(json!({"stale":true}))
                             }
-                            _ => controller.handle_native(
-                                &app,
-                                &request.method,
-                                request.params.clone(),
-                                request.deadline,
-                                fence,
-                            ),
+                            _ => controller.handle_native(&app, &request.method, request.params.clone(), request.deadline, fence),
                         }
                     });
                     if let Some(response) = response {

@@ -35,9 +35,6 @@ async function open(run: (page: Page) => Promise<void>) {
       errors.push("projection fixture attempted an outline HTTP read")
       return route.abort()
     }
-    if (request.pathname === "/workspaces/streaming-fixture/yolo/sessions/active" && route.request().method() === "GET") {
-      return route.fulfill({ json: { enabled: false } })
-    }
     if (request.pathname.startsWith("/api/")) return route.fulfill({ json: {} })
     return route.continue()
   })

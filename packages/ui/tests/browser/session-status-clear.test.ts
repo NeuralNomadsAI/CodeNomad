@@ -101,7 +101,12 @@ test("a touch drag across badges scrolls instead of clearing", async () => {
       }
       await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] })
       await page.waitForFunction(() => document.querySelector(".session-list")!.scrollTop > 0)
-      await page.locator('[data-session-id="idle-a"]').scrollIntoViewIfNeeded()
+      // A touch fling may unmount earlier virtual rows. Reset the list's scroll
+      // position, then wait for the rows to be rendered before reading badges.
+      await page.locator(".session-list").evaluate(list => { list.scrollTop = 0 })
+      await badge(page, "idle-a").waitFor()
+      await badge(page, "interrupted-b").waitFor()
+      await badge(page, "idle-e").waitFor()
       assert.deepEqual(await statuses(page, ["idle-a", "interrupted-b", "idle-e"]), ["IDLE", "INTERRUPTED", "IDLE"])
       assert.deepEqual(await selected(page), [])
     } finally { await cdp.detach() }

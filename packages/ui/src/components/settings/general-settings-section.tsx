@@ -14,6 +14,8 @@ const OpenerStartupStateSettingsCard = lazy(() => import("./opener-startup-state
 
 interface GeneralSettingsSectionProps {
   instanceId?: string
+  serverId?: string
+  projectUnavailable?: boolean
   location?: LocationRef
   showStartupState?: boolean
   /** "opener": the native Preferences window, which never owns client state. */
@@ -30,6 +32,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         setting.id === "behavior.scrollControlsInTimelineCorner" ||
         setting.id === "behavior.autoExpandActiveSubsessions" ||
         setting.id === "behavior.diffViewMode" ||
+        setting.id === "behavior.newConversationPermissions" ||
         setting.id === "behavior.followUpBehavior" ||
         (setting.id === "behavior.keepComputerAwake" && isDesktopHost() && isNativeApplicationWindow()),
     ),
@@ -46,7 +49,7 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
         </div>
       </div>
       <ThemeSchemeSettings />
-      <AgentMemorySettingsCard instanceId={props.instanceId} location={props.location} />
+      <AgentMemorySettingsCard instanceId={props.instanceId} serverId={props.serverId} location={props.location} unavailable={props.projectUnavailable} />
 
       <Show when={props.showStartupState !== false}>
         <Show when={props.startupStateOwner === "opener"} fallback={<StartupStateSettingsCard />}>

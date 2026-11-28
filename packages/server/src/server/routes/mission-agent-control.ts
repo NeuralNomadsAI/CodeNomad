@@ -6,7 +6,6 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionSnapshot } from "../../missions/model"
 import { ownedMissionAgent } from "./mission-agent-owner"
 import { prepareMissionMapMutation } from "./mission-map-mutation"
-import { controlAgentMissionSchedule } from "./mission-agent-schedule"
 import type { MissionRouteDeps } from "./missions"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { SettingsService } from "../../settings/service"
@@ -18,9 +17,11 @@ import type { MemoryService } from "../../memory/service"
 import { MissionControlError } from "../../missions/control-error"
 import { readMissionMutationError } from "../../missions/rpc-errors"
 import { isPlainObject } from "../../settings/merge-patch"
+import { sessionPermissionTarget } from "./session-permission-mode"
 
 type Deps = Omit<MissionRouteDeps, "workspaceManager" | "settings"> & {
   workspaceManager: MissionRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "list" | "getSessionEnvironment">
+    & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
   settings?: MissionRouteDeps["settings"] & Partial<Pick<SettingsService, "getRawConfigOwner">>
   memory?: MemoryService
 }
@@ -34,23 +35,6 @@ export async function controlAgentMission(deps: Deps, sessionID: string, raw: un
   let { input: command } = commandSchema.parse(raw)
   const agent = await ownedMissionAgent(deps.workspaceManager, sessionID, signal)
   if (!deps.bridgeToken || !deps.worktreeDeletionFence) throw new Error("Mission project control unavailable")
-  if (command.tool === "configure" && command.input.configuration) {
-    const { objective: _objective, notes: _notes, ...configuration } = command.input
-    return controlAgentMissionSchedule(deps, sessionID, { kind: "schedule", input: {
-      ...configuration, action: "configure",
-    } }, signal)
-  }
-  if (command.tool === "configure" && command.input.action === "read") {
-    // Structural receipts are owned by the ordinary schedule configuration path.
-    // Point reads expose both representations without dispatching either.
-    const schedule = await controlAgentMissionSchedule(deps, sessionID, { kind: "schedule", input: {
-      action: "read", missionID: command.input.missionID, requestID: command.input.requestID,
-    } }, signal)
-    const structural = schedule as { document?: { control?: { requestID?: string; action?: string } } | null }
-    if (command.input.requestID && structural.document?.control?.requestID === command.input.requestID
-      && structural.document.control.action === "configure") return { schedule }
-    return { schedule, ...await execute(command) }
-  }
   return execute(command)
 
   async function execute(selected: typeof command) {
@@ -163,6 +147,7 @@ async function requestUpdate(deps: Deps, agent: Awaited<ReturnType<typeof ownedM
       || target.projectID !== mission.projectID || !sameLocation(target.location, actor.location)
       || !await deps.workspaceManager.ownsLocation(workspace.id, target.location, client, { signal, strict: true }))
       throw new Error("Mission coordinator changed")
+    return target
   }
   const owned = await prepareMissionMapMutation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
     workspaceID: workspace.id, directory: actor?.location.directory, signal })
@@ -173,7 +158,16 @@ async function requestUpdate(deps: Deps, agent: Awaited<ReturnType<typeof ownedM
     await client.session.environment({ sessionID: mission.coordinatorSessionId, variables }, { signal })
     try { await syncSessionGitContext(client, mission.coordinatorSessionId, signal) } catch { /* advisory */ }
     await syncSessionMemoryContext(agent.connection, deps.memory, mission.coordinatorSessionId, signal)
-    await owned.refresh(); await assertCurrent()
+    await owned.refresh()
+    const target = await assertCurrent()
+    const modes = deps.permissionModes
+    if (modes?.mayBeSupervised(target)) {
+      const current = () => { signal.throwIfAborted(); agent.connection.assertCurrent() }
+      await modes.refresh(sessionPermissionTarget(target, {
+        client, current, signal, distro: deps.workspaceManager.getServiceWslDistro?.(workspace.id),
+      }))
+      await assertCurrent()
+    }
     const id = `msg_${createHash("sha256").update(`mission-briefing\0${mission.id}\0${original.requestID}`).digest("hex").slice(0, 28)}`
     await client.session.prompt({ sessionID: mission.coordinatorSessionId, id, delivery: "steer",
       text: missionBriefingRequestText(mission, original.requestID!, original.language ?? "en") },

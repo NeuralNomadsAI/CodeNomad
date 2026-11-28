@@ -55,7 +55,7 @@ for (const level of ["debug", "trace"] as const) {
     const records = f.records().filter(record => record.msg.startsWith("HTTP request"))
     assert.ok(records.length >= 5)
     for (const record of records) {
-      assert.match(record.url, /^\/api\/workspaces\/:id\/plugin-sources(?:\/\*)?$/)
+      assert.match(record.url, /^(?:\/api\/workspaces\/:id\/plugin-sources|<unmatched>|<catchall>)$/)
       for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)
     }
   })
@@ -118,7 +118,7 @@ for (const level of ["debug", "trace"] as const) {
     const completed = f.records().filter(record => record.msg === "HTTP request completed")
     assert.equal(completed.length, requests.length + 21, "each hook-admitted request and failure completed logging")
     for (const record of completed) {
-      assert.match(record.url, /^\/api\/workspaces\/:id\/integrations(?:\/:integrationId\/(?:hosts|binding|attach|detach|install|install-host)|\/\*)?$/)
+      assert.match(record.url, /^(?:\/api\/workspaces\/:id\/integrations(?:\/:integrationId\/(?:hosts|binding|attach|detach|install|install-host))?|<unmatched>|<catchall>)$/)
       assert.equal(typeof record.status, "number")
     }
     assert(completed.some(record => record.url.endsWith("/:integrationId/binding")), "binding uses its exact fixed template")
@@ -145,10 +145,14 @@ for (const level of ["debug", "trace"] as const) {
     if (level === "trace") {
       const payloads = ordinary.filter(record => record.level === 10)
       assert.equal(payloads.length, 6)
-      assert.deepEqual(payloads[0].params, { id: "safe" })
-      assert.equal(payloads[0].query, "<redacted>", "Fastify query objects retain the existing conservative prototype redaction")
-      assert.deepEqual(payloads[0].body, { value: "visible", token: "<redacted>" })
-      assert.deepEqual(payloads.at(-1).body, { value: "visible" })
+      for (const record of payloads) {
+        assert.deepEqual(Object.keys(record).sort(), ["durationMs", "level", "method", "msg", "status", "url"],
+          "ordinary trace records contain only completion metadata")
+        assert.equal(record.url, "/ordinary/:id", "ordinary diagnostics retain the registered template")
+        assert.equal(record.method, "POST")
+        assert.equal(record.status, 200)
+        assert.equal(typeof record.durationMs, "number")
+      }
     }
   })
 }

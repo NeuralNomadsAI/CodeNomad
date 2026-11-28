@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "बन्द, रोक्नुहोस्",
 
   "commands.scrubSessions.label": "सत्रहरू सफा गर्नुहोस् (Scrub Sessions)",
-  "commands.scrubSessions.description": "खाली सत्रहरू, काम पूरा गरेका एजेन्ट सत्रहरू, र अनावश्यक सत्रहरू हटाउनुहोस्।",
+  "commands.scrubSessions.description": "खाली र निष्क्रिय भएको पुष्टि भएका सत्रहरू हटाउनुहोस्।",
   "commands.scrubSessions.keywords": "सफाई, खाली, सत्र, हटाउनुहोस्, मेटाउनुहोस्",
 
   "commands.instanceInfo.label": "उदाहरण जानकारी (Instance Info)",

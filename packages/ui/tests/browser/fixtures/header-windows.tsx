@@ -1,5 +1,6 @@
 import { render } from "solid-js/web"
-import { Show, createSignal } from "solid-js"
+import { Show, createSignal, type ParentProps } from "solid-js"
+import { AppViewport } from "../../../src/components/app-viewport"
 import { useViewMenu } from "../../../src/lib/native/view-menu"
 import { useAppLifecycle } from "../../../src/lib/hooks/use-app-lifecycle"
 import { registerNavigationShortcuts } from "../../../src/lib/shortcuts/navigation"
@@ -11,6 +12,10 @@ import AlertDialog from "../../../src/components/alert-dialog"
 import { SessionPreviewHost } from "../../../src/components/session-preview-view"
 import { promptInputHeight } from "../../../src/components/prompt-input/height-state"
 import { serverApi } from "../../../src/lib/api-client"
+import { createBackendClient, registerBackendClient } from "../../../src/lib/backend-client"
+import { backendEvents } from "../../../src/lib/backend-events"
+import { getServerMeta } from "../../../src/lib/server-meta"
+import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { runtimeEnv } from "../../../src/lib/runtime-env"
 import { sseManager } from "../../../src/lib/sse-manager"
@@ -21,15 +26,22 @@ import { setSessions, setActiveSession, setActiveParentSession, clearActiveParen
 import { clearSelectedSession, selectActiveParentSession, selectActiveSession } from "../../../src/stores/session-state"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
+import { setDraftAttachments } from "../../../src/stores/attachments"
+import { createFileAttachment } from "../../../src/types/attachment"
 import "../../../src/index.css"
 
 // Optional, synchronous test-only marks; no observer is installed on native pages.
 const bootStage = (phase: string) => (window as any).__headerFixtureBoot?.mark(phase)
+const useKeyboardViewport = new URLSearchParams(location.search).has("keyboardViewport")
 bootStage("imports-complete")
-if (new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
+if (useKeyboardViewport || new URLSearchParams(location.search).has("drawerWidth")) await initializeClientState()
 // Model optional app registrations without reintroducing inline shortcut hints.
 if (new URLSearchParams(location.search).has("shortcutHints")) registerNavigationShortcuts()
-const id = "header-windows", sessionId = "session"
+const remote = new URLSearchParams(location.search).has("remotePreview")
+  ? createBackendClient({ id: "preview_remote", baseUrl: location.origin, relayProfileId: "preview_remote" })
+  : undefined
+const workspaceId = "header-windows", id = remote ? `${remote.id}~${workspaceId}` : workspaceId, sessionId = "session"
+const proxyPath = `/workspaces/${workspaceId}/instance`
 let interrupts = 0
 const session: any = { id: sessionId, instanceId: id, parentId: null, title: "Fixture conversation", location: { directory: "/repo" },
   projectID: "fixture", cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -58,7 +70,7 @@ const client: any = {
   model: { default: async () => ({ data: { providerID: "fixture", id: "fixture" } }) },
   file: { status: async () => ({ data: [] }) },
 }
-;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
+;((remote?.sdk ?? sdkManager) as any).clients.set(`${id}:${proxyPath}`, client)
 let config = { settings: { locale: "en" } }
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
@@ -71,7 +83,13 @@ serverApi.fetchSessionOutline = async () => ({ status: "outline", total: 1,
 })
 serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo", kind: "root" },
   ...(new URLSearchParams(location.search).has("worktrees") ? [{ slug: "other", directory: "/other", kind: "worktree" }] : [])] } as any)
-addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: `/workspaces/${id}/instance`, status: "ready", client })
+if (remote) {
+  registerBackendClient(remote)
+  backendEvents.attach(remote.id, remote.events)
+  remote.api.fetchWorktrees = serverApi.fetchWorktrees
+  remote.api.fetchSessionOutline = serverApi.fetchSessionOutline
+}
+addInstance({ id, backendId: remote?.id, folder: "/repo", port: 0, pid: 0, proxyPath, status: "ready", client })
 setActiveInstanceId(id)
 setSessions(previous => new Map(previous).set(id, new Map([[sessionId, session]])))
 setProviders(previous => new Map(previous).set(id, [{ id: "fixture", name: "Fixture", models: [] }]))
@@ -90,6 +108,8 @@ const [active, setActive] = createSignal(true)
 const duplicateId = "header-duplicate"
 const duplicate = new URLSearchParams(location.search).has("duplicate")
 const [selectedOccurrence, setSelectedOccurrence] = createSignal(id)
+const Viewport = useKeyboardViewport ? AppViewport
+  : (props: ParentProps) => <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>{props.children}</div>
 if (duplicate) {
   addInstance({ ...instances().get(id)!, id: duplicateId, proxyPath: `/workspaces/${duplicateId}/instance` })
   ;(sdkManager as any).clients.set(`${duplicateId}:/workspaces/${duplicateId}/instance`, client)
@@ -108,12 +128,12 @@ function Fixture() {
     setEscapeInDebounce: value => { escapeStates.push(value); setEscapeInDebounce(value) },
     handleNewInstanceRequest: () => {}, handleCloseActiveTab: async () => {},
     handleNewSession: async () => {}, handleCloseSession: async () => {},
-    showFolderSelection: () => false, setShowFolderSelection: () => {},
+
     getActiveInstance: () => instances().get(id) ?? null,
     getActiveSessionIdForInstance: () => activeSessionId().get(id) ?? null,
   })
   return (
-  <div style={{ height: "100vh", display: "flex", "flex-direction": "column" }}>
+  <Viewport>
     <button id="outside">Outside target</button>
     <AlertDialog />
     <SessionPreviewHost />
@@ -131,10 +151,20 @@ function Fixture() {
           handleSidebarAgentChange={async () => {}} handleSidebarModelChange={async () => {}} tabBarOffset={0} />
       </div>
     </Show>
-  </div>
+  </Viewport>
   )
 }
 bootStage("render-before")
+let hostEventOpens = 0
+if (remote) {
+  serverEvents.onOpen(() => { hostEventOpens++ })
+  if (new URLSearchParams(location.search).has("hostEventsBeforeMount")) {
+    await new Promise<void>(resolve => {
+      const off = serverEvents.onOpen(() => { off(); resolve() })
+      ;(window as any).hostEventsBeforeMountReady = true
+    })
+  }
+}
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 bootStage("render-after")
 bootStage("preferences-before")
@@ -142,6 +172,9 @@ await updatePreferences({ locale: "en" })
 bootStage("preferences-after")
 ;(window as any).fixture = {
   runtimeEnv, replies, deletedSessions, setImmersive, setActive,
+  remoteMetaReady: () => Boolean(remote?.meta.meta(backendEvents.signalForInstance(id))),
+  readHostMeta: getServerMeta,
+  hostEventOpens: () => hostEventOpens,
   selectOccurrence: (instanceId: string) => { setSelectedOccurrence(instanceId); setActiveInstanceId(instanceId) },
   readLayout: readClientLayoutValue,
   addSession: (sid: string, parentId: string | null = null) => {
@@ -153,11 +186,6 @@ bootStage("preferences-after")
     fixtureSessions.delete(sid)
     setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
     setSessionPage(id, [...fixtureSessions.keys()], false, true)
-  },
-  moveSession: (sid: string, directory: string) => {
-    const current = fixtureSessions.get(sid)!
-    fixtureSessions.set(sid, { ...current, location: { directory } })
-    setSessions(previous => new Map(previous).set(id, new Map(fixtureSessions)))
   },
   selectSession: (sid: string | null) => { if (sid === null) clearSelectedSession(id); else selectActiveParentSession(id, sid) },
   selectedSession: () => activeSessionId().get(id) ?? null,
@@ -187,9 +215,15 @@ bootStage("preferences-after")
     new Map([[sessionId, { actualUsageTokens: used, contextAvailableTokens: available } as any]]))),
   setLocale: (locale: "en" | "he") => updatePreferences({ locale }),
   setWorking: () => setSessionStatus(id, sessionId, "working", { force: true }),
+  retry: () => emit("session.retry.scheduled", {
+    sessionID: sessionId, assistantMessageID: "msg_retry", attempt: 1, at: Date.now() + 3_000,
+    error: { name: "UnknownError", message: "Fixture backoff" },
+  }),
   setIdle: () => setSessionStatus(id, sessionId, "idle", { force: true }),
   escapeStates: () => escapeStates,
   interrupts: () => interrupts,
   promptHeight: () => promptInputHeight(id),
+  setComposerAttachment: (attached: boolean) => setDraftAttachments(id, sessionId,
+    attached ? [createFileAttachment("fixture-height.txt", "fixture-height.txt")] : []),
 }
 bootStage("published")

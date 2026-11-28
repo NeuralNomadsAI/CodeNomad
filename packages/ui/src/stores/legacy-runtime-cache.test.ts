@@ -6,10 +6,11 @@ import { createData } from "@opencode/client/solid"
 import { createRuntimeFetch } from "../../../server/src/opencode/compatibility/transport"
 import { rememberRuntime } from "../../../server/src/opencode/compatibility/runtime"
 import { normalizeSessionMessage } from "./message-v2/normalizers"
+import { MINIMUM } from "../../../server/src/opencode/runtime-version-fixture"
 
 test("native pending HTTP data and enqueued SSE retain their distinct shapes through the stable reducer", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.3.0", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM, pid: 1, discovery: "info" })
   const item = { id: "inbox", sessionID: "session", type: "user", payload: { text: "Pending" }, delivery: "queue", time: { created: 123 } }
   const api = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async () => Response.json({ data: [item] })) })
   let dispose!: () => void

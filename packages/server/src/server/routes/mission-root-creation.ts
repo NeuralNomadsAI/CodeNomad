@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { isSessionNotFoundError } from "@opencode/client"
+import { isSessionNotFoundError, type PermissionRule } from "@opencode/client"
 import { isDeepStrictEqual } from "node:util"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -11,17 +11,18 @@ import { matchesExecution } from "../../missions/execution"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { prepareMissionRootCreationLocation, type MissionCreationManager } from "./mission-creation-admission"
 import { MissionCreationHoldError, missionCreationDigest } from "./mission-creation-holds"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 
 const schema = z.object({ kind: z.literal("create-root"), input: z.object({
   missionID: z.string().min(1).max(100), taskKey: z.string().min(1).max(100),
 }).strict() }).strict()
-type Manager = MissionCreationManager & Pick<WorkspaceManager, "list" | "getSharedServiceConnection">
+type Manager = MissionCreationManager & Pick<WorkspaceManager, "list" | "getSharedServiceConnection"> & Partial<Pick<WorkspaceManager, "getServiceWslDistro">>
 
 /** Narrow desktop creation capability. The caller supplies only a journal key:
  * native id/title/location/metadata/execution come from the published managed
  * dispatch intent, never from arbitrary plugin or frontend native API input. */
 export async function createManagedMissionRoot(manager: Manager, fence: WorktreeDeletionFence,
-  coordinatorID: string, command: unknown, signal: AbortSignal) {
+  coordinatorID: string, command: unknown, signal: AbortSignal, permissionModes?: SessionPermissionModes) {
   const { input } = schema.parse(command)
   signal.throwIfAborted()
   const owner = await Promise.any(manager.list().map(async workspace => {
@@ -75,18 +76,22 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
     // uncertain registration rejects BEFORE this lookup; even a positive lookup
     // must not consume that hold or manufacture terminal-settlement evidence.
     let session
+    let permissions: PermissionRule[] | undefined
+    const distro = manager.getServiceWslDistro?.(workspace.id)
     try { session = await client.session.get({ sessionID: nativeInput.id }, { signal }) }
     catch (error) {
       if (!isSessionNotFoundError(error)) throw error
       // No abort race after dispatch. Transport rejection parks this SAME permit;
       // it is not a receipt that the already-received remote handler stopped.
-      session = await effect(() => client.session.create(nativeInput))
+      permissions = await permissionModes?.newRootRules({ client, location, distro, signal })
+      session = await effect(() => client.session.create({ ...nativeInput, ...(permissions ? { permissions } : {}) }))
     }
     if (session.id !== nativeInput.id || session.parentID || session.projectID !== coordinator.projectID
       || !sameLocation(session.location, nativeInput.location) || !matchesExecution(contract.task.execution, session)
       || !isDeepStrictEqual(session.metadata?.["codenomad.mission"], nativeInput.metadata["codenomad.mission"])) {
       throw new Error("Native creation returned a foreign root")
     }
+    if (permissions) permissionModes!.confirmNewRoot(session, distro, permissions, [])
     admission.settled()
     // Actor publication precedes this native create. Reconcile that exact durable
     // dispatch intent while admission is STILL held, not at eventual prompt time.

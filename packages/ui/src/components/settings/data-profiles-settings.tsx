@@ -320,7 +320,7 @@ export const DataProfilesSettings: Component = () => {
               disabled={loading() || busy()}
               onClick={() => void load()}
             >
-              <RefreshCw class={`h-4 w-4${loading() ? " animate-spin" : ""}`} />
+              <span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw class="h-4 w-4" /></span>
             </button>
           </div>
           <Show when={draftInvalid()}>

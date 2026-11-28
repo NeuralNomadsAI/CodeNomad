@@ -8,11 +8,6 @@ import type { MissionMap, MissionReport, MissionTask } from "../../../server/src
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
 import { listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
-import { recurrenceCurrentPageInput } from "../../../server/src/missions/recurrence-current"
-import { projectMissionPanel } from "../../../server/src/missions/mission-panel-projection"
-import { readMissionContent } from "../../../server/src/missions/mission-content"
-import { missionPanelPage } from "../../../server/src/missions/mission-panel-page"
-import { contentDigest } from "../../../server/src/missions/content-digest"
 
 let browser: Browser, url: string
 before(async () => {
@@ -115,44 +110,6 @@ test("a historical non-late report is explicitly identified as a previous attemp
     await reader.getByText(en["missions.progress.previousAttempt"], { exact: true }).waitFor()
     await reader.getByText("Retained late result", { exact: true }).waitFor()
     assert.equal(await reader.locator("details").evaluate(element => (element as HTMLDetailsElement).open), false)
-  } finally { await page.close() }
-})
-
-test("a current one-line remote summary has no Page 1 of 11 illusion and aligns with reader prose", async () => {
-  const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), value = snapshot()
-  value.missions[0].reports[0].summary = "Exact current summary"
-  const source = { owner: "daily" as const, projectID: "project", scheduleID: "schedule", passageID: "passage", missionID: "mission", digest: "a".repeat(43) }
-  try {
-    await page.route("**/api/**", route => {
-      const path = new URL(route.request().url()).pathname
-      if (path.endsWith("/schedule/current")) return route.fulfill({ json: { version: 1, ownerRevision: 1, projectID: "project", scheduleID: "schedule", passageID: "passage", source } })
-      if (path.endsWith("/schedule/current/passage/page")) {
-        const input = recurrenceCurrentPageInput.parse(route.request().postDataJSON()), selector = input.selector
-        assert.deepEqual(input.source, source)
-        if (selector.source === "summaries" || selector.source === "marks" || selector.source === "cleanups") throw Error("Unexpected project display read")
-        if (selector.source === "activity") return route.fulfill({ json: { available: false, reason: "observation-unavailable" } })
-        const damage = { discardedEvents: 0, controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }
-        if (input.body) return route.fulfill({ json: missionPanelPage({ source: "mission", field: "body", projectID: "project", missionID: "mission", revision: 2,
-          ...damage, passage: source, window: { offset: 0, end: 1, total: 1, order: contentDigest(JSON.stringify(input.body)) } },
-        [{ available: true, ...readMissionContent("project", input.body, value.missions[0]) }], selector.cursor) })
-        return route.fulfill({ json: projectMissionPanel(value.missions[0], selector, damage, { passage: source }) })
-      }
-      return route.fulfill({ json: path.endsWith("/missions") ? listed(value) : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
-    })
-    await routeMissionContent(page, listedMissions)
-    await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).resultReader))
-    await page.evaluate(() => (window as any).resultReader.showCurrent())
-    const summary = page.locator(".mission-reader article").first()
-    await summary.getByText("Exact current summary", { exact: true }).waitFor()
-    assert.equal(await summary.getByRole("spinbutton").count(), 0)
-    assert.equal(await summary.locator(".mission-reader-pagination").count(), 0)
-    const inset = await summary.evaluate(node => node.getBoundingClientRect().left - node.closest(".window-body")!.getBoundingClientRect().left)
-    assert(inset < 32)
-    await captureMissionView(page, "current-report-desktop")
-    await page.setViewportSize({ width: 390, height: 800 })
-    await page.evaluate(() => { document.documentElement.dir = "rtl" })
-    await captureMissionView(page, "current-report-390-rtl")
   } finally { await page.close() }
 })
 

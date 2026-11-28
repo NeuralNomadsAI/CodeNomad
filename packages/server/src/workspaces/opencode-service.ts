@@ -12,6 +12,7 @@ import { rememberRuntime, runtimeIdentity, type ContractProfile } from "../openc
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
+import { projectLargeNativeEvents } from "./native-event-stream"
 
 type RequestOptions = { signal?: AbortSignal; deadlineAt?: number }
 const CONNECTION_RECHECK_INTERVAL_MS = 30_000
@@ -34,7 +35,7 @@ export type OpenCodeSharedServiceOptions = {
 export interface ServiceConnection {
   endpoint: Endpoint
   client: OpenCodeClient
-  fetch: typeof fetch
+  fetch: ReturnType<typeof createRuntimeTransport>["fetch"]
   assertCurrent: () => void
   invalidate: () => void
   profile: (signal?: AbortSignal) => Promise<ContractProfile>
@@ -246,9 +247,9 @@ export class OpenCodeSharedService {
       connection.assertCurrent()
       return globalThis.fetch(input, init)
     }, negotiation.signal)
-    const fetch: typeof globalThis.fetch = (input, init) => {
+    const fetch: ServiceConnection["fetch"] = (input, init, mediaResponseProcessor) => {
       connection.assertCurrent()
-      return transport.fetch(input, init)
+      return transport.fetch(input, init, mediaResponseProcessor)
     }
     const connection: ServiceConnection = {
       endpoint,
@@ -266,7 +267,11 @@ export class OpenCodeSharedService {
       client: this.dependencies.makeClient({
         baseUrl: endpoint.url,
         headers: this.dependencies.headers(endpoint),
-        fetch,
+        fetch: async (input, init) => {
+          const response = await fetch(input, init)
+          const target = new URL(input instanceof Request ? input.url : input, endpoint.url)
+          return target.pathname === "/api/event" ? projectLargeNativeEvents(response) : response
+        },
       }),
     }
     this.negotiationControllers.set(connection, negotiation)

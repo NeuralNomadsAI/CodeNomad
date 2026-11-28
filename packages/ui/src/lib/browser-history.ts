@@ -3,13 +3,19 @@ export interface BrowserHistory { urls: string[]; index: number }
 export interface NativeBrowserHistory { entries: Array<{ id: number; url: string }>; index: number }
 export const MAX_BROWSER_HISTORY = 32
 
-export function historyUrl(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 2048) return
+export function browserAddress(value: unknown): string | undefined {
+  if (typeof value !== "string") return
   try {
     const url = new URL(value)
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return
     return url.href
   } catch { return }
+}
+
+export function historyUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 2048) return
+  const url = browserAddress(value)
+  return url && url.length <= 2048 ? url : undefined
 }
 
 export function parseBrowserHistory(value: unknown, currentUrl: string): BrowserHistory {
@@ -26,6 +32,7 @@ export function parseBrowserHistory(value: unknown, currentUrl: string): Browser
 // possible; otherwise load only the selected saved URL, not the intervening pages.
 export class BrowserHistoryJournal {
   private ids: Array<number | undefined>
+  private readonly retiredIds = new Set<number>()
   private currentId?: number
   private pending?: { index: number; from?: number }
   constructor(public value: BrowserHistory) { this.ids = value.urls.map(() => undefined) }
@@ -48,14 +55,24 @@ export class BrowserHistoryJournal {
       this.pending = undefined
     } else if (url !== this.value.urls[this.value.index]) {
       const urls = [...this.value.urls.slice(0, this.value.index + 1), url].slice(-MAX_BROWSER_HISTORY)
+      this.ids = [...this.ids.slice(0, this.value.index + 1), undefined].slice(-MAX_BROWSER_HISTORY)
       this.value = { urls, index: urls.length - 1 }
     }
     return this.value
   }
 
+  bindCurrent(entry: NativeBrowserHistory["entries"][number]) {
+    if (entry.url !== this.value.urls[this.value.index]) return
+    this.ids[this.value.index] = this.currentId = entry.id
+  }
+
+  retireEntry(id: number) {
+    if (!this.ids.includes(id)) this.retiredIds.add(id)
+  }
+
   observe(native: NativeBrowserHistory): BrowserHistory {
     const current = native.entries[native.index]
-    if (!current || !historyUrl(current.url) || !Number.isInteger(current.id)) return this.value
+    if (!current || !historyUrl(current.url) || !Number.isInteger(current.id) || this.retiredIds.has(current.id)) return this.value
     let { urls, index } = this.value
     urls = [...urls]
     if (this.pending) {
@@ -74,7 +91,7 @@ export class BrowserHistoryJournal {
         if (anchor < 0) { urls[index] = current.url; this.ids[index] = current.id }
         else {
           const logical = this.ids.indexOf(native.entries[anchor].id)
-          const added = native.entries.slice(anchor + 1, native.index + 1).filter(entry => historyUrl(entry.url))
+          const added = native.entries.slice(anchor + 1, native.index + 1).filter(entry => historyUrl(entry.url) && !this.retiredIds.has(entry.id))
           urls = [...urls.slice(0, logical + 1), ...added.map(entry => entry.url)]
           this.ids = [...this.ids.slice(0, logical + 1), ...added.map(entry => entry.id)]
           index = urls.length - 1

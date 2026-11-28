@@ -7,7 +7,7 @@ import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 import { missionCriteriaStructure, missionLaunchModel, requiresMissionCalendar } from "./mission-launch-kind"
 import { missionGithubConditions } from "./mission-github-condition"
-import { missionRepositoryConditionSchema } from "./mission-repository-condition"
+import { branchHeadRefSchema, missionRemoteBranchConditionSchema, missionRepositoryConditionSchema } from "./mission-repository-condition"
 import { isReservedMissionScheduleSessionID } from "./mission-schedule-carrier-identity"
 export { missionCriteriaStructure, type MissionCriterionConnector, type MissionCriterionRole, type MissionSchedulePlan, requiresMissionCalendar, missionLaunchLimit, missionLaunchModel, missionEventPrincipal, missionEventPrincipalSlot, missionPrincipalCount,
   missionLaunchesRepeatedly, type MissionLaunchModel, type MissionLaunchSchedule } from "./mission-launch-kind"
@@ -50,13 +50,13 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("schedule-success"), missionID: documentID }).strict(),
   z.object({ kind: z.literal("mission-completed"), missionID: documentID }).strict(),
   z.object({ kind: z.literal("branch-commits"), directory: z.string().min(1).max(4096),
-    ref: z.string().min(12).max(1024).regex(/^refs\/heads\//).refine(value => !/[\s~^:?*\[\\\x00-\x1f\x7f]/.test(value)
-      && !value.includes("..") && !value.includes("@{") && value.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock"))) }).strict(),
+    ref: branchHeadRefSchema }).strict(),
   z.object({ kind: z.literal("conversation-message"), conversationID: nativeDocumentID }).strict(),
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
     .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
   ...missionGithubConditions,
   missionRepositoryConditionSchema,
+  missionRemoteBranchConditionSchema,
 ])
 /** Stored documents written before launch criteria; read exactly, never rewritten. */
 export const missionLegacyLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
@@ -101,6 +101,7 @@ export const missionConfigurationSchema = z.object({
   watchedConversationIDs: z.array(nativeDocumentID).max(64).refine(ids => new Set(ids).size === ids.length),
   coordinatorSessionID: nativeDocumentID.refine(id => !isReservedMissionScheduleSessionID(id)).optional(),
   coordinatorSelectionAuthor: z.object({ coordinatorSessionID: nativeDocumentID }).strict().optional(),
+  coordinatorGoal: z.boolean().optional(),
   launch: missionLaunchPolicySchema,
 }).strict().refine(config => {
   try {

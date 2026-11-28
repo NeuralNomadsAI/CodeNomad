@@ -42,11 +42,45 @@ test("one automatic compaction shows one notification, whichever tabs or replays
     assert.equal(await bubbles.count(), 1)
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.history()), [message])
 
-    // The session's next compaction is new: it reaches the history and replaces the bubble.
-    await page.evaluate(() => (window as any).fixture.compacted("tab-b", "evt_2", 9))
-    await page.waitForFunction(() => (window as any).fixture.history().length === 2)
+    // A carrier with the same title stays silent; the ordinary session still notifies.
+    await page.evaluate(() => {
+      const fixture = (window as any).fixture
+      fixture.compacted("tab-b", "evt_carrier", 8, "ses_cn_schedule_fixture")
+      fixture.compacted("tab-b", "evt_2", 9)
+    })
+    await page.waitForFunction(() => (window as any).fixture.history().length >= 2)
     await page.waitForTimeout(600)
     assert.equal(await bubbles.count(), 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.history()), [message, message])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("flag-off local compaction keeps its folder title and action-free screen/history/system presentation", async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(() => {
+    ;(window as any).systemNotices = []
+    ;(window as any).Notification = class {
+      static permission = "granted"
+      constructor(title: string, options: any) { (window as any).systemNotices.push({ title, ...options }) }
+    }
+  })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(`${url}?local-control`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.compacted("tab-a", "evt_local", 1))
+    const message = 'Session "Compaction fixture" was compacted'
+    await page.getByText(message, { exact: true }).waitFor()
+    await page.waitForFunction(() => (window as any).systemNotices.length === 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.notices()), [
+      { title: "local", message, hasAction: false },
+    ])
+    assert.equal(await page.getByText("local", { exact: true }).count(), 1)
+    assert.equal(await page.getByRole("button").count(), 1, "only the existing dismiss button")
+    assert.deepEqual(await page.evaluate(() => (window as any).systemNotices), [{ title: "local", body: message }])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

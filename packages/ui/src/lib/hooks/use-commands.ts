@@ -28,6 +28,7 @@ import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/
 import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
 import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
 import { requestUserMessageJump } from "../../components/user-message-navigation"
+import { captureBackendOperation } from "../backend-operation"
 
 const log = getLogger("actions")
 
@@ -103,9 +104,12 @@ export function useCommands(options: UseCommandsOptions) {
         })
         return
       }
+      const operation = captureBackendOperation(workspace.instanceId)
+      if (!operation.current()) return
       try {
         await openWorkspacePath({ target, ...workspace, editor })
       } catch (error) {
+        if (!operation.current()) return
         showAlertDialog(tGlobal("commands.openWorkspace.failed.message", {
           message: error instanceof Error ? error.message : String(error),
         }), {
@@ -153,7 +157,7 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.folder.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.folder.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("default"),
       })
       commandRegistry.register({
@@ -162,7 +166,7 @@ export function useCommands(options: UseCommandsOptions) {
         description: () => tGlobal("commands.openWorkspace.terminal.description"),
         category: "Instance",
         keywords: () => splitKeywords("commands.openWorkspace.terminal.keywords"),
-        disabled: () => !activeInstance(),
+        disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
         action: () => openActiveWorkspace("terminal"),
       })
       const editors: Array<[WorkspaceEditor, string]> = [
@@ -178,7 +182,7 @@ export function useCommands(options: UseCommandsOptions) {
           description: () => tGlobal("commands.openWorkspace.editor.description", { editor: name }),
           category: "Instance",
           keywords: () => [name, ...splitKeywords("commands.openWorkspace.editor.keywords")],
-          disabled: () => !activeInstance(),
+          disabled: () => !activeInstance() || !canOpenWorkspacePaths(activeInstance()!.id),
           action: () => openActiveWorkspace("editor", editor),
         })
       }
@@ -344,9 +348,11 @@ export function useCommands(options: UseCommandsOptions) {
         const session = sessions.find((s) => s.id === sessionId)
         if (!session) return
 
+        const operation = captureBackendOperation(instance.id)
         try {
           await compactSession(instance.id, sessionId)
         } catch (error) {
+          if (!operation.current()) return
           log.error("Failed to compact session", error)
           const message = error instanceof Error ? error.message : tGlobal("commands.compactSession.errorFallback")
           showAlertDialog(tGlobal("commands.compactSession.alert.message", { message }), {
@@ -374,8 +380,10 @@ export function useCommands(options: UseCommandsOptions) {
         if (!instance || !sessionId || sessionId === "info") return
         const progress = beginSessionCleanup(instance.id, sessionId)
         if (!progress) return
+        const operation = captureBackendOperation(instance.id, progress.signal)
         try {
-          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId, { signal: progress.signal, progress: progress.planning })
+          const plan = await planSessionTechnicalPartDeletion(instance.id, sessionId, { signal: operation.signal, progress: progress.planning })
+          if (!operation.current()) return
           if (plan.candidates.length === 0) {
             if (plan.skipped) throw new Error(tGlobal("history.skipped", { count: plan.skipped }))
             showAlertDialog(tGlobal("commands.removeSessionTechnicalParts.empty.message"), {
@@ -392,10 +400,11 @@ export function useCommands(options: UseCommandsOptions) {
             confirmLabel: tGlobal("commands.removeSessionTechnicalParts.confirm.label"),
             variant: "warning",
           })
-          if (!confirmed) return
+          if (!confirmed || !operation.current()) return
           progress.signal.throwIfAborted()
           progress.pruning(0, plan.candidates.length)
-          const failed = await executeSessionTechnicalPartDeletion(plan, { signal: progress.signal, progress: progress.pruning })
+          const failed = await executeSessionTechnicalPartDeletion(plan, { signal: operation.signal, progress: progress.pruning })
+          if (!operation.current()) return
           if (failed.length > 0 || plan.skipped) {
             const count = failed.length + plan.skipped
             showAlertDialog(tGlobal(count === 1 ? "commands.removeSessionTechnicalParts.failed.message.one" : "commands.removeSessionTechnicalParts.failed.message.other", { count }), {
@@ -405,7 +414,7 @@ export function useCommands(options: UseCommandsOptions) {
             })
           }
         } catch (error) {
-          if (progress.signal.aborted) return
+          if (!operation.current()) return
           showAlertDialog(error instanceof Error ? error.message : String(error), {
             title: tGlobal("commands.removeSessionTechnicalParts.failed.title"),
             variant: "error",
@@ -477,8 +486,11 @@ export function useCommands(options: UseCommandsOptions) {
         const { instance, sessionId, store, messageID } = target
         let restoredText = extractUserTextFromRecord(store.getMessage(messageID))
 
+        const operation = captureBackendOperation(instance.id, undefined,
+          () => activeInstance()?.id === instance.id && activeSessionIdForInstance() === sessionId)
         try {
           await stageSessionRevert(instance.id, sessionId, messageID)
+          if (!operation.current()) return
 
           if (!restoredText) {
             const fallbackRecord = store.getMessage(messageID)
@@ -494,6 +506,7 @@ export function useCommands(options: UseCommandsOptions) {
             }
           }
         } catch (error) {
+          if (!operation.current()) return
           log.error("Failed to revert message", error)
           showAlertDialog(tGlobal("commands.undoLastMessage.failed.message"), {
             title: tGlobal("commands.undoLastMessage.failed.title"),
@@ -511,7 +524,7 @@ export function useCommands(options: UseCommandsOptions) {
       const session = getSessions(instance.id).find((candidate) => candidate.id === sessionId)
       if (!session) return null
       const revert = messageStoreBus.getOrCreate(instance.id).getSessionRevert(sessionId) ?? session.revert
-      return revert?.messageID ? { client: instance.client, sessionId } : null
+      return revert?.messageID ? { instance, client: instance.client, sessionId } : null
     }
 
     commandRegistry.register({
@@ -524,10 +537,13 @@ export function useCommands(options: UseCommandsOptions) {
       action: async () => {
         const target = getRedoTarget()
         if (!target) return
-        const { client, sessionId } = target
+        const { instance, client, sessionId } = target
+        const operation = captureBackendOperation(instance.id)
+        if (!operation.current()) return
         try {
-          await client.session.revert.clear({ sessionID: sessionId })
+          await client.session.revert.clear({ sessionID: sessionId }, { signal: operation.signal })
         } catch (error) {
+          if (!operation.current()) return
           log.error("Failed to clear session revert", error)
           showAlertDialog(tGlobal("commands.redoLastMessage.failed.message"), {
             title: tGlobal("commands.redoLastMessage.failed.title"),

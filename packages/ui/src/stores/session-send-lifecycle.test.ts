@@ -5,11 +5,15 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { setConversationModeEnabled } from "./conversation-speech.ts"
+import { isConversationModeEnabled, toggleConversationMode } from "./conversation-speech.ts"
 import { sendMessage } from "./session-actions.ts"
 import { handleNativeSessionEvent, handleSessionError } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
 import { partHasRenderableText } from "../types/message.ts"
+
+function setConversationModeEnabled(instanceId: string, enabled: boolean) {
+  if (isConversationModeEnabled(instanceId) !== enabled) toggleConversationMode(instanceId)
+}
 
 function session(instanceId: string, id: string): Session {
   return {
@@ -120,6 +124,42 @@ describe("optimistic send lifecycle", () => {
       cleanup()
     }
   })
+
+  for (const delivery of ["steer", "queue"] as const) {
+    it(`reconciles an immediate typed echo when admitted as ${delivery}`, async () => {
+      const instanceId = `send-pending-${delivery}`
+      const sessionId = "session"
+      let release!: () => void
+      const instructions = new Promise<undefined>(resolve => { release = () => resolve(undefined) })
+      const requests: { delivery: string; resume?: boolean }[] = []
+      const cleanup = setup(instanceId, sessionId, async input => {
+        requests.push(input)
+        return { id: input.id }
+      }, { put: async () => instructions, remove: async () => instructions })
+      try {
+        const store = messageStoreBus.getOrCreate(instanceId)
+        let resolved = false
+        const sending = sendMessage(instanceId, sessionId, "typed", [], {
+          pendingDelivery: "steer",
+          delivery: () => { resolved = true; return delivery },
+        })
+        const [projectedId] = store.getSessionMessageIds(sessionId)
+        assert.equal(store.getMessage(projectedId)?.status, "sending")
+        assert.equal(resolved, false)
+        assert.equal(requests.length, 0)
+        release()
+        assert.equal(await sending, projectedId)
+        assert.equal(requests.length, 1)
+        assert.equal(requests[0]?.delivery, delivery)
+        assert.equal(requests[0]?.resume, delivery === "queue" ? false : undefined)
+        assert.deepEqual(store.getSessionMessageIds(sessionId), delivery === "queue" ? [] : [projectedId])
+        assert.equal(store.getMessage(projectedId)?.status, delivery === "queue" ? undefined : "sent")
+      } finally {
+        release()
+        cleanup()
+      }
+    })
+  }
 
   it("sends the message when voice instruction sync fails", async () => {
     const instanceId = "send-voice-failure"

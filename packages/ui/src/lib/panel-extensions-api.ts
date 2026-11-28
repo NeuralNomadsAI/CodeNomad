@@ -1,68 +1,124 @@
 import type {
   ForgeWorkItemKind, ForgeWorkItemsResult, PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog,
 } from "../../../server/src/api-types"
-import { CODENOMAD_API_BASE } from "./api-base"
-import { authenticatedFetch } from "./auth-recovery"
+import { localHttp } from "./auth-recovery"
+import { resolveBackendUrl, type BackendHttp } from "./backend-transport"
+import { captureBackendOperation } from "./backend-operation"
+import { parseInstanceKey } from "./backend-identity"
 import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
 import type { GenerationTarget, ImagesResult } from "../../../server/src/opencode/session-pruning/assets-gallery-contract"
 import type { PanelConversationStatus, PanelImagesStatus, PanelPreferencesSetStatus } from "../../../server/src/panel-extensions/contract"
 import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
+import type { WorkItemBranch, WorkItemBranchLookup, WorkItemBranchResult } from "../../../server/src/forge/work-item-branches"
 
-async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
-  const response = await authenticatedFetch(`${CODENOMAD_API_BASE ?? ""}/api/panel-extensions${suffix}`, {
-    ...init, headers: { "Content-Type": "application/json" }, credentials: "include",
-  })
-  if (!response.ok) throw new Error("Panel extension request failed")
-  return response.json()
+/** The panel extension routes of one backend. */
+export function createPanelExtensionsApi(http: Pick<BackendHttp, "url" | "fetch">, operation?: ReturnType<typeof captureBackendOperation>) {
+  async function request<T>(suffix: string, init?: RequestInit): Promise<T> {
+    const signal = operation ? (init?.signal ? AbortSignal.any([operation.signal, init.signal]) : operation.signal) : init?.signal
+    const assertCurrent = () => {
+      if (signal?.aborted || (operation && !operation.current())) throw new DOMException("Backend unavailable", "AbortError")
+    }
+    assertCurrent()
+    const response = await http.fetch(http.url(`/api/panel-extensions${suffix}`), {
+      ...init, signal, headers: { "Content-Type": "application/json" }, credentials: "include",
+    })
+    assertCurrent()
+    if (!response.ok) throw new Error("Panel extension request failed")
+    const result = await response.json()
+    assertCurrent()
+    return result
+  }
+  /** One API 4 method of one exact package; the host supplies instance and digest. */
+  const api4 = <T>(id: string, method: string, body: Record<string, unknown>, signal: AbortSignal) =>
+    request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
+  type Authority = { instanceId: string; id: string; digest: string }
+  const panelExtensionsApi4 = {
+    images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
+      api4<ImagesResult>(id, "images", { ...authority, sessionID, cursor }, signal),
+    imageRead: ({ id, ...authority }: Authority, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
+      api4<AssetReadResult>(id, "imageRead", { ...authority, sessionID, target }, signal),
+    imagesStatus: ({ id, ...authority }: Authority, scope: { sessionID: string } | { directory: string }, signal: AbortSignal) =>
+      api4<PanelImagesStatus>(id, "imagesStatus", { ...authority, ...scope }, signal),
+    prefillReferences: ({ id, ...authority }: Authority, sessionID: string, targets: Array<AssetTarget | GenerationTarget>, signal: AbortSignal) =>
+      api4<{ paths: Array<string | null> }>(id, "prefillReferences", { ...authority, sessionID, targets }, signal),
+    conversationStatus: ({ id, ...authority }: Authority, directory: string, sessionID: string | undefined, signal: AbortSignal) =>
+      api4<PanelConversationStatus>(id, "conversationStatus", { ...authority, directory, sessionID }, signal),
+    conversation: ({ id, ...authority }: Authority, { mode, ...input }: ImagesConversationRequest, signal: AbortSignal) =>
+      api4<ImagesConversationResponse>(id, mode === "new" ? "conversationNew" : "conversationOpen", { ...authority, ...input }, signal),
+    preferencesGet: ({ id, ...authority }: Authority, signal: AbortSignal) =>
+      api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
+    preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
+      api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
+    notes: <T>({ id, ...authority }: Authority, method: "notesGet" | "notesSet" | "notesList" | "notesDelete" | "notesOpen",
+      input: Record<string, unknown>, signal: AbortSignal) => api4<T>(id, method, { ...authority, ...input }, signal),
+    workItemBranches: ({ id, ...authority }: Authority, signal: AbortSignal) =>
+      api4<{ status: "ok"; branches: WorkItemBranch[] } | { status: "unavailable" }>(id, "workItemBranches", authority, signal),
+    workItemBranchLookup: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
+      api4<WorkItemBranchLookup>(id, "workItemBranchLookup", { ...authority, kind, number }, signal),
+    workItemBranch: ({ id, ...authority }: Authority, kind: ForgeWorkItemKind, number: number, repository: string, fromSlug: string, signal: AbortSignal) =>
+      api4<WorkItemBranchResult>(id, "workItemBranch", { ...authority, kind, number, repository, fromSlug }, signal),
+  }
+  const panelExtensionsApi = {
+    assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
+      request<Extract<AssetsResult, { status: "page" }>>(`/${encodeURIComponent(id)}/assets`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, cursor }), signal }),
+    assetRead: (instanceId: string, id: string, digest: string, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
+      request<Extract<AssetReadResult, { status: "asset" }>>(`/${encodeURIComponent(id)}/assetRead`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, target }), signal }),
+    workItems: (instanceId: string, id: string, digest: string, input: { kind: ForgeWorkItemKind; query: string; page: number; fresh: boolean }, signal: AbortSignal) =>
+      request<ForgeWorkItemsResult>(`/${encodeURIComponent(id)}/workItems`, { method: "POST", body: JSON.stringify({ instanceId, digest, ...input }), signal }),
+    workItemUrl: (instanceId: string, id: string, digest: string, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
+      request<{ url: string }>(`/${encodeURIComponent(id)}/workItemUrl`, { method: "POST", body: JSON.stringify({ instanceId, digest, kind, number }), signal }),
+    catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
+    inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
+      method: "POST", body: JSON.stringify({ id, digest }),
+    }),
+    installCatalog: (id: string, digest: string, previousDigest?: string) => request("/catalog/install", {
+      method: "POST", body: JSON.stringify({ id, digest, previousDigest, acknowledged: true }),
+    }),
+    list: (signal?: AbortSignal) => request<PanelExtensionSummary[]>("", { signal }),
+    inspect: (archiveBase64: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/inspect", {
+      method: "POST", body: JSON.stringify({ archiveBase64 }),
+    }),
+    install: (archiveBase64: string, digest: string, previousDigest?: string) => request("", {
+      method: "POST", body: JSON.stringify({ archiveBase64, digest, previousDigest, acknowledged: true }),
+    }),
+    activate: (id: string, digest: string, enabled: boolean) =>
+      request(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ digest, enabled }) }),
+    remove: (id: string, digest: string) => request(`/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ digest }) }),
+    panel: (instanceId: string, id: string, digest: string, signal: AbortSignal) =>
+      request<{ html: string }>(`/${encodeURIComponent(id)}/panel?${new URLSearchParams({ instanceId, digest })}`, { signal }),
+  }
+  return { panelExtensionsApi4, panelExtensionsApi }
 }
-/** One API 4 method of one exact package; the host supplies instance and digest. */
-const api4 = <T>(id: string, method: string, body: Record<string, unknown>, signal: AbortSignal) =>
-  request<T>(`/${encodeURIComponent(id)}/${method}`, { method: "POST", body: JSON.stringify(body), signal })
-type Authority = { instanceId: string; id: string; digest: string }
-export const panelExtensionsApi4 = {
-  images: ({ id, ...authority }: Authority, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
-    api4<ImagesResult>(id, "images", { ...authority, sessionID, cursor }, signal),
-  imageRead: ({ id, ...authority }: Authority, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
-    api4<AssetReadResult>(id, "imageRead", { ...authority, sessionID, target }, signal),
-  imagesStatus: ({ id, ...authority }: Authority, scope: { sessionID: string } | { directory: string }, signal: AbortSignal) =>
-    api4<PanelImagesStatus>(id, "imagesStatus", { ...authority, ...scope }, signal),
-  prefillReferences: ({ id, ...authority }: Authority, sessionID: string, targets: Array<AssetTarget | GenerationTarget>, signal: AbortSignal) =>
-    api4<{ paths: Array<string | null> }>(id, "prefillReferences", { ...authority, sessionID, targets }, signal),
-  conversationStatus: ({ id, ...authority }: Authority, directory: string, sessionID: string | undefined, signal: AbortSignal) =>
-    api4<PanelConversationStatus>(id, "conversationStatus", { ...authority, directory, sessionID }, signal),
-  conversation: ({ id, ...authority }: Authority, { mode, ...input }: ImagesConversationRequest, signal: AbortSignal) =>
-    api4<ImagesConversationResponse>(id, mode === "new" ? "conversationNew" : "conversationOpen", { ...authority, ...input }, signal),
-  preferencesGet: ({ id, ...authority }: Authority, signal: AbortSignal) =>
-    api4<{ status: "ok"; value: Record<string, unknown> } | { status: "unavailable" }>(id, "preferencesGet", authority, signal),
-  preferencesSet: ({ id, ...authority }: Authority, value: unknown, signal: AbortSignal) =>
-    api4<{ status: PanelPreferencesSetStatus }>(id, "preferencesSet", { ...authority, value }, signal),
+
+const localPanelExtensions = createPanelExtensionsApi({
+  fetch: localHttp.fetch,
+  url: path => resolveBackendUrl(localHttp.baseUrl, path, "append"),
+})
+export const panelExtensionsApi4 = localPanelExtensions.panelExtensionsApi4
+export const panelExtensionsApi = localPanelExtensions.panelExtensionsApi
+
+/** Load the backend adapter on contextual demand, keeping the standalone local wire inert. */
+async function contextualApi(instanceId: string) {
+  const operation = captureBackendOperation(instanceId)
+  const { panelExtensionsFor } = await import("./panel-extensions-backend")
+  if (!operation.current()) throw new DOMException("Backend unavailable", "AbortError")
+  return panelExtensionsFor(instanceId, operation.signal)
 }
-export const panelExtensionsApi = {
-  assets: (instanceId: string, id: string, digest: string, sessionID: string, cursor: string | undefined, signal: AbortSignal) =>
-    request<Extract<AssetsResult, { status: "page" }>>(`/${encodeURIComponent(id)}/assets`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, cursor }), signal }),
-  assetRead: (instanceId: string, id: string, digest: string, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
-    request<Extract<AssetReadResult, { status: "asset" }>>(`/${encodeURIComponent(id)}/assetRead`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, target }), signal }),
-  workItems: (instanceId: string, id: string, digest: string, input: { kind: ForgeWorkItemKind; query: string; page: number; fresh: boolean }, signal: AbortSignal) =>
-    request<ForgeWorkItemsResult>(`/${encodeURIComponent(id)}/workItems`, { method: "POST", body: JSON.stringify({ instanceId, digest, ...input }), signal }),
-  workItemUrl: (instanceId: string, id: string, digest: string, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
-    request<{ url: string }>(`/${encodeURIComponent(id)}/workItemUrl`, { method: "POST", body: JSON.stringify({ instanceId, digest, kind, number }), signal }),
-  catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
-  inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
-    method: "POST", body: JSON.stringify({ id, digest }),
-  }),
-  installCatalog: (id: string, digest: string, previousDigest?: string) => request("/catalog/install", {
-    method: "POST", body: JSON.stringify({ id, digest, previousDigest, acknowledged: true }),
-  }),
-  list: (signal?: AbortSignal) => request<PanelExtensionSummary[]>("", { signal }),
-  inspect: (archiveBase64: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/inspect", {
-    method: "POST", body: JSON.stringify({ archiveBase64 }),
-  }),
-  install: (archiveBase64: string, digest: string, previousDigest?: string) => request("", {
-    method: "POST", body: JSON.stringify({ archiveBase64, digest, previousDigest, acknowledged: true }),
-  }),
-  activate: (id: string, digest: string, enabled: boolean) =>
-    request(`/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ digest, enabled }) }),
-  remove: (id: string, digest: string) => request(`/${encodeURIComponent(id)}`, { method: "DELETE", body: JSON.stringify({ digest }) }),
-  panel: (instanceId: string, id: string, digest: string, signal: AbortSignal) =>
-    request<{ html: string }>(`/${encodeURIComponent(id)}/panel?${new URLSearchParams({ instanceId, digest })}`, { signal }),
+
+// Contextual methods retain their public host signatures; only the HTTP boundary sees raw workspace ids.
+for (const name of ["assets", "assetRead", "workItems", "workItemUrl", "panel"] as const) {
+  const routed = async (instanceId: string, ...args: unknown[]) => {
+    const api = (await contextualApi(instanceId)).panelExtensionsApi
+    const call = api[name] as (...args: unknown[]) => unknown
+    return call(parseInstanceKey(instanceId).workspaceId, ...args)
+  }
+  Object.assign(panelExtensionsApi, { [name]: routed })
+}
+for (const name of Object.keys(panelExtensionsApi4) as Array<keyof typeof panelExtensionsApi4>) {
+  const routed = async (authority: { instanceId: string; id: string; digest: string }, ...args: unknown[]) => {
+    const api = (await contextualApi(authority.instanceId)).panelExtensionsApi4
+    const call = api[name] as (...args: unknown[]) => unknown
+    return call({ ...authority, instanceId: parseInstanceKey(authority.instanceId).workspaceId }, ...args)
+  }
+  Object.assign(panelExtensionsApi4, { [name]: routed })
 }

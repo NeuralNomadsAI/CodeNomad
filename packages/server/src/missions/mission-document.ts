@@ -5,7 +5,7 @@ import { missionCoordinatorSessionID, isMissionCoordinatorSession } from "./sess
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
-import { missionCreationDefaultsSchema, missionCreationChoicesSchema, missionCreationTemplateSchema } from "./creation-defaults"
+import { missionCreationDefaultsSchema } from "./creation-defaults"
 import { missionGithubKinds } from "./mission-github-condition"
 import { coordinatorBaselineSchema } from "./mission-coordinator-baseline"
 import { automaticMissionStartID } from "./preparation-result"
@@ -40,7 +40,6 @@ export const missionScheduleActivationSchema = z.object({ requestID, expectedRev
     .refine(targets => new Set(targets.map(item => item.path)).size === targets.length && new Set(targets.map(item => item.scope)).size === targets.length),
   effectiveOrigin: z.string().min(1).max(4096).nullable().optional(), errorCode: z.string().regex(/^[a-z0-9-]{1,80}$/).optional(),
 }).strict().refine(value => value.state !== "ready" || value.targets.every(target => target.acknowledged) && value.effectiveOrigin !== undefined)
-export type MissionScheduleActivation = z.infer<typeof missionScheduleActivationSchema>
 const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest, coordinatorSessionID: nativeDocumentID,
   creationDefaults: missionCreationDefaultsSchema.optional(),
   location: z.object({ directory: z.string().min(1).max(4096), workspaceID: nativeDocumentID.optional() }).strict(),
@@ -48,7 +47,7 @@ const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest,
     messageID: nativeDocumentID, requestedAt: documentTimestamp, admittedAt: documentTimestamp.nullable(),
     acknowledgement: firstPlayAcknowledgement.nullable(), inputText: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT).optional() }).strict().nullable(),
 }).strict()
-const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed", "repository-activity", ...missionGithubKinds]),
+const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "remote-branch-commits", "conversation-message", "files-changed", "repository-activity", ...missionGithubKinds]),
   placementDigest: digest, value: z.unknown().transform((value, context) => {
     try { return JSON.parse(canonicalAuthority(value, 32 * 1024)) as import("./model").MissionJsonValue }
     catch { context.addIssue({ code: "custom", message: "Invalid source checkpoint" }); return z.NEVER }
@@ -284,7 +283,10 @@ export function missionDocumentPassageID(doc: Pick<MissionDocument, "projectID" 
 export const missionTombstoneSchema = missionDocumentDeletionIdentitySchema.extend({ version: z.literal(1), id: documentID, projectID: nativeDocumentID,
   projectCanonical: z.string().min(1).max(4096), revision: documentCounter,
   deletedAt: documentTimestamp, timeGeneration: generation,
+  checks: z.array(z.object({ requestID, expectedRevision: documentCounter }).strict()).max(16).optional(),
   creation: missionPreparationCreationSchema.pick({ requestID: true, digest: true, author: true }).optional() }).strict()
+  .refine(value => !value.checks || new Set(value.checks.map(item => item.requestID)).size === value.checks.length
+    && value.checks.every(item => item.expectedRevision < value.revision), "Mission tombstone check receipts invalid")
 export type MissionDocumentTombstone = z.infer<typeof missionTombstoneSchema>
 export const missionTombstoneRegistrySchema = z.object({ version: z.literal(1), revision: documentCounter,
   entries: z.array(z.object({ id: documentID, requestID, deletedAt: documentTimestamp }).strict()).max(MISSION_TOMBSTONE_LIMIT)

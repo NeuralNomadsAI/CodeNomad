@@ -24,7 +24,7 @@ const hooks = registerHooks({
       "../../../../stores/worktrees": "export const getWorktrees = () => [{ slug: 'root', directory: '/repo' }, { slug: 'other', directory: '/other' }]",
       "../../../../lib/notifications": "export const showToastNotification = () => {}",
       "../../../../stores/preferences": "export const preferences = () => globalThis.__filesGitFixture.preferences()",
-      "../../../../lib/api-client": `
+      "../../../../lib/backend-client": `
         const f = globalThis.__filesGitFixture;
         async function mutate(action, paths) {
           f.requests.push({ action, paths });
@@ -36,7 +36,7 @@ const hooks = registerHooks({
               unstagedStatus: action === 'unstage' ? 'modified' : null }];
           });
         }
-        export const serverApi = {
+        export const backendOf = () => ({ api: {
           async fetchWorktreeGitStatus(_id, _slug, _signal, options) {
             f.statusOptions.push(options);
             await f.statusGate;
@@ -47,7 +47,7 @@ const hooks = registerHooks({
           unstageWorktreeGitPaths: (_id, _slug, { paths }) => mutate('unstage', paths),
           commitWorktreeGitChanges: () => mutate('commit', []),
           fetchWorktreeGitDiff: () => { throw new Error('external diffs belong to the reader'); },
-        };
+        } });
       `,
     }
     if (context.parentURL?.endsWith("/useGitChanges.ts") && sources[specifier]) {

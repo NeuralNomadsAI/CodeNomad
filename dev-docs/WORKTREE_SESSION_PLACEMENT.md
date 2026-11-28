@@ -58,8 +58,68 @@ Implementation:
 - The UI follows creation with the verified family transaction, using the
   returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
-  discovers external Git changes. Native session moves refresh the catalogue before
-  list reconciliation. Search traverses every local worktree's native cursor chain.
+  discovers external Git changes. An in-scope move with a held display root
+  adds that root directly when absent, preserving native parent links and
+  the list cursor. A missing root still needs inventory reconciliation. When a
+  move's destination does not exactly match the opened folder or a listed worktree,
+  consult a fresh inventory, then use a workspace-scoped session read for any
+  remaining miss. The proxy resolves aliases such as symlinks and junctions.
+  Move and restore placement reads return a registered worktree slug only
+  when the ownership resolver matches its exact list directory. Live admission
+  and catalogue filtering use that slug against the workspace inventory, as does
+  the worktree selector for its current option. Execution keeps the native
+  directory. A complete catalogue retains a restored row while its current
+  placement read settles. A typed departure remains authoritative across catalogue
+  merges; a newer move or verified placement supersedes it. Nested independent repositories follow
+  the same list rules as their canonical directories. Move and restore reads
+  confirm the exact placement across catalogue refreshes for the current client
+  generation. A complete catalogue rechecks expired placement evidence through
+  the proxy for an absent alias, including an ancestor retained by a local descendant.
+  A successful read applies the current placement and renews the evidence;
+  a typed departure or native session-not-found removes the old list,
+  selection and transcript
+  projection (`removeSessionProjection`). Other read failures keep the move
+  unresolved until a later worktree publication retries it. Confirmation updates
+  the session list and selected composer catalogue. Drafts and attachments stay,
+  and no deletion marker is set.
+  The record keeps the session out
+  of the scope (below) and makes a later published inventory serving the destination
+  list it again. A current placement read confirming a registered checkout
+  also clears the prior departure, including for a favorite reopened through
+  an alias. If the inventory is still catching up, that confirmation stays
+  pending until the registered checkout is listed, fenced by the client
+  generation and the observed departure. A verified subfolder return without
+  an exact checkout match uses the existing session-family scope. A session refresh at a served
+  directory, deletion, another move, or closing the instance releases the record.
+   Each instance settles moves from its own ordered relay stream, fencing each
+   event and probe by the backend attachment, native client generation and latest
+   move for that session. Reconnect replaces unsettled moves with exact
+   workspace-proxy reads in the new generation. The last projection stays while
+    ownership is unresolved; initial, continuation and search pages leave these
+    placements to the point read. An unavailable point read retries on a later
+    catalogue refresh or worktree publication. A verified arrival without a row
+    waits for the inventory to publish its exact checkout slug. Publication uses
+    the retained proof only for the current attachment, client generation and move.
+  The relay checks the payload destination independently of the envelope. Without
+  an envelope, it routes to the destination owner and prior recipients from that
+  payload directly. Verified destination owners become prior recipients for the
+  next move, even if no other session events arrive between moves.
+  Family members left behind stay sessions of their own location
+  (`stores/session-move-restore.test.ts`, `tests/browser/session-external-move.test.ts`).
+  The workspace proxy's 403 for a session located outside the workspace carries
+  `reason: "session_located_elsewhere"` (`opencode/session-access-contract.ts`).
+  Strict ownership confirmation distinguishes a foreign session from an
+  unavailable path translation or inventory; unconfirmed refusals stay generic.
+  Parent and saved-workspace reads opt in through the instance adapter
+  (`lib/sdk-manager.ts`, a client-side header never sent), which reads that refusal
+  as absent and preserves the reason for projection cleanup. Restore applies
+  departures after the selection's reads settle. A successful workspace-proxy
+  read keeps the child selected while the display inventory catches up. Other
+  403s stay errors
+  (`stores/session-list-startup.test.ts`, `lib/sdk-manager.test.ts`).
+  Search traverses every local worktree's native cursor chain. A move settled
+  as missing excludes its row from both cache and result publication by the
+  overlapping search in that instance. The exclusion lasts only for that search.
 - `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
   isolated: no shared daemon or user database) covers selected HEAD, default parent,
   named branches, externally-created checkouts, independent clones, branch rename,
@@ -98,17 +158,32 @@ same CodeNomad project tab.
 Live sessions follow the same scope at display. An opened folder also receives the
 events of a nested checkout of another repository it owns (a parent folder such as
 the home directory); the store holds every session it receives, and the session
-list, tab indicator (derived per sessions snapshot and scope), idle fade, and
+list, tab indicator, subsession chevrons, idle fade, and
 completion, compaction and retry notices show only the workspace scope; a
 needs-input notice of an out-of-scope session follows the interruption dock that
 shows its request
 (`stores/session-state.ts` `getWorkspaceSessionScope`, from
 `selectWorkspaceFamilyIds`): complete families with a member in the opened folder
 or a registered worktree, plus the active session's family, so a session opened
-explicitly is shown where it was opened. The scope is reactive, so a late worktree
+explicitly is shown where it was opened. A session located elsewhere (a directory
+the workspace proxy does not serve) stays out of scope until its moved-away record
+is released. A move, a typed restore/parent-read refusal or a project inventory row can
+establish that placement, including when an independent clone shares the native
+project ID and the row would otherwise be kept for a local descendant. Complete
+catalogue reconciliation uses merged placement, deferring to pending native moves,
+and clears the departed projection. A selected local child stays selected using
+its surviving display root. Departure and catalogue absence preserve drafts and
+attachments; authoritative deletion clears them. Rows, chevron activity and the tab indicator derive from one map
+(`getListedSessionMap`): the
+sessions in scope connected to a listed root, so a row under an ancestor outside the
+scope is not shown, as for a missing parent. The scope is reactive, so a late worktree
 inventory and either family order converge. An unread or failed inventory and a
 Git-unavailable folder (which projects its own directory) keep every held session
 in scope (`stores/session-workspace-scope.test.ts`).
+
+The backend relay carries placement hints only on the workspace's exact session
+GET. The destination proxy checks ownership, returns the exact registered slug
+when available, and keeps the placement hint out of the native OpenCode request.
 
 During refresh, the first directory page is partial: it must not replace existing
 worktree rows before inventory reconciliation completes. An unavailable inventory
@@ -173,8 +248,19 @@ authorized workspace spelling before changing UI state.
 ## Agent conventions
 
 - Preference authority probes use `ownsLocation(id, location, client, { signal, purpose, strict: true })`: a successful read can establish a negative; physical-path, Git identity and WSL translation failures reject. Ordinary inventory preserves root-only fallback when Git reports a non-repository. Only strict ownership qualifies a cached fallback's checkout absence through filesystem discovery; its qualification state stays inside the ownership cache. Git-unavailable inventory retains its exact-folder `directoryOnly` authority. Strict reads validate each registered checkout root before omitting a missing projected project subfolder; registered-root and opened-root failures reject. Concurrent Git identity preflights retain all admitted reads through settlement.
+- Session-media ownership captures the published workspace occurrence, root scalars,
+  connection client and request signal before asynchronous reads. Non-root checks
+  scan a private native inventory with physical Git validation and guards between
+  dependent steps. Invalidation uses `WORKTREE_OWNERSHIP_RESTART_LIMIT` under that capture;
+  retirement, replacement and repeated invalidation refuse the read.
+  Missing nested project directories resolve through existing physical ancestors
+  and retain the registered checkout's projection. Broken links, indeterminate
+  physical errors and invalid checkout registrations refuse media ownership.
+
 - Event ownership uses registered-only native worktree snapshots, isolated from display/request discovery scans (`ownsDirectory` / `ownsLocation` with the `event` purpose). Never run native strategy refresh from routing or join its pending inventory. Keep physical Git identity, nested-folder/WSL projection, native registration, invalidation and disposal checks shared with ordinary ownership; ordinary requests and explicit worktree discovery retain refresh semantics. Regression: `instance-event-ownership.test.ts` and the isolated native worktree fixture.
 - Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
 - Worktree inventory snapshots live in `workspaces/worktree-inventory.ts`: display reads serve cached data and lazily revalidate, directory authorization uses validated reads, and family transactions force fresh reads. Invalidation retains display data and fences pending scans; `workspace.worktreesChanged` refreshes UI consumers after a changed snapshot is published. Keep selector opening independent of refresh completion and suppress duplicate selection events during inventory reconciliation.
   Strict directory-cache and native-inventory reads permit two automatic restarts, then one fresh read; another invalidation rejects that demand and permits a later retry. Ordinary readers keep trailing reloads until a current scan settles. Pending strict demands have their own retry budget while sharing native single-scan work and validated snapshots with ordinary readers.
 - Worktree branch/HEAD annotations use one NUL-delimited Git worktree snapshot, intersected with native inventory and verified Git identities; effective checkout roots must respect Git configuration as well as administrative backlinks. Pending move targets belong to the store's instance/family request identity and survive selector navigation/remounts until native reconciliation settles.
+  Root verification snapshots shared config before Git reads it and checks both shared and enabled per-worktree config files again before publishing. A changed file rejects the scan. Existing per-worktree config, shared root overrides and conditional includes use Git to resolve the effective root. Ordinary includes use one final expanded-config read for the whole scan. Queued per-checkout probes yield to authority commands with bounded overtaking.
+  After successful creation and branch attachment, a config change permits one retry of the result inventory only.

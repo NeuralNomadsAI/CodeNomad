@@ -8,6 +8,10 @@ import type { MessageRecord } from "../stores/message-v2/types"
 import MessagePart from "./message-part"
 import { copyToClipboard } from "../lib/clipboard"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendOf } from "../lib/backend-client"
+import { createMediaSource, fetchRemoteAttachment } from "../lib/media-source"
+import { blockMediaInteraction } from "../lib/media-image-interaction"
 import { isTauriHost } from "../lib/runtime-env"
 import { useSpeech } from "../lib/hooks/use-speech"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
@@ -49,9 +53,10 @@ export default function MessageItem(props: MessageItemProps) {
   const [deletingTechnicalParts, setDeletingTechnicalParts] = createSignal(false)
 
   type ImagePreviewState = {
-    url: string
+    url: () => string | undefined
     name: string
     anchor: HTMLElement
+    restricted: () => boolean
   }
 
   const [imagePreview, setImagePreview] = createSignal<ImagePreviewState | null>(null)
@@ -215,7 +220,7 @@ export default function MessageItem(props: MessageItemProps) {
     return typeof part.url === "string" && part.url.startsWith("data:image/")
   }
 
-  const handleAttachmentDownload = async (part: FilePart) => {
+  const handleAttachmentDownload = async (part: FilePart, resolvedSource: () => string | undefined, signal: AbortSignal) => {
     const url = part.url
     if (!url) return
 
@@ -229,6 +234,24 @@ export default function MessageItem(props: MessageItemProps) {
       document.body.appendChild(anchor)
       anchor.click()
       document.body.removeChild(anchor)
+    }
+    const downloadBlob = (blob: Blob) => {
+      const objectUrl = URL.createObjectURL(blob)
+      try { directDownload(objectUrl) } finally { URL.revokeObjectURL(objectUrl) }
+    }
+
+    let backend
+    try { backend = backendOf(props.instanceId) } catch { return }
+    if (backend.id !== "local") {
+      const operation = captureBackendOperation(props.instanceId, signal)
+      if (!operation.current()) return
+      const source = resolvedSource()
+      if (source) { directDownload(source); return }
+      try {
+        const blob = await fetchRemoteAttachment(backend, url, operation.signal)
+        if (blob && operation.current()) downloadBlob(blob)
+      } catch { /* The owner or attachment is unavailable. */ }
+      return
     }
 
     if (url.startsWith("data:")) {
@@ -245,18 +268,15 @@ export default function MessageItem(props: MessageItemProps) {
     try {
       const response = await fetch(url)
       if (!response.ok) throw new Error(`Failed to fetch attachment: ${response.status}`)
-      const blob = await response.blob()
-      const objectUrl = URL.createObjectURL(blob)
-      directDownload(objectUrl)
-      URL.revokeObjectURL(objectUrl)
+      downloadBlob(await response.blob())
     } catch (error) {
       directDownload(url)
     }
   }
 
-  const showImagePreview = (anchor: HTMLElement, url: string, name: string) => {
-    if (!url) return
-    setImagePreview({ anchor, url, name })
+  const showImagePreview = (anchor: HTMLElement, url: ReturnType<typeof createMediaSource>, name: string) => {
+    if (!url()) return
+    setImagePreview({ anchor, url, name, restricted: url.restricted })
   }
 
   const errorMessage = () => {
@@ -349,6 +369,8 @@ export default function MessageItem(props: MessageItemProps) {
   const recordSettled = createMemo(() => props.record.status === "complete" || props.record.status === "error")
 
   const handleDeleteTechnicalParts = async () => {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (deletingTechnicalParts() || (props.record.status !== "complete" && props.record.status !== "error")) return
     const counts = technicalPartCounts()
     if (counts.tools + counts.reasoning === 0) return
@@ -360,7 +382,7 @@ export default function MessageItem(props: MessageItemProps) {
       confirmLabel: t("messageItem.actions.deleteTechnicalParts.confirmLabel"),
       variant: "warning",
     })
-    if (!confirmed) return
+    if (!confirmed || !operation.current()) return
     setDeletingTechnicalParts(true)
     try {
       const byMessage = new Map<string, TechnicalCleanupPart[]>()
@@ -368,9 +390,11 @@ export default function MessageItem(props: MessageItemProps) {
         byMessage.set(part.messageId, [...(byMessage.get(part.messageId) ?? []), part])
       }
       for (const [messageId, parts] of byMessage) {
+        if (!operation.current()) return
         await deleteMessageTechnicalParts(props.instanceId, props.sessionId, messageId, parts.map((part) => part.partId))
       }
     } catch (error) {
+      if (!operation.current()) return
       showAlertDialog(t("messageItem.actions.deleteTechnicalParts.failedMessage"), {
         title: t("messageItem.actions.deleteTechnicalParts.failedTitle"),
         detail: error instanceof Error ? error.message : String(error),
@@ -744,14 +768,19 @@ export default function MessageItem(props: MessageItemProps) {
               {(attachment) => {
                 const name = getAttachmentName(attachment)
                 const isImage = isImageAttachment(attachment)
+                const source = createMediaSource(() => props.instanceId, () => isImage ? attachment.url : undefined, false)
+                const lifetime = new AbortController()
+                onCleanup(() => lifetime.abort())
                 return (
                   <div
                     class={`attachment-chip ${isImage ? "attachment-chip-image" : ""}`}
                     title={name}
+                    onContextMenu={event => { if (source.restricted()) blockMediaInteraction(event) }}
+                    onAuxClick={event => { if (source.restricted()) blockMediaInteraction(event) }}
                     onMouseEnter={(e) => {
                       if (!isImage) return
                       const el = e.currentTarget as HTMLElement
-                      showImagePreview(el, attachment.url || "", name)
+                      showImagePreview(el, source, name)
                     }}
                     onMouseLeave={() => setImagePreview(null)}
                   >
@@ -765,13 +794,14 @@ export default function MessageItem(props: MessageItemProps) {
                         />
                       </svg>
                     }>
-                      <img src={attachment.url} alt={name} class="h-5 w-5 object-cover" />
+                      <img src={source()} alt={name} class="h-5 w-5 object-cover"
+                        style={source.restricted() ? { "pointer-events": "none" } : undefined} draggable={source.restricted() ? false : undefined} />
                     </Show>
                     <span class="truncate max-w-[180px]">{name}</span>
                     <Show when={!attachment.url?.startsWith("file://")}>
                       <button
                         type="button"
-                        onClick={() => void handleAttachmentDownload(attachment)}
+                        onClick={() => void handleAttachmentDownload(attachment, source, lifetime.signal)}
                         class="attachment-download"
                         aria-label={t("messageItem.attachment.downloadAriaLabel", { name })}
                         title={t("messageItem.attachment.downloadAriaLabel", { name })}
@@ -803,8 +833,11 @@ export default function MessageItem(props: MessageItemProps) {
                         class="attachment-image-popover"
                         style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
                         aria-hidden="true"
+                        onContextMenu={event => { if (state.restricted()) blockMediaInteraction(event) }}
+                        onAuxClick={event => { if (state.restricted()) blockMediaInteraction(event) }}
                       >
-                        <img src={state.url} alt={state.name} />
+                        <img src={state.url()} alt={state.name}
+                          style={state.restricted() ? { "pointer-events": "none" } : undefined} draggable={state.restricted() ? false : undefined} />
                       </div>
                     )
                   }}

@@ -33,8 +33,8 @@ test("the native reducer preserves canonical precise start times and durable ide
 for (const following of ["none", "legacy-idle", "new-execution"] as const) {
 test(`settled tools reach the visible store with following ${following}`, async () => {
   const instanceId = `runtime-tool-settlement-${following}`, sessionId = "s"
-  const statuses = sseManager.getStatuses
-  sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
+  const status = sseManager.getRawStatus
+  sseManager.getRawStatus = id => id === instanceId ? "connected" : null
   let reads = 0
   const completed = {
     id: "m", type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
@@ -85,7 +85,7 @@ test(`settled tools reach the visible store with following ${following}`, async 
     assert.equal(state()?.output, "settled")
   } finally {
     release({})
-    sseManager.getStatuses = statuses
+    sseManager.getRawStatus = status
     destroyOpenCodeData(instanceId)
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)

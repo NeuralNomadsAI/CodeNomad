@@ -5,6 +5,7 @@ import Fastify from "fastify"
 import type { EventBus } from "../../events/bus"
 import type { Logger } from "../../logger"
 import { registerEventRoutes } from "./events"
+import { userFileDigest } from "../../opencode/session-pruning/user-file-reference"
 
 const logger = { debug() {}, trace() {}, isLevelEnabled() { return false } } as unknown as Logger
 
@@ -69,6 +70,31 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe("SSE backpressure", () => {
+  it("keeps the reference stream open after an inbox attachment above the client bound", async () => {
+    const test = harness()
+    try {
+      const response = test.app.inject({ url: "/api/events?clientId=client&connectionId=connection&userFiles=reference-v1" })
+      await waitFor(test.ready)
+      const bytes = Buffer.alloc(255 * 1024, 17)
+      const data = bytes.toString("base64")
+      test.emit({ type: "instance.event", instanceId: "work", event: { type: "session.inbox.enqueued", data: {
+        sessionID: "session", inboxID: "message", item: { type: "user", payload: {
+          text: "upload", files: [{ name: "fixture.bin", mime: "application/octet-stream", data }],
+        } },
+      } } })
+      test.emit({ type: "workspace.stopped", workspaceId: "marker", reason: "deleted" })
+      test.drain()
+      assert.deepEqual(test.counts(), { unsubscribed: 0, unregistered: 0 })
+      test.close()
+      const result = await response
+      assert.equal(result.statusCode, 200)
+      assert(result.body.includes(userFileDigest(bytes)))
+      assert(!result.body.includes(data))
+      assert.match(result.body, /"workspaceId":"marker"/)
+      assert(Buffer.byteLength(result.body) < 1024)
+    } finally { await test.app.close() }
+  })
+
   it("does not override the central CORS policy", async () => {
     const test = harness({ corsOrigin: false })
     try {
@@ -181,6 +207,24 @@ describe("SSE backpressure", () => {
       const result = await response
       assert.ok(result.body.indexOf(marker) < result.body.indexOf('"workspaceId":"after"'))
       assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 2 })
+    } finally {
+      await test.app.close()
+    }
+  })
+
+  it("omits internal OpenCode browser control events from UI SSE streams", async () => {
+    const test = harness({ limit: 1024, timeout: 1_000 })
+    try {
+      const response = test.app.inject({ method: "GET", url: "/api/events?clientId=client&connectionId=connection" })
+      await waitFor(test.ready)
+      test.emit({ type: "instance.event", instanceId: "ws-1", event: { type: "rpc.experimental.browser.control", data: { type: "command", connectionID: "c1", requestID: "r1" } } as any })
+      test.emit({ type: "workspace.stopped", workspaceId: "kept", reason: "deleted" })
+      test.drain()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      test.close()
+      const result = await response
+      assert.doesNotMatch(result.body, /rpc\.experimental\.browser\.control/)
+      assert.match(result.body, /"workspaceId":"kept"/)
     } finally {
       await test.app.close()
     }

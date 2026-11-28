@@ -15,6 +15,7 @@ import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
 import { decisionQuestionTag, fieldDecisionTag } from "../../missions/decision-question-tag"
 import { nativeMessageDataSQL } from "./native-message-data"
+import { optionalOrdinaryJournalRange } from "./ordinary-journal-range"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -96,8 +97,8 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
   const keyFor = (sessionID: string, formID: string) => `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/${formID}`
   /** Exact durable membership of a metadata-less root: the native parent chain
    * from the Form's session ends at exactly this root, and that root is the
-   * coordinator actor of a Mission in this project's one-time journal. Bounded
-   * ancestry and the bounded journal only; no title, list or transcript scans. */
+   * coordinator actor of a Mission in this project's one-time journal. No title
+   * or transcript observation participates in the proof. */
   const journalCoordinator = async (sessionID: string, root: string) => {
     let id = sessionID
     for (let depth = 0; ; depth++) {
@@ -118,7 +119,8 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
     }
     if (!ctx.storage) throw new Error("Native Mission journal unavailable")
     const storage = ctx.storage
-    const journal = new MissionJournal({ get: key => run(storage.get(key)) as ReturnType<MissionStorage["get"]>,
+    const range = await run(optionalOrdinaryJournalRange(ctx, run))
+    const journal = new MissionJournal({ range, get: key => run(storage.get(key)) as ReturnType<MissionStorage["get"]>,
       scan: options => run(storage.scan(options)) as ReturnType<MissionStorage["scan"]>,
       set: async () => { throw new Error("Human answer membership is read-only") } }, location.project.id, location.project.canonical)
     const snapshot = await journal.snapshot()

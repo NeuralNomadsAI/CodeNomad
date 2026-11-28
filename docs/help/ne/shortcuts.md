@@ -19,12 +19,12 @@ binding CodeNomad UI configuration मा बचत हुन्छन् र �
 
 ## Renderer default {#renderer-defaults}
 
-`Mod` को अर्थ Windows/Linux मा `Ctrl` र macOS मा `Cmd` हो। यी default हुन्, OS/native host ले key पठाउँछ भन्ने प्रत्याभूति होइनन्। दायरा महत्त्वपूर्ण छ: एउटै key गृह पृष्ठ, कम्पोजर वा खोजमा फरक कार्य हुन सक्छ।
+`Mod` को अर्थ Windows/Linux मा `Ctrl` र macOS मा `Cmd` हो। यी default हुन्, OS/native host ले key पठाउँछ भन्ने प्रत्याभूति होइनन्। दायरा महत्त्वपूर्ण छ: एउटै key खाली ट्याबमा, कम्पोजर वा खोजमा फरक कार्य हुन सक्छ।
 
 | कार्य | Default |
 | --- | --- |
 | command palette खोल्ने | `Mod+Shift+P` |
-| नयाँ instance / गृह पृष्ठमा फोल्डर browse | `Mod+N` |
+| नयाँ instance / खाली ट्याब खोल्नुहोस् | `Mod+N` |
 | app ट्याब बन्द | `Mod+W` |
 | अघिल्लो / अर्को app ट्याब | `Mod+[` / `Mod+]` |
 | app ट्याब 1–9 | `Mod+1` देखि `Mod+9` |
@@ -73,3 +73,5 @@ Enter-to-submit अक्षम कन्फिगरेसनमा **इनप
 अङ्क पङ्क्ति र square-bracket shortcut ले AZERTY/QWERTZ समेत recording, execution र conflict जाँचमा भौतिक key स्थान प्रयोग गर्छन्। अन्य key ले logical मान प्रयोग गर्छन्। प्रयोग गर्ने किबोर्डमै record गरेर देखिएको नतिजा जाँच्नुहोस्।
 
 IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। डेस्कटपमा पठाउँदा focus कुराकानीमा सर्छ, त्यसैले arrow, paging key र Space ले यसलाई scroll गर्छन्; कुनै अक्षर टाइप गर्दा त्यही अक्षरसहित कम्पोजरमा फर्किन्छ, र **इनपुटमा फोकस गर्नुहोस्** ले prompt history प्रयोग गर्नुअघि त्यहाँ फर्काउँछ।
+
+[नयाँ उदाहरण](projects.md#new-instance-launcher).

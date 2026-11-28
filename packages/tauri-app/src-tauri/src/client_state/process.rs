@@ -14,6 +14,9 @@ const REGISTRATION_LOCK_TIMEOUT: Duration = Duration::from_millis(250);
 const REGISTRATION_LOCK_RETRY_DELAY: Duration = Duration::from_millis(10);
 pub(super) const RUNNING_MARKER_PREFIX: &str = "client-state.running.";
 pub(super) const RUNNING_MARKER_SUFFIX: &str = ".lock";
+/// Tells Electron this marker belongs to an election-aware host, never a legacy one.
+/// The marker is locked, so the flag lives in its name.
+const CROSS_HOST_MARKER: &str = ".cross-host";
 
 static NEXT_RUNNING_MARKER_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -199,22 +202,26 @@ impl ProcessState {
         }
     }
 
-    pub(super) fn is_primary(&self) -> bool {
-        let has_local_lock = self
-            .primary_lock
+    pub(super) fn has_primary_lock(&self) -> bool {
+        self.primary_lock
             .lock()
             .map(|lock| lock.is_some())
-            .unwrap_or(false);
-        has_local_lock
-            && self
-                .cross_host_registration
-                .lock()
-                .map(|registration| {
-                    registration
-                        .as_ref()
-                        .is_some_and(cross_host::Registration::is_primary)
-                })
-                .unwrap_or(false)
+            .unwrap_or(false)
+    }
+
+    pub(super) fn is_primary(&self) -> bool {
+        self.verify_primary().unwrap_or(false)
+    }
+
+    pub(super) fn verify_primary(&self) -> Result<bool, String> {
+        if self.primary_lock.lock().map_err(|err| err.to_string())?.is_none() {
+            return Ok(false);
+        }
+        self.cross_host_registration
+            .lock()
+            .map_err(|err| err.to_string())?
+            .as_ref()
+            .map_or(Ok(false), cross_host::Registration::verify_primary)
     }
 
     pub(super) fn is_registered(&self) -> bool {
@@ -302,7 +309,7 @@ fn create_running_marker(
             .map(|registration_id| format!(".acknowledges.{registration_id}"))
             .unwrap_or_default();
         let path = app_data_dir.join(format!(
-            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
+            "{RUNNING_MARKER_PREFIX}{}.{marker_id}{CROSS_HOST_MARKER}{acknowledgement}{RUNNING_MARKER_SUFFIX}",
             std::process::id()
         ));
         match marker.persist_noclobber(&path) {
@@ -461,7 +468,9 @@ mod tests {
             .file_name()
             .unwrap()
             .to_string_lossy();
-        assert!(marker_name.contains(&format!(".acknowledges.{registration_id}")));
+        assert!(marker_name.contains(&format!(
+            "{CROSS_HOST_MARKER}.acknowledges.{registration_id}"
+        )));
 
         FileExt::unlock(&owner).unwrap();
         registration.finish().release_locks();

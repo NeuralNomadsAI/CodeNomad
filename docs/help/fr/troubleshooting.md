@@ -42,7 +42,7 @@ Si un worktree détenu ou l’emplacement d’une conversation ne peut être vé
 Dans le dialogue d’erreur de lancement, choisissez **Ouvrir les paramètres OpenCode** pour vérifier l’exécutable et la version ; pour les variables d’environnement personnalisées, passez à **Avancé → Variables d'environnement**.
 
 1. Ouvrez **Préférences → OpenCode** et vérifiez la carte **Version d’OpenCode** (version installée et état du service actif), puis l’exécutable sélectionné sous **Binaire OpenCode**.
-2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.3.0** ; version recommandée/qualifiée : **2.3.0**.
+2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.4.2** ; version recommandée/qualifiée : **2.4.2**.
 3. Si la CLI installée diffère du service actif, décidez explicitement s’il faut redémarrer le service partagé.
 
 **Redémarrer le service OpenCode** est disponible sous **Dépannage** et exige confirmation. Cela interrompt le travail actif de tous les clients connectés mais conserve l’historique. Le rechargement de configuration est distinct : il garde le processus mais reconstruit les Locations chargées et annule les questions/autorisations en attente. Aucun n’est une actualisation anodine.
@@ -85,7 +85,7 @@ Pour un nettoyage annulé ou partiel, lisez sa progression/ses reçus avant une 
 ## Journaux et diagnostics sûrs {#diagnostics}
 
 1. Ouvrez **Paramètres → OpenCode → Afficher les journaux OpenCode**. Le fichier global `opencode.log` de l’hôte d’exécution sélectionné est localisé par `opencode debug paths log`. Elle affiche au maximum les derniers 128 Kio ; **Actualiser** relit le fichier.
-2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md).
+2. Dans **Préférences → OpenCode**, choisissez la **Verbosite des logs** voulue seulement si davantage de détail est nécessaire. Pour les journaux CodeNomad autonome, utilisez les [options CLI serveur de journalisation](server.md). Le serveur CodeNomad tient aussi son propre journal dans `logs/server.log`, à côté de son fichier de configuration (`~/.config/codenomad` par défaut) ; le fichier plein précédent est `server.previous.log`.
 3. Ouvrez **Paramètres → Info → Diagnostics** et utilisez **Signaler un bug**, **Copier dans le presse-papiers** ou **Télécharger .txt**.
 
 Les détails de journalisation peuvent exposer chemins, sorties et données applicatives. Masquez identifiants, liens d’appairage, adresses réseau, chemins privés et contenu des conversations avant de partager journaux/captures. Le rapport complet inclut chemins/adresses ; le formulaire de bug prérempli les exclut volontairement. Voir [Signaler un bug](support.md#report-a-bug).

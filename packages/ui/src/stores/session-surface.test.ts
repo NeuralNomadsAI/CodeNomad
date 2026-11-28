@@ -11,7 +11,7 @@ import { clearActiveParentSession, clearActiveSession, hydrateActiveSessionSelec
   setActiveParentSession, setActiveSession, setActiveSessionFromList, setSessions } from "./session-state"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 import { activeParentSessionId, sessions } from "./session-state"
-import { removeSessionRuntimeState } from "./session-api"
+import { removeSessionProjection, removeSessionRuntimeState } from "./session-api"
 import { addInstance, removeInstance } from "./instances"
 import { captureState } from "../lib/hooks/use-app-session-capture"
 import { attachInstanceTabMembership, detachInstanceTabMembership } from "./app-tab-membership"
@@ -79,17 +79,13 @@ it("unavailability and removal invalidate only their own activation, retaining u
   }
 })
 
-it("schedule and playbook readers activate without a fabricated conversation", () => {
+it("a playbook reader activates without a fabricated conversation", () => {
   const context = { instanceId: "no-conversation", sessionId: null }
   lifecycle(context.instanceId, "opened")
-  for (const target of [
-    { kind: "recurrence" as const, missionId: "schedule", instanceId: context.instanceId, projectID: "project" },
-    { kind: "playbook" as const, missionId: "debug" },
-  ]) {
-    applySurface(context, { kind: "mission", target })
-    assert.equal(getTabViewState(context.instanceId).missions?.reader, target)
-    assert.deepEqual(getSessionSurface(context), { kind: "mission", target })
-  }
+  const target = { kind: "playbook" as const, missionId: "debug" }
+  applySurface(context, { kind: "mission", target })
+  assert.equal(getTabViewState(context.instanceId).missions?.reader, target)
+  assert.deepEqual(getSessionSurface(context), { kind: "mission", target })
   lifecycle(context.instanceId, "removed")
 })
 
@@ -125,7 +121,7 @@ it("unrelated envelope updates preserve live Mission identities and an in-flight
   const store: any = { loadTasks: () => new Promise<void>(done => { resolve = () => {
     value.tasks.push({ id: "task-id", key: "task-key", state: "ready" }); done()
   } }) }
-  const pending = openMissionTask(id, "/repo", () => value, "task-key", undefined, store)
+  const pending = openMissionTask(id, "/repo", () => value, "task-key", store)
   updateTabViewState(id, { filesMode: "changes", rightPanelTab: "files" })
   assert.equal(missionProjectView(id), before)
   assert.equal(missionProjectView(id).reader, reader)
@@ -183,7 +179,7 @@ it("deletion preserves an unrelated unavailable selection and later recovery can
   assert.equal(unrelated.current(), true)
   assert.deepEqual([activeParentSessionId().get(id), activeSessionId().get(id)], ["unavailable", "unavailable-child"])
   const recovery = beginGesture({ instanceId: id, sessionId: "unavailable-child" })
-  removeSessionRuntimeState(id, "unavailable-child", false)
+  removeSessionProjection(id, "unavailable-child")
   assert.equal(activeSessionId().get(id), undefined)
   setSessions(previous => new Map(previous).set(id, new Map([["unavailable-child", { id: "unavailable-child" } as any]])))
   setActiveSessionFromList(id, "unavailable-child", recovery)

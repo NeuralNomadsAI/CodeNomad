@@ -27,12 +27,29 @@ struct Owner {
     process_start_identity: String,
 }
 
+#[derive(Serialize)]
+struct Participant<'a> {
+    #[serde(flatten)]
+    owner: &'a Owner,
+    cohort: Option<&'a Owner>,
+}
+
+// Outer None is the legacy wire format. A null cohort is still registering.
+fn participant_cohort(value: &str) -> Option<Option<Owner>> {
+    let record: serde_json::Value = serde_json::from_str(value).ok()?;
+    let cohort = record.get("cohort")?;
+    Some(parse_owner(&cohort.to_string()))
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LegacyOwner {
     pid: u32,
     run_token: String,
     process_start_identity: Option<String>,
+    /// Set by Electron builds that join the cross-host election; absent in legacy ones.
+    #[serde(default)]
+    cross_host: bool,
 }
 
 pub(super) struct Registration {
@@ -253,7 +270,8 @@ impl Registration {
         fs::create_dir_all(election_directory)
             .map_err(|err| format!("failed to create cross-host election directory: {err}"))?;
         let participant_path = participant_path(election_directory, &owner);
-        publish_participant(&participant_path, &owner)?;
+        let provisional = serialize_participant(&owner, None)?;
+        publish_file(&participant_path, &provisional, "participant")?;
         let mut recovery_claim = None;
 
         let result = (|| {
@@ -288,10 +306,12 @@ impl Registration {
                     .unwrap_or(false);
             }
             let mut primary = false;
+            let mut cohort = None;
             if primary_candidate && !legacy_blocked {
                 for _ in 0..ACQUIRE_ATTEMPTS {
                     if publish_owner(election_directory, &owner)? {
                         primary = true;
+                        cohort = Some(owner.clone());
                         break;
                     }
                     let Some(observed) = read_if_exists(&owner_path(election_directory))? else {
@@ -300,6 +320,7 @@ impl Registration {
                     let Some(existing) = parse_owner(&observed) else {
                         break;
                     };
+                    cohort = Some(existing.clone());
                     if existing == owner {
                         primary = true;
                         break;
@@ -320,6 +341,18 @@ impl Registration {
                         break;
                     }
                 }
+            } else {
+                cohort = read_if_exists(&owner_path(election_directory))?
+                    .as_deref().and_then(parse_owner);
+            }
+            // An ownerless, non-candidate join is settled but belongs to no
+            // other process's cohort. Never leave its provisional marker live.
+            let value = serialize_participant(&owner, Some(cohort.as_ref().unwrap_or(&owner)))?;
+            if let Err(err) = bind_participant(&participant_path, &value) {
+                if !primary {
+                    return Err(err);
+                }
+                eprintln!("[client-state] failed to bind cross-host owner cohort: {err}");
             }
             Ok(Some(Self {
                 election_directory: election_directory.to_path_buf(),
@@ -341,15 +374,23 @@ impl Registration {
     }
 
     pub(super) fn is_primary(&self) -> bool {
+        self.verify_primary().unwrap_or(false)
+    }
+
+    pub(super) fn verify_primary(&self) -> Result<bool, String> {
         if self.released || !self.primary {
-            return false;
+            return Ok(false);
         }
-        let shared = read_if_exists(&owner_path(&self.election_directory))
-            .ok()
-            .flatten()
-            .and_then(|value| parse_owner(&value))
-            .is_some_and(|owner| owner == self.owner);
-        let legacy_clear = self
+        let path = owner_path(&self.election_directory);
+        let Some(value) = read_if_exists(&path)? else {
+            return Ok(false);
+        };
+        let owner = parse_owner(&value)
+            .ok_or_else(|| format!("invalid cross-host owner record {}", path.display()))?;
+        if owner != self.owner {
+            return Ok(false);
+        }
+        let legacy_blocked = self
             .legacy_electron_data
             .as_deref()
             .map(|path| {
@@ -361,10 +402,12 @@ impl Registration {
                     expected_electron_process,
                 )
             })
-            .transpose()
-            .map(|blocked| !blocked.unwrap_or(false))
+            .transpose()?
             .unwrap_or(false);
-        shared && legacy_clear
+        if legacy_blocked {
+            return Err("legacy Electron markers prevent verifying client-state ownership".into());
+        }
+        Ok(true)
     }
 
     pub(super) fn release(&mut self) -> Result<bool, String> {
@@ -476,8 +519,23 @@ fn publish_file(path: &Path, value: &str, label: &str) -> Result<(), String> {
     }
 }
 
+#[cfg(test)]
 fn publish_participant(path: &Path, owner: &Owner) -> Result<(), String> {
     publish_file(path, &serialize_owner(owner)?, "participant")
+}
+
+fn serialize_participant(owner: &Owner, cohort: Option<&Owner>) -> Result<String, String> {
+    serde_json::to_string(&Participant { owner, cohort }).map_err(|err| err.to_string())
+}
+
+fn bind_participant(path: &Path, value: &str) -> Result<(), String> {
+    let parent = path.parent().ok_or("Participant has no parent directory")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|err| err.to_string())?;
+    file.write_all(value.as_bytes()).and_then(|_| sync(file.as_file()))
+        .map_err(|err| format!("failed to write participant cohort: {err}"))?;
+    file.persist(path)
+        .map_err(|err| format!("failed to publish participant cohort: {err}"))?;
+    Ok(())
 }
 
 fn publish_owner(directory: &Path, owner: &Owner) -> Result<bool, String> {
@@ -520,7 +578,7 @@ fn owner_is_stale(
     identity(owner.pid).map(|live| live != owner.process_start_identity)
 }
 
-fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner)>, String> {
+fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner, Option<Owner>)>, String> {
     let mut participants = Vec::new();
     for entry in
         fs::read_dir(directory).map_err(|err| format!("failed to read participants: {err}"))?
@@ -536,7 +594,7 @@ fn participants(directory: &Path) -> Result<Vec<(PathBuf, Owner)>, String> {
         };
         let owner = parse_owner(&value)
             .ok_or_else(|| "cross-host participant is incomplete".to_string())?;
-        participants.push((entry.path(), owner));
+        participants.push((entry.path(), owner, participant_cohort(&value).flatten()));
     }
     Ok(participants)
 }
@@ -549,8 +607,12 @@ fn recovery_claimants(
     identity: impl Fn(u32) -> Option<String> + Copy,
 ) -> Result<Option<Vec<Owner>>, String> {
     let mut claimants = vec![current.clone()];
-    for (path, participant) in participants(directory)? {
+    let observed = parse_owner(observed_owner);
+    for (path, participant, cohort) in participants(directory)? {
         if participant == *current {
+            continue;
+        }
+        if cohort.is_some() && cohort != observed {
             continue;
         }
         if owner_is_stale(&participant, pid_alive, identity) == Some(true) {
@@ -632,13 +694,14 @@ fn remove_participant_if_owned(path: &Path, owner: &Owner) -> Result<(), String>
 }
 
 fn retire_owner_if_owned(directory: &Path, owner: &Owner) -> Result<(), String> {
-    retire_owner_if_owned_with(directory, owner, || {}, || {})
+    retire_owner_if_owned_with(directory, owner, || {}, || {}, || {})
 }
 
 fn retire_owner_if_owned_with(
     directory: &Path,
     owner: &Owner,
     on_checked: impl FnOnce(),
+    on_retiring: impl FnOnce(),
     on_retired: impl FnOnce(),
 ) -> Result<(), String> {
     let Some(observed) = read_if_exists(&owner_path(directory))? else {
@@ -648,6 +711,24 @@ fn retire_owner_if_owned_with(
         return Ok(());
     }
     on_checked();
+    // Keep provisional/new-generation registrations intact; the generation
+    // check also covers an old secondary whose registration races the rename.
+    let mut retiring = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|err| format!("failed to read participants: {err}"))? {
+        let entry = entry.map_err(|err| format!("failed to read participant: {err}"))?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(PARTICIPANT_PREFIX) || !name.ends_with(PARTICIPANT_SUFFIX) {
+            continue;
+        }
+        let path = entry.path();
+        if let Some(value) = read_if_exists(&path)? {
+            if participant_cohort(&value).is_none_or(|cohort| cohort.as_ref() == Some(owner)) {
+                retiring.push((path, value));
+            }
+        }
+    }
+    on_retiring();
     if read_if_exists(&owner_path(directory))?.as_deref() != Some(&observed) {
         return Ok(());
     }
@@ -665,19 +746,10 @@ fn retire_owner_if_owned_with(
     }
     on_retired();
     let result: Result<(), String> = (|| {
-        for entry in
-            fs::read_dir(directory).map_err(|err| format!("failed to read participants: {err}"))?
-        {
-            let entry = entry.map_err(|err| format!("failed to read participant: {err}"))?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if !name.starts_with(PARTICIPANT_PREFIX) || !name.ends_with(PARTICIPANT_SUFFIX) {
+        for (path, observed_participant) in retiring {
+            if read_if_exists(&path)?.as_deref() != Some(&observed_participant) {
                 continue;
             }
-            let path = entry.path();
-            let Some(observed_participant) = read_if_exists(&path)? else {
-                continue;
-            };
             if let Some(participant) = parse_owner(&observed_participant) {
                 remove_participant_if_owned(&path, &participant)?;
                 let _ = fs::remove_file(recovery_path(directory, &participant));
@@ -713,7 +785,7 @@ fn has_live_legacy_electron_with(
     };
     let upgraded: Vec<Owner> = participants(election_directory)?
         .into_iter()
-        .map(|(_, owner)| owner)
+        .map(|(_, owner, _)| owner)
         .collect();
     for entry in entries {
         let entry =
@@ -744,6 +816,11 @@ fn has_live_legacy_electron_with(
         };
         if marker.pid != pid || marker.run_token != run_token {
             return Ok(true);
+        }
+        // An election-aware host is arbitrated by the election, even before its
+        // participant appears; only markers without the flag can be legacy.
+        if marker.cross_host {
+            continue;
         }
         let live_identity = identity(pid);
         if let Some(marker_identity) = marker.process_start_identity.as_deref() {
@@ -1261,7 +1338,11 @@ mod tests {
         let second = owner(603, "b", "b-start");
         publish_owner(directory.path(), &stale).unwrap();
         let observed = fs::read_to_string(owner_path(directory.path())).unwrap();
-        publish_participant(&participant_path(directory.path(), &second), &second).unwrap();
+        publish_file(
+            &participant_path(directory.path(), &second),
+            &serialize_participant(&second, None).unwrap(),
+            "participant",
+        ).unwrap();
         publish_file(
             &recovery_path(directory.path(), &second),
             &observed,
@@ -1369,6 +1450,7 @@ mod tests {
                 .unwrap();
                 fs::write(&malformed, b"malformed").unwrap();
             },
+            || {},
             || assert!(publish_owner(directory.path(), &successor_owner).unwrap()),
         )
         .unwrap();
@@ -1404,6 +1486,56 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(claimant.is_primary());
+    }
+
+    #[test]
+    fn joins_on_either_side_of_graceful_rename_belong_to_their_own_cohort() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path();
+        let primary = owner(631, "first", "first-start");
+        let successor = owner(632, "second", "second-start");
+        let late = owner(633, "late", "late-start");
+        let incoming = owner(634, "incoming", "incoming-start");
+        let recoverer = owner(635, "recoverer", "recoverer-start");
+        let gap = owner(636, "gap", "gap-start");
+        let during_handoff = HashMap::from([
+            (primary.pid, primary.process_start_identity.clone()),
+            (successor.pid, successor.process_start_identity.clone()),
+            (late.pid, late.process_start_identity.clone()),
+            (incoming.pid, incoming.process_start_identity.clone()),
+            (gap.pid, gap.process_start_identity.clone()),
+        ]);
+        let join = |cohort_owner: Owner| {
+            Registration::register_with(path, cohort_owner, true,
+                |pid| during_handoff.contains_key(&pid),
+                |pid| during_handoff.get(&pid).cloned(),
+            ).unwrap().unwrap()
+        };
+        assert!(publish_owner(path, &primary).unwrap());
+        let mut old_secondary = None;
+        let mut new_secondary = None;
+        let mut ownerless_secondary = None;
+        retire_owner_if_owned_with(path, &primary, || {}, || {
+            old_secondary = Some(join(late.clone()));
+        }, || {
+            ownerless_secondary = Some(Registration::register_with(path, gap.clone(), false,
+                |pid| during_handoff.contains_key(&pid),
+                |pid| during_handoff.get(&pid).cloned(),
+            ).unwrap().unwrap());
+            assert!(publish_owner(path, &successor).unwrap());
+            new_secondary = Some(join(incoming.clone()));
+        }).unwrap();
+        assert!(participant_path(path, &late).exists());
+        assert!(participant_path(path, &incoming).exists());
+        let recover = || Registration::register_with(path, recoverer.clone(), true,
+            |pid| pid == late.pid || pid == incoming.pid || pid == gap.pid,
+            |pid| during_handoff.get(&pid).cloned(),
+        ).unwrap().unwrap();
+        assert!(!recover().primary, "successor secondary must fence a crash");
+        new_secondary.take().unwrap().release().unwrap();
+        assert!(recover().primary, "retired generation's secondary must not fence recovery");
+        assert!(old_secondary.is_some());
+        assert!(ownerless_secondary.is_some());
     }
 
     #[test]
@@ -1446,6 +1578,20 @@ mod tests {
         fs::write(
             legacy.path().join("client-state.running.701.electron.json"),
             serialize_owner(&upgraded).unwrap(),
+        )
+        .unwrap();
+        assert!(!has_live_legacy_electron_with(
+            legacy.path(),
+            election.path(),
+            |_| true,
+            |_| Some("electron-start".to_string()),
+            |_| Some(true),
+        )
+        .unwrap());
+        // An election-aware Electron does not veto before its participant appears.
+        fs::write(
+            legacy.path().join("client-state.running.703.starting.json"),
+            r#"{"pid":703,"runToken":"starting","processStartIdentity":"electron-start","crossHost":true}"#,
         )
         .unwrap();
         assert!(!has_live_legacy_electron_with(

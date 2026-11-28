@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { missionProfilesInputSchema } from "./playbook-profiles"
-import { scheduleToolWire } from "./schedule-tool"
+import { missionProgramConfigurationWire } from "./program-tool"
 import { parseMissionModel } from "./model-library"
 import { validMissionDefaults } from "./profile-defaults"
 
@@ -43,28 +43,27 @@ export const missionSettingsInput = z.discriminatedUnion("scope", [
 })
 export type MissionSettingsInput = z.infer<typeof missionSettingsInput>
 
-const configWire = scheduleToolWire.properties.configuration.properties
-const common = { action: { type: "string", enum: actions }, expectation: { type: "string", minLength: 64, maxLength: 64 } }
-const scope = (name: string, properties: object, required: string[] = []) => ({
-  type: "object", properties: { scope: { type: "string", const: name }, ...common, ...properties },
-  required: ["scope", "action", ...required], additionalProperties: false,
-})
-export const missionSettingsWire = { oneOf: [
-  scope("configurations", {
+const configWire = missionProgramConfigurationWire.properties
+export const missionSettingsWire = {
+  type: "object",
+  properties: {
+    scope: { type: "string", enum: ["configurations", "preferences", "depth"] },
+    action: { type: "string", enum: actions },
+    expectation: { type: "string", minLength: 64, maxLength: 64 },
     configurationID: { type: "string", minLength: 36, maxLength: 36 },
     configuration: { type: "object", properties: {
       id: { type: "string", minLength: 36, maxLength: 36 }, name: { type: "string", minLength: 1, maxLength: 80 },
       objective: { type: "string", minLength: 1, maxLength: 20_000 }, notes: { type: "string", maxLength: 20_000 },
       template: configWire.template, profiles: configWire.profiles, taskMode: configWire.taskMode,
     }, required: ["id", "name", "objective", "notes", "template"], additionalProperties: false },
-  }),
-  scope("preferences", {
     field: { type: "string", enum: ["missionProfileDefaults", "missionDeleteSessions"] },
     deleteSessions: { type: "boolean" },
     defaults: { type: "array", maxItems: 6, items: { type: "object", properties: {
       template: { type: "string", enum: ["all", "custom", "debug", "wayfinder", "delivery", "compare"] },
       profiles: configWire.profiles, taskMode: configWire.taskMode,
     }, required: ["template", "profiles"], additionalProperties: false } },
-  }, ["field"]),
-  scope("depth", { depth: { oneOf: [{ type: "integer", minimum: 1, maximum: 10 }, { type: "null" }] } }),
-] } as const
+    depth: { oneOf: [{ type: "integer", minimum: 1, maximum: 10 }, { type: "null" }] },
+  },
+  required: ["scope", "action"],
+  additionalProperties: false,
+} as const

@@ -8,8 +8,10 @@ import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { imagesConversationInputSchema, imagesConversationResultSchema, type ImagesConversationInput } from "../../opencode/session-pruning/assets-gallery-contract"
 import type { GitExclusion, ImagesConversationResponse } from "./images-conversation-contract"
 import type { ServiceConnection } from "../../workspaces/opencode-service"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 
 export interface ImagesConversationRouteDeps {
+  permissionModes?: SessionPermissionModes
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath" | "desktopPluginsReady"
     | "getServiceWslDistro" | "getHostPathForServicePath">
   worktreeDeletionFence: WorktreeDeletionFence
@@ -74,14 +76,23 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
     let result: ImagesConversationResponse
     try {
       await manager.desktopPluginsReady({ connection, location: { directory }, signal, deadlineAt, assertCurrent: current })
+      const distro = manager.getServiceWslDistro(workspaceId)
+      const permissions = input.mode === "lookup" ? undefined : await deps.permissionModes?.newRootRules({ client, location, distro, signal })
       await revalidate()
       current()
-      const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "imagesConversation", input, location: { directory } },
+      const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "imagesConversation",
+        input: permissions ? { ...input, permissions } : input, location: { directory } },
         { ...locationRequestOptions(location), signal })
       await revalidate()
       const output = imagesConversationResultSchema.safeParse(response.output)
       if (!output.success) return unavailable
       result = output.data
+      if (permissions && result.status === "found" && result.created) {
+        const session = await client.session.get({ sessionID: result.sessionID }, { signal })
+        if (session.id !== result.sessionID || session.location.directory !== directory) return unavailable
+        await revalidate()
+        deps.permissionModes!.confirmNewRoot(session, distro, permissions, [])
+      }
     } catch {
       signal.throwIfAborted()
       // Missing method, older plugin or timeout: no fallback and nothing created here.

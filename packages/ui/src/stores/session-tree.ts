@@ -1,5 +1,6 @@
 import type { Session } from "../types/session"
 import { normalizeSessionDirectory } from "./session-list-options"
+import { childSessionIds, sessionDescendants, sessionThreadCache } from "./session-projection"
 import { isReservedMissionScheduleSessionID } from "../../../server/src/missions/mission-schedule-carrier-identity"
 
 export type SessionThread = {
@@ -24,10 +25,16 @@ export type SessionArchiveFilter = "active" | "archived" | "all"
 
 export const isSessionArchived = (session: Session): boolean => session.time.archived !== undefined
 
+type ArchiveProjection = { thread: SessionThread; live: boolean }
+const archiveProjections = new WeakMap<SessionThread, { selected?: string | null; inherited: boolean; result: ArchiveProjection | null }>()
+const stableThreads = new WeakSet<SessionThread>()
+
 /** Hide archived branches, retaining the selected conversation and live work or
  * pending requests with their ancestor path. Native child flags stay unchanged. */
 export function projectUnarchivedSessionThreads(threads: SessionThread[], selected?: string | null): SessionThread[] {
-  const visit = (thread: SessionThread, inherited = false): { thread: SessionThread; live: boolean } | null => {
+  const visit = (thread: SessionThread, inherited = false): ArchiveProjection | null => {
+    const cached = archiveProjections.get(thread)
+    if (cached?.selected === selected && cached?.inherited === inherited) return cached.result
     const archived = inherited || isSessionArchived(thread.session)
     const children = thread.children.flatMap(child => {
       const result = visit(child, archived)
@@ -36,15 +43,25 @@ export function projectUnarchivedSessionThreads(threads: SessionThread[], select
     const session = thread.session
     const live = session.id === selected || session.status === "working" || session.status === "compacting" || Boolean(session.pendingPermission || session.pendingForm)
       || children.some(child => child.live)
-    if (archived && !live) return null
     const projected = children.map(child => child.thread)
-    return { live, thread: { ...thread, children: projected, hasChildren: projected.length > 0,
-      latestUpdated: projected.reduce((latest, child) => Math.max(latest, child.latestUpdated), session.time.updated) } }
+    const result = archived && !live ? null : { live,
+      thread: projected.length === thread.children.length && projected.every((child, index) => child === thread.children[index])
+        ? thread
+        : { ...thread, children: projected, hasChildren: projected.length > 0,
+          latestUpdated: projected.reduce((latest, child) => Math.max(latest, child.latestUpdated), session.time.updated) },
+    }
+    if (stableThreads.has(thread)) {
+      archiveProjections.set(thread, { selected, inherited, result })
+      if (result) stableThreads.add(result.thread)
+    }
+    return result
   }
-  return threads.flatMap(thread => {
+  const visible: SessionThread[] = []
+  for (const thread of threads) {
     const result = visit(thread)
-    return result ? [result.thread] : []
-  })
+    if (result) visible.push(result.thread)
+  }
+  return visible
 }
 
 type SessionFamilyProjection = {
@@ -52,6 +69,25 @@ type SessionFamilyProjection = {
   worktreeDirectory?: string
   sort: SessionFamilySort
   getWorktreeLabel: (directory: string) => string
+  favoriteIds?: ReadonlySet<string>
+}
+
+// Pending requests bring their branch forward; favorites rank only their own row.
+type PrioritizedThread = { favoriteIds: ReadonlySet<string>; row: SessionThread; rank: number }
+const prioritizedThreads = new WeakMap<SessionThread, PrioritizedThread>()
+function prioritizeActivity(threads: SessionThread[], favoriteIds: ReadonlySet<string>): SessionThread[] {
+  const visit = (thread: SessionThread): PrioritizedThread => {
+    const cached = prioritizedThreads.get(thread)
+    if (cached?.favoriteIds === favoriteIds) return cached
+    const ranked = thread.children.map(visit).sort((a, b) => b.rank - a.rank)
+    const children = ranked.map(child => child.row)
+    const row = children.every((child, i) => child === thread.children[i]) ? thread : { ...thread, children }
+    const own = thread.session.pendingPermission || thread.session.pendingForm ? 2 : favoriteIds.has(thread.session.id) ? 1 : 0
+    const result = { row, favoriteIds, rank: ranked.some(child => child.rank === 2) ? 2 : own }
+    if (stableThreads.has(thread)) prioritizedThreads.set(thread, result)
+    return result
+  }
+  return threads.map(visit).sort((a, b) => b.rank - a.rank).map(thread => thread.row)
 }
 
 function someSession(thread: SessionThread, predicate: (session: Session) => boolean): boolean {
@@ -70,7 +106,7 @@ export function projectSessionFamilies(
     return someSession(thread, (session) => normalizeSessionDirectory(session.location?.directory) === worktreeDirectory)
   })
 
-  return [...projected].sort((left, right) => {
+  projected.sort((left, right) => {
     if (options.sort === "activity") {
       return right.latestUpdated - left.latestUpdated || right.session.id.localeCompare(left.session.id)
     }
@@ -81,6 +117,7 @@ export function projectSessionFamilies(
     const rightLabel = options.getWorktreeLabel(right.session.location?.directory ?? "")
     return leftLabel.localeCompare(rightLabel) || (left.session.title ?? "").localeCompare(right.session.title ?? "")
   })
+  return options.sort === "activity" && options.favoriteIds ? prioritizeActivity(projected, options.favoriteIds) : projected
 }
 
 // Search rows are independent leaves: filtering, sorting and selection all use
@@ -100,11 +137,12 @@ export function projectSessionSearchResults(
   return projectSessionFamilies([...rows.values()], options)
 }
 
-export function getSessionRootFromMap(instanceSessions: Map<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
+export function getSessionRootFromMap(instanceSessions: ReadonlyMap<string, Session>, sessionId: string, directoryOnly?: string): Session | null {
   let current = instanceSessions.get(sessionId)
   if (!current) return null
   const inScope = (session: Session) => !directoryOnly || normalizeSessionDirectory(session.location.directory) === normalizeSessionDirectory(directoryOnly)
   if (!inScope(current)) return null
+  if (!current.parentId) return current
 
   const seen = new Set<string>()
   while (current.parentId) {
@@ -117,7 +155,7 @@ export function getSessionRootFromMap(instanceSessions: Map<string, Session>, se
   return current
 }
 
-export function getSessionAncestorIdsFromMap(instanceSessions: Map<string, Session>, sessionId: string): string[] {
+export function getSessionAncestorIdsFromMap(instanceSessions: ReadonlyMap<string, Session>, sessionId: string): string[] {
   const ancestors: string[] = []
   const seen = new Set<string>([sessionId])
   let current = instanceSessions.get(sessionId)
@@ -135,70 +173,54 @@ export function getSessionAncestorIdsFromMap(instanceSessions: Map<string, Sessi
 
 export type DescendantActivity = { permission: number; working: number; compacting: number; idle: number }
 
-/** Per-ancestor counts; idle participates only while its status badge is visible. */
-export function collectDescendantActivity(
-  instanceSessions: Map<string, Session> | undefined,
-  showIdleStatus: (session: Session) => boolean = () => false,
-): Map<string, DescendantActivity> {
-  const activity = new Map<string, DescendantActivity>()
-  for (const session of instanceSessions?.values() ?? []) {
-    const kind = session.pendingPermission || session.pendingForm
-      ? "permission"
-      : session.status === "working" || session.status === "compacting" ? session.status
-        : session.status === "idle" && showIdleStatus(session) ? "idle" : null
+export function countDescendantActivity(
+  rows: ReadonlyMap<string, Session>,
+  parentId: string,
+  descendants: readonly Session[],
+  showIdleStatus: (session: Session) => boolean,
+): DescendantActivity | undefined {
+  let activity: DescendantActivity | undefined
+  for (const session of descendants) {
+    const kind = session.pendingPermission || session.pendingForm ? "permission"
+      : session.status !== "idle" ? session.status : showIdleStatus(session) ? "idle" : null
     if (!kind) continue
-    if (kind === "idle" && isSessionArchived(session)) continue
-    const seen = new Set([session.id])
-    let parentId = session.parentId
-    while (parentId && !seen.has(parentId) && instanceSessions!.has(parentId)) {
-      if (kind === "idle" && isSessionArchived(instanceSessions!.get(parentId)!)) break
-      seen.add(parentId)
-      const counts = activity.get(parentId) ?? { permission: 0, working: 0, compacting: 0, idle: 0 }
-      counts[kind] += 1
-      activity.set(parentId, counts)
-      parentId = instanceSessions!.get(parentId)!.parentId
+    if (kind === "idle") {
+      let ancestor: Session | undefined = session
+      while (ancestor && !isSessionArchived(ancestor) && ancestor.id !== parentId) {
+        ancestor = ancestor.parentId ? rows.get(ancestor.parentId) : undefined
+      }
+      if (ancestor?.id !== parentId || isSessionArchived(ancestor)) continue
     }
+    activity ??= { permission: 0, working: 0, compacting: 0, idle: 0 }
+    activity[kind]++
   }
   return activity
 }
 
 export function getDescendantSessionsFromMap(instanceSessions: Map<string, Session>, parentId: string): Session[] {
-  const childrenByParent = new Map<string, Session[]>()
-  for (const session of instanceSessions.values()) {
-    if (!session.parentId) continue
-    const children = childrenByParent.get(session.parentId)
-    if (children) children.push(session)
-    else childrenByParent.set(session.parentId, [session])
-  }
-
-  const descendants: Session[] = []
-  const queue = [...(childrenByParent.get(parentId) ?? [])]
-  const seen = new Set<string>([parentId])
-  while (queue.length > 0) {
-    const session = queue.shift()
-    if (!session || seen.has(session.id)) continue
-    seen.add(session.id)
-    descendants.push(session)
-    queue.push(...(childrenByParent.get(session.id) ?? []))
-  }
-  descendants.sort((a, b) => (b.time.updated ?? 0) - (a.time.updated ?? 0))
-  return descendants
+  return sessionDescendants(instanceSessions, parentId)
 }
 
 function buildThread(
   session: Session,
-  childrenByParent: Map<string, Session[]>,
+  childrenFor: (id: string) => Iterable<Session>,
   depth: number,
   ancestorIds: Set<string>,
+  cache?: Map<string, SessionThread>,
 ): SessionThread | null {
   if (ancestorIds.has(session.id) || isReservedMissionScheduleSessionID(session.id)) return null
-  const nextAncestorIds = new Set(ancestorIds)
-  nextAncestorIds.add(session.id)
+  const cached = cache?.get(session.id)
+  if (cached?.depth === depth) return cached
+  ancestorIds.add(session.id)
 
   const children: SessionThread[] = []
-  for (const child of childrenByParent.get(session.id) ?? []) {
-    const childThread = buildThread(child, childrenByParent, depth + 1, nextAncestorIds)
-    if (childThread) children.push(childThread)
+  try {
+    for (const child of childrenFor(session.id)) {
+      const childThread = buildThread(child, childrenFor, depth + 1, ancestorIds, cache)
+      if (childThread) children.push(childThread)
+    }
+  } finally {
+    ancestorIds.delete(session.id)
   }
   children.sort((a, b) => {
     if (b.latestUpdated !== a.latestUpdated) return b.latestUpdated - a.latestUpdated
@@ -207,14 +229,20 @@ function buildThread(
 
   let latestUpdated = session.time.updated ?? 0
   for (const child of children) latestUpdated = Math.max(latestUpdated, child.latestUpdated)
-  return { session, children, depth, hasChildren: children.length > 0, latestUpdated }
+  const thread = { session, children, depth, hasChildren: children.length > 0, latestUpdated }
+  if (cache) {
+    cache.set(session.id, thread)
+    stableThreads.add(thread)
+  }
+  return thread
 }
 
 export function buildSessionThreadsFromMap(
-  instanceSessions: Map<string, Session>,
+  instanceSessions: ReadonlyMap<string, Session>,
   rootIds: string[],
   includedDescendantIds?: Set<string>,
   directoryOnly?: string,
+  stable = false,
 ): SessionThread[] {
   let includedIds: Set<string> | null = null
   if (includedDescendantIds) {
@@ -225,23 +253,25 @@ export function buildSessionThreadsFromMap(
     }
   }
 
-  const childrenByParent = new Map<string, Session[]>()
-  for (const session of instanceSessions.values()) {
-    if (directoryOnly && normalizeSessionDirectory(session.location.directory) !== normalizeSessionDirectory(directoryOnly)) continue
-    if (!session.parentId || (includedIds && !includedIds.has(session.id))) continue
-    const children = childrenByParent.get(session.parentId)
-    if (children) children.push(session)
-    else childrenByParent.set(session.parentId, [session])
+  const directory = normalizeSessionDirectory(directoryOnly)
+  function* childrenFor(id: string) {
+    for (const childId of childSessionIds(instanceSessions, id)) {
+      if (includedIds && !includedIds.has(childId)) continue
+      const session = instanceSessions.get(childId)!
+      if (!directory || normalizeSessionDirectory(session.location.directory) === directory) yield session
+    }
   }
+  const cache = stable && !includedIds && !directoryOnly ? sessionThreadCache(instanceSessions) : undefined
 
   const threads: SessionThread[] = []
   const seenRootIds = new Set<string>()
+  const ancestorIds = new Set<string>()
   for (const rootId of rootIds) {
     if (seenRootIds.has(rootId)) continue
     seenRootIds.add(rootId)
     const root = instanceSessions.get(rootId)
     if (!root || getSessionRootFromMap(instanceSessions, root.id, directoryOnly)?.id !== root.id) continue
-    const thread = buildThread(root, childrenByParent, 0, new Set())
+    const thread = buildThread(root, childrenFor, 0, ancestorIds, cache)
     if (thread) threads.push(thread)
   }
   threads.sort((a, b) => {
@@ -298,10 +328,13 @@ export function findSessionThread(threads: SessionThread[], sessionId: string): 
 
 export function collectSessionThreadIds(threads: SessionThread[]): string[] {
   const ids: string[] = []
-  for (const thread of threads) {
-    ids.push(thread.session.id)
-    ids.push(...collectSessionThreadIds(thread.children))
+  const visit = (list: SessionThread[]) => {
+    for (const thread of list) {
+      ids.push(thread.session.id)
+      if (thread.children.length > 0) visit(thread.children)
+    }
   }
+  visit(threads)
   return ids
 }
 

@@ -81,11 +81,29 @@ describe("plugin source document edits", () => {
     assert.ok(only.endsWith("\n"))
   })
 
+  it("removes a source with its listed rules in one edit, trailing entries of compact arrays included", () => {
+    const rules = (indexes: number[]) => ({ indexes, expected: new Set(["p.id", "-p.id"]) })
+    const compact = '{"plugins":["keep","p@1","-p.id","p.id"],"shell":"keep"}'
+    const plugins: PluginConfigEntry[] = ["keep", "p@1", "-p.id", "p.id"]
+    assert.deepEqual(parse(removePluginSourceEntry(documentFor(compact, plugins), 1, "p@1", rules([2, 3]))), { plugins: ["keep"], shell: "keep" })
+    assert.deepEqual(parse(removePluginSourceEntry(documentFor(compact, plugins), 3, "p.id")).plugins, ["keep", "p@1", "-p.id"])
+    assert.deepEqual(parse(removePluginSourceEntry(documentFor('{"plugins":["p@1","-p.id"]}', ["p@1", "-p.id"]), 0, "p@1", rules([1]))),
+      { plugins: [] })
+    const text = '{\n  "plugins": [\n    "-p.id", // why\n    "p@1",\n    "keep",\n    "p.id"\n  ]\n}\n'
+    const updated = removePluginSourceEntry(documentFor(text, ["-p.id", "p@1", "keep", "p.id"]), 1, "p@1", rules([0, 3]))
+    assert.deepEqual(parse(updated), { plugins: ["keep"] })
+    assert.match(updated, /\/\/ why/)
+  })
+
   it("refuses a stale index or a changed entry as a conflict", () => {
     const document = documentFor('{ "plugins": ["a", "b"] }', ["a", "b"])
     for (const [index, target] of [[1, "a"], [2, "b"], [-1, "a"], [0.5, "a"]] as const) {
       assert.throws(() => removePluginSourceEntry(document, index, target),
         (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "conflict", `${index}:${target}`)
+    }
+    for (const indexes of [[0], [1], [2]]) {
+      assert.throws(() => removePluginSourceEntry(document, 0, "a", { indexes, expected: new Set(["a"]) }),
+        (error: unknown) => error instanceof PluginControlDocumentError && error.kind === "conflict", `rule ${indexes}`)
     }
   })
 })

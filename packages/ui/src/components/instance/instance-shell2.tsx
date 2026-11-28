@@ -29,6 +29,7 @@ import { MissionReader } from "../mission-reader"
 import { missionProjectView } from "../../stores/mission-view-state"
 import MessageSection from "../message-section"
 import PromptAttachmentsBar from "../prompt-input/PromptAttachmentsBar"
+import RecoveredDrafts from "../prompt-input/recovered-drafts"
 import { formatTokenTotal } from "../../lib/formatters"
 import ContextMeter from "../context-meter"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "../action-overflow-menu"
@@ -38,6 +39,8 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { projectScope } from "../../lib/backend-identity"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
 import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -48,19 +51,18 @@ import { useDrawerChrome } from "./shell/useDrawerChrome"
 import { useFilePreviewLifetime } from "./shell/file-preview-lifetime"
 import ShellPanelToggle from "./shell/ShellPanelToggle"
 import { useSessionNavigationHistory } from "./shell/useSessionNavigationHistory"
-import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../../stores/session-status"
+import { getRetrySeconds, idleFadeClassForSession, shouldShowSessionStatusForRow } from "../../stores/session-status"
+import { createDeadlineMemo } from "../../lib/deadline-memo"
 import { Command as CommandIcon, Globe, ListFilter, Maximize2, Search, ShieldAlert } from "lucide-solid"
 import type { PromptInputApi } from "../prompt-input/types"
 import type { Attachment } from "../../types/attachment"
 import { setAgentModelPreference, useConfig } from "../../stores/preferences"
 import { showAlertDialog } from "../../stores/alerts"
 import {
-  DEFAULT_PREVIEW_URL,
   getSessionPreview,
-  openSessionPreview,
-  restoreSessionPreview,
+  previewBlockedByOwner,
+  requestSessionPreview,
   showSessionChatFor,
-  showSessionPreview,
   setPreviewSessionOwners,
 } from "../../stores/session-previews"
 import { clearSelectedSession, createSession, executeCustomCommand, getDefaultModel, providers, runShellCommand, sendMessage, setActiveParentSession, updateSessionModel } from "../../stores/sessions"
@@ -85,10 +87,9 @@ import { useDrawerResize } from "./shell/useDrawerResize"
 import { clampEmbeddedDrawerWidth } from "./shell/drawer-layout"
 import { useSessionCache } from "./shell/useSessionCache"
 import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
-import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
+import { createProjectServerMeta } from "../../lib/project-server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
@@ -147,7 +148,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   let headerRightEl: HTMLElement | undefined
   const [headerIndicatorsEl, setHeaderIndicatorsEl] = createSignal<HTMLElement>()
 
-  const [now, setNow] = createSignal(Date.now())
   const [sessionPromptApis, setSessionPromptApis] = createSignal<Record<string, PromptInputApi | null>>({})
   const pendingFirstPromptText = new Map<string, string>()
   const [draftAgent, setDraftAgent] = createSignal("")
@@ -287,7 +287,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   // Remote Control clients hide the preview entry points while their host keeps previews off.
-  onMount(() => { void getServerMeta().catch(() => undefined) })
+  const { previewsUnavailable } = createProjectServerMeta(() => props.instance.id)
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -379,12 +379,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   })
 
   createEffect(() => {
-    if (typeof window === "undefined") return
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    onCleanup(() => window.clearInterval(timer))
-  })
-
-  createEffect(() => {
     if (!props.isActiveInstance) return
     const element = sessionCenterEl()
     if (!element || typeof ResizeObserver === "undefined") return
@@ -444,7 +438,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   const activeSessionPreview = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
-    return sessionId ? getSessionPreview(sessionId) : null
+    return sessionId ? getSessionPreview(sessionId, props.instance.id) : null
   })
   const showingPreview = () => getSessionSurface({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() }).kind === "web"
 
@@ -463,13 +457,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   async function handleOpenPreview() {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
-    const intent = beginGesture({ instanceId: props.instance.id, sessionId })
+    const instanceId = props.instance.id
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instance.id === instanceId && activeSessionIdForInstance() === sessionId)
     try {
-      const restored = await restoreSessionPreview(sessionId, props.instance.id)
-      if (!intent.current()) return
-      if (restored) showSessionPreview(sessionId, props.instance.id, intent)
-      else await openSessionPreview(sessionId, DEFAULT_PREVIEW_URL, props.instance.id, undefined, intent)
+      if (!operation.current()) return
+      await requestSessionPreview(sessionId, instanceId)
     } catch (error) {
+      if (!operation.current()) return
       if (error instanceof Error && error.name === "AbortError") return
       if (props.isActiveInstance === false || activeSessionIdForInstance() !== sessionId) return
       showAlertDialog(t("sessionPreview.open.title"), {
@@ -484,36 +478,30 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     const sessionId = activeSessionIdForInstance()
     if (!sessionId || sessionId === "info") return
 
-    const preview = activeSessionPreview()
-    if (showingPreview() && preview) {
+    if (showingPreview() && (activeSessionPreview() || previewBlockedByOwner(sessionId, props.instance.id))) {
       showSessionChatFor(sessionId, props.instance.id)
       return
     }
 
-    if (preview) {
-      showSessionPreview(sessionId, props.instance.id)
-      return
-    }
     void handleOpenPreview()
   }
 
   const previewToggleLabel = createMemo(() => {
-    return showingPreview() && activeSessionPreview() ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
+    const sessionId = activeSessionIdForInstance()
+    return showingPreview() && (activeSessionPreview() || (sessionId && previewBlockedByOwner(sessionId, props.instance.id)))
+      ? t("sessionPreview.chat.button") : t("sessionPreview.open.button")
   })
 
-  const yoloModeEnabled = createMemo(() => {
-    const session = activeSessionForInstance()
-    if (!session) return false
-    return isPermissionAutoAcceptEnabled(props.instance.id, session.id)
+  const statusRow = createMemo(() => {
+    const id = activeSessionIdForInstance()
+    return props.isActiveInstance !== false && id && id !== "info" ? allInstanceSessions().get(id) ?? null : null
   })
+  const activeSessionStatusPill = createDeadlineMemo((now, wakeAt) => {
+    const activeSession = statusRow()
+    if (!activeSession) return null
 
-  const activeSessionStatusPill = createMemo(() => {
-    const activeSessionId = activeSessionIdForInstance()
-    if (!activeSessionId || activeSessionId === "info") return null
-
-    const activeSession = activeSessionForInstance()
-    const needsPermission = Boolean(activeSession?.pendingPermission)
-    const needsQuestion = Boolean(activeSession?.pendingForm)
+    const needsPermission = Boolean(activeSession.pendingPermission)
+    const needsQuestion = Boolean(activeSession.pendingForm)
     const needsInput = needsPermission || needsQuestion
 
     if (needsInput) {
@@ -526,20 +514,21 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       }
     }
 
-    const status = getSessionStatus(props.instance.id, activeSessionId)
-    const retry = getSessionRetry(props.instance.id, activeSessionId)
-    const showStatus = shouldShowSessionStatus(
+    const status = activeSession.status
+    const retry = activeSession.retry
+    const showStatus = shouldShowSessionStatusForRow(
       props.instance.id,
-      activeSessionId,
-      now(),
+      activeSession,
+      now,
       preferences().keepUnseenSubagentIdleStatus,
+      wakeAt,
     )
     if (!showStatus) {
       return null
     }
     const text = retry
       ? (() => {
-          const seconds = getRetrySeconds(retry.next, now())
+          const seconds = getRetrySeconds(retry.next, now, wakeAt)
           return seconds > 0 ? t("sessionList.status.retryingIn", { seconds: String(seconds) }) : t("sessionList.status.retrying")
         })()
       : status === "working"
@@ -549,7 +538,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           : t("sessionList.status.idle")
 
     const baseClassName = `session-${retry ? "retrying" : status}`
-    const fadeClassName = getSessionIdleFadeClass(props.instance.id, activeSessionId)
+    const fadeClassName = idleFadeClassForSession(props.instance.id, activeSession)
 
     return {
       className: fadeClassName ? `${baseClassName} ${fadeClassName}` : baseClassName,
@@ -579,20 +568,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
   }
 
-  const renderYoloModePill = () => {
-    if (!yoloModeEnabled()) return null
-    return (
-      <span
-        class="status-indicator session-status session-status-list session-yolo-mode"
-        aria-label={t("instanceShell.yoloMode.badgeAriaLabel")}
-        title={t("instanceShell.yoloMode.badgeAriaLabel")}
-      >
-        <span class="status-dot" />
-        <span class="session-status-text">{t("instanceShell.yoloMode.badge")}</span>
-      </span>
-    )
-  }
-
   const renderSessionHeaderIndicators = () => (
     <div ref={setHeaderIndicatorsEl} class="session-header-indicators flex items-center justify-center gap-2">
       <Show when={hasPendingRequests()} fallback={renderActiveSessionStatusPill()}>
@@ -601,7 +576,6 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           onClick={handleProjectInterruptionClick}
         />
       </Show>
-      {renderYoloModePill()}
     </div>
   )
 
@@ -901,9 +875,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Keep action items stable so unrelated updates do not rebuild their icon DOM.
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
-  // Readers that need no conversation: schedules and playbook details.
-  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
-    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.id).reader?.kind ?? "")
+  // A reader that needs no conversation: playbook details.
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance) && missionProjectView(props.instance.id).reader?.kind === "playbook"
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -981,16 +954,22 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
 
   function createAndActivateDraftSession() {
     if (draftSessionCreation) return draftSessionCreation
+    const operation = captureBackendOperation(props.instance.id)
+    const assertCurrent = () => { if (!operation.current()) throw new DOMException("Backend detached", "AbortError") }
     const intent = beginGesture({ instanceId: props.instance.id, sessionId: activeSessionIdForInstance() ?? null })
     const creation = (async () => {
+      assertCurrent()
       const agent = draftAgent()
       const model = draftModel()
       if (agent && model.providerId && model.modelId) {
         await setAgentModelPreference(props.instance.id, agent, model)
+        assertCurrent()
       }
       const session = await createSession(props.instance.id, agent || undefined)
+      assertCurrent()
       if (model.providerId && model.modelId) {
         await updateSessionModel(props.instance.id, session.id, model)
+        assertCurrent()
       }
       if (intent.current() && (!window.matchMedia?.("(pointer: coarse)")?.matches || window.matchMedia?.("(any-pointer: fine)")?.matches)) {
         setFocusConversationSessionId(session.id)
@@ -1009,10 +988,15 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     submit: (sessionId: string) => Promise<void>,
     draft?: { text: string; attachments: Attachment[] },
   ) {
+    const operation = captureBackendOperation(props.instance.id)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     const session = await createAndActivateDraftSession()
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     try {
       await submit(session.id)
+      if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     } catch (error) {
+      if (!operation.current()) throw error
       if (draft) {
         const api = sessionPromptApis()[session.id]
         if ((!api || !api.getPromptText()) && getAttachments(props.instance.id, session.id).length === 0) {
@@ -1210,9 +1194,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={projectScope(props.instance)} /></Show>
                     </div>
 
+                    <RecoveredDrafts instanceId={props.instance.id} />
                     <Show when={draftAttachments().length > 0}>
                       <PromptAttachmentsBar
                         attachments={draftAttachments()}

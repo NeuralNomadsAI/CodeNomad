@@ -6,6 +6,7 @@ import { Markdown } from "../../../src/components/markdown"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
+import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import "../../../src/index.css"
 
 const html = '<div class="sample-html">outer\n<span title="original">who</span> , message\n{children ?? null}\n</div>'
@@ -23,6 +24,11 @@ const recordCache = (kind: string) => {
 if (traceEnabled) createEffect(() => { literal(); queueMicrotask(() => recordCache("literal-effect")) })
 const part = { id: "cached-part", type: "text" as const, text: html, version: 1,
   renderCache: { text: html, html: '<div class="cached-html">old sanitized HTML</div>', theme: "light", mode: "1:escaped:wrap" } }
+const timelineStore = messageStoreBus.getOrCreate("html")
+for (const role of ["user", "assistant"] as const) {
+  timelineStore.upsertMessage({ id: `${role}-preview`, sessionId: "session", role, status: "complete", createdAt: 1,
+    parts: [{ id: `${role}-preview-text`, type: "text", text: html }] })
+}
 
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <section id="user"><MessagePart part={{ type: "text", id: "user", text: body }} messageType="user" instanceId="html" sessionId="session" /></section>
@@ -32,8 +38,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     displayMetadataOverride={{ segments: [{ kind: "pasted", length: html.length }] }} /></section>
   <section id="cache"><Markdown part={part} instanceId="html" sessionId="session" isDark={false} escapeRawHtml literalRawHtml={literal()} /></section>
   <div style={{ height: "160px", width: "50px" }}><MessageTimeline instanceId="html" sessionId="session" segments={[
-    { id: "user-preview", messageId: "user-preview", type: "user", label: "User preview", tooltip: html, totalChars: html.length },
-    { id: "assistant-preview", messageId: "assistant-preview", type: "assistant", label: "Assistant preview", tooltip: html, totalChars: html.length },
+    { id: "user-preview", messageId: "user-preview", type: "user", partIds: ["user-preview-text"] },
+    { id: "assistant-preview", messageId: "assistant-preview", type: "assistant", partIds: ["assistant-preview-text"] },
   ]} /></div>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 if (traceEnabled) {

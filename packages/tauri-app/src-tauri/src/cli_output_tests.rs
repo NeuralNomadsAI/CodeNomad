@@ -19,7 +19,7 @@ fn fragmented_partial_and_oversized_lines_reach_eof() {
 #[test]
 fn protocol_is_classified_before_diagnostics_even_after_revocation() {
     let mut diagnostics = Vec::new();
-    pump(Cursor::new("CODENOMAD_BOOTSTRAP_TOKEN:secret\nREQUEST:secret\nCODENOMAD_SHUTDOWN_STATUS:incomplete\n"), 1024, |line| {
+    pump(Cursor::new("CODENOMAD_BOOTSTRAP_TOKEN:secret\nREQUEST:secret\nCODENOMAD_MANAGED_SESSION:id secret\nCODENOMAD_SHUTDOWN_STATUS:incomplete\n"), 1024, |line| {
         if let Some(line) = line {
             if let OutputLine::Diagnostic(line) = classify(line, "REQUEST:") {
                 diagnostics.push(line.to_owned());

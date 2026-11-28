@@ -187,26 +187,49 @@ fn run_navigation_queue(window_label: String) {
             continue;
         }
         let window_id = crate::identity::local_window_id(&window_label).ok();
-        if let (Some(state), Some(window_id)) =
-            (app.try_state::<ClientState>(), window_id.as_deref())
-        {
-            state.wait_for_renderer_flush(&app, &window_label, window_id, true);
-        }
+        let generation = match app.try_state::<ClientState>().zip(window_id.as_deref()) {
+            Some((state, window_id)) => {
+                match state.wait_for_renderer_flush(&app, &window_label, window_id, true) {
+                    Ok(generation) => generation,
+                    Err(()) => {
+                        complete_active(&window_label);
+                        continue;
+                    }
+                }
+            }
+            None => None,
+        };
         if !is_current() {
+            ClientState::cancel_navigation_flush(&app, &window_label, generation);
             complete_active(&window_label);
             continue;
         }
-        let result = crate::shutdown::with_navigation_authority(&app, || {
-            let state = app.try_state::<ClientState>();
-            execute_navigation_for(
-                state.as_deref(),
-                window_id.as_deref(),
-                target_url.as_ref(),
-                || navigate(app.clone()),
-            )
+        let dispatch = app.clone();
+        let (done, reply) = std::sync::mpsc::sync_channel(1);
+        // Native getters and navigation run together; the worker waits
+        // without holding shutdown authority.
+        let result = app.run_on_main_thread(move || {
+            let result = crate::shutdown::with_navigation_authority(&dispatch, || {
+                if !is_current() {
+                    return Err("discarded stale navigation".into());
+                }
+                let state = dispatch.try_state::<ClientState>();
+                execute_navigation_for(
+                    state.as_deref(),
+                    window_id.as_deref(),
+                    target_url.as_ref(),
+                    || navigate(dispatch.clone()),
+                )
+            });
+            let _ = done.send(result);
+        }).map_err(|err| err.to_string()).and_then(|()| {
+            reply.recv().map_err(|err| err.to_string())
         });
-        if let Some(Err(err)) = result {
-            eprintln!("[client-state] navigation failed: {err}");
+        if !matches!(result, Ok(Some(Ok(())))) {
+            ClientState::cancel_navigation_flush(&app, &window_label, generation);
+            if let Ok(Some(Err(err))) | Err(err) = result {
+                eprintln!("[client-state] navigation failed: {err}");
+            }
         }
 
         complete_active(&window_label);
@@ -366,6 +389,7 @@ mod tests {
         assert!(state
             .renderer_access
             .allows_claim_origin_for(&window_id, &outgoing_url));
+        state.renderer_page_started(&window_id, Some(&incoming_url));
         state
             .renderer_access
             .claim_for(&window_id, "incoming-renderer", &incoming_url)

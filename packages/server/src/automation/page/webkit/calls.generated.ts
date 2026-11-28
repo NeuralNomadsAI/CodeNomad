@@ -2,12 +2,19 @@
 // @ts-nocheck
 export const readCalls = {
 "option-click": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = option => (option.label || option.textContent || "").replace(/\s+/g, " ").trim();
-  const apply = (select, picked) => {
-    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
-    for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
-    if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+  const apply = (select, picked, options, guard) => {
+    const validate = () => {
+      if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+      for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
+      if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+    };
+    validate();
     select.focus();
-    const options = Array.from(select.options);
+    guard?.();
+    const current = select.options;
+    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))
+      throw new Error("codenomad:options-changed");
+    validate();
     if (options.some(option => option.selected !== picked.includes(option))) {
       for (const option of options) option.selected = picked.includes(option);
       select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
@@ -15,7 +22,7 @@ export const readCalls = {
     }
     return Array.from(select.selectedOptions).map(label);
   };
-  const choose = (select, wanted) => {
+  const choose = (select, wanted, guard) => {
     if (select.matches(":disabled")) throw new Error("codenomad:disabled");
     const options = Array.from(select.options), picked = [];
     for (const raw of wanted) {
@@ -24,22 +31,30 @@ export const readCalls = {
       if (!option) throw new Error("codenomad:no-option:" + target);
       if (!picked.includes(option)) picked.push(option);
     }
-    return apply(select, picked);
+    return apply(select, picked, options, guard);
   };
   const option = element.closest("option"), select = option && option.closest("select");
-  if (option && select) return apply(select, [option]);
+  if (option && select) return apply(select, [option], Array.from(select.options), args[0]);
   if (element instanceof HTMLSelectElement) throw new Error("codenomad:is-select");
   return null; },
-"programmatic-click": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element instanceof HTMLElement) element.click();
+"programmatic-click": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.getClientRects().length) throw new Error("codenomad:has-box");
+   if (element instanceof HTMLElement) element.click();
   else element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, composed: true }));
   return null; },
 "select": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = option => (option.label || option.textContent || "").replace(/\s+/g, " ").trim();
-  const apply = (select, picked) => {
-    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
-    for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
-    if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+  const apply = (select, picked, options, guard) => {
+    const validate = () => {
+      if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+      for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
+      if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+    };
+    validate();
     select.focus();
-    const options = Array.from(select.options);
+    guard?.();
+    const current = select.options;
+    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))
+      throw new Error("codenomad:options-changed");
+    validate();
     if (options.some(option => option.selected !== picked.includes(option))) {
       for (const option of options) option.selected = picked.includes(option);
       select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
@@ -47,7 +62,7 @@ export const readCalls = {
     }
     return Array.from(select.selectedOptions).map(label);
   };
-  const choose = (select, wanted) => {
+  const choose = (select, wanted, guard) => {
     if (select.matches(":disabled")) throw new Error("codenomad:disabled");
     const options = Array.from(select.options), picked = [];
     for (const raw of wanted) {
@@ -56,12 +71,58 @@ export const readCalls = {
       if (!option) throw new Error("codenomad:no-option:" + target);
       if (!picked.includes(option)) picked.push(option);
     }
-    return apply(select, picked);
+    return apply(select, picked, options, guard);
   };
   const control = element instanceof HTMLLabelElement ? element.control : element;
   const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
   if (!select) throw new Error("codenomad:not-select");
-  return choose(select, args[0]); },
+  return choose(select, args[0], args[1]); },
+"select-values": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = option => (option.label || option.textContent || "").replace(/\s+/g, " ").trim();
+  const apply = (select, picked, options, guard) => {
+    const validate = () => {
+      if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+      for (const option of picked) if (option.matches(":disabled")) throw new Error("codenomad:option-disabled:" + label(option));
+      if (!select.multiple && picked.length !== 1) throw new Error("codenomad:single");
+    };
+    validate();
+    select.focus();
+    guard?.();
+    const current = select.options;
+    if (!select.isConnected || current.length !== options.length || options.some((option, index) => current[index] !== option))
+      throw new Error("codenomad:options-changed");
+    validate();
+    if (options.some(option => option.selected !== picked.includes(option))) {
+      for (const option of options) option.selected = picked.includes(option);
+      select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return Array.from(select.selectedOptions).map(label);
+  };
+  const choose = (select, wanted, guard) => {
+    if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+    const options = Array.from(select.options), picked = [];
+    for (const raw of wanted) {
+      const target = String(raw).replace(/\s+/g, " ").trim();
+      const option = options.find(item => label(item) === target) || options.find(item => item.value === String(raw));
+      if (!option) throw new Error("codenomad:no-option:" + target);
+      if (!picked.includes(option)) picked.push(option);
+    }
+    return apply(select, picked, options, guard);
+  };
+  const control = element instanceof HTMLLabelElement ? element.control : element;
+  const select = control instanceof HTMLSelectElement ? control : control && control.closest("select");
+  if (!select) throw new Error("codenomad:not-select");
+  if (select.matches(":disabled")) throw new Error("codenomad:disabled");
+  const options = Array.from(select.options), picked = [];
+  for (const raw of args[0]) {
+    const option = options.find(item => item.value === String(raw));
+    if (!option) throw new Error("codenomad:no-option:" + String(raw));
+    if (!picked.includes(option)) picked.push(option);
+  }
+  return apply(select, picked, options); },
+"file-input": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const label = element instanceof HTMLLabelElement ? element : element.closest && element.closest("label");
+  const control = element instanceof HTMLInputElement ? element : label && label.control;
+  return control instanceof HTMLInputElement && control.type === "file"; },
 "focus": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
   if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");
@@ -97,6 +158,7 @@ export const readCalls = {
   return "insert"; },
 "set-value": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); if (element.matches(":disabled")) throw new Error("codenomad:disabled");
   if (element.readOnly) throw new Error("codenomad:readonly");
+  if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");
   const [text, append] = args, next = append ? element.value + text : text;
   // Ranges and colors have no empty value: the browser would substitute its default.
   const valid = element.type === "color" ? /^#[0-9a-f]{6}$/i.test(next)
@@ -109,7 +171,14 @@ export const readCalls = {
   element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   return null; },
-"delete-selection": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); document.execCommand("delete"); return null; },
+"delete-selection": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const field = element, active = field.getRootNode().activeElement;
+   const editable = !(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement);
+   if (field.matches(":disabled")) throw new Error("codenomad:disabled");
+   if (field.readOnly) throw new Error("codenomad:readonly");
+   if (active !== field && !(editable && active instanceof HTMLElement && active.isContentEditable && active.contains(field))) throw new Error("codenomad:unfocusable");
+   args[0]?.();
+   if (!document.execCommand("delete")) throw new Error("codenomad:delete-refused");
+   return null; },
 "read-value": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const value = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element.innerText || element.textContent || "";
   if (element instanceof HTMLInputElement && element.type === "password") return "•".repeat(Math.min(value.length, 16));
   return value.length > 200 ? value.slice(0, 199) + "…" : value; },
@@ -119,12 +188,35 @@ export const readCalls = {
      if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
      return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
    };
+    const nativeInteractive = 'a[href], audio[controls], button, details, embed, iframe, img[usemap], input:not([type="hidden"]), select, textarea, video[controls]';
+    const interactive = nativeInteractive + ', [tabindex], [contenteditable]:not([contenteditable="false"]), [role~="button"], [role~="link"], [role~="checkbox"], [role~="radio"], [role~="switch"], [role~="tab"], [role~="menuitem"]';
+    const label = hit.closest("label");
+    const foreignLabel = label?.control && label !== element && label.control !== element && !label.contains(hit.closest(nativeInteractive));
+    for (let node = hit; !foreignLabel && node; node = parent(node)) {
+      if (node === element) return null;
+      if (node.nodeType !== 1) continue;
+      if (node.localName === "label" && node.control) {
+        if (node.control === element) return null;
+        break;
+      }
+      if (node.matches(interactive)) break;
+   }
+   const blocker = foreignLabel ? label : hit;
+   const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
+   return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : ""); },
+"receives-wheel": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE ? args[0] : args[0].parentElement);
+   if (!hit) return null;
+   const parent = node => {
+     if (node.nodeType === 9) { try { return node.defaultView && node.defaultView.frameElement; } catch { return null; } }
+     return node.assignedSlot || node.parentNode || (node.nodeType === 11 ? node.host : null);
+   };
    for (let node = hit; node; node = parent(node)) {
      if (node === element) return null;
-     if (node.nodeType === 1 && node.localName === "label" && (node.control === element || node.contains(element))) return null;
+     if (node.nodeType === 1 && /^(iframe|frame|fencedframe|object|embed|portal|webview)$/.test(node.localName)) break;
    }
-  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
-  return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : ""); },
+   const blocker = hit;
+   const name = (blocker.getAttribute("aria-label") || blocker.getAttribute("title") || blocker.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60);
+   return blocker.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : ""); },
 "contains": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const needle = String(args[0]).replace(/\s+/g, " ").trim().toLowerCase();
   const root = element;
   const text = value => String(value || "").replace(/\s+/g, " ").toLowerCase();
@@ -132,5 +224,8 @@ export const readCalls = {
   for (const item of root.querySelectorAll("[aria-label], [title], [placeholder], input, textarea")) {
     if ([item.getAttribute("aria-label"), item.getAttribute("title"), item.getAttribute("placeholder"), item.value].some(value => text(value).includes(needle))) return true;
   }
-  return false; }
+  return false; },
+"checked-state": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); return element instanceof HTMLInputElement && (element.type === "checkbox" || element.type === "radio") ? element.checked : null; },
+"body-text-includes": function (...args) { const element=this.nodeType===1?this:this.parentElement; if (!element || !element.isConnected) throw new Error("codenomad:gone"); const document=element.ownerDocument; const { HTMLInputElement, HTMLTextAreaElement, HTMLLabelElement, HTMLSelectElement, HTMLElement, SVGElement, Node, Event, MouseEvent } = document.defaultView; const getSelection=()=>document.defaultView.getSelection(); const body = element.ownerDocument.body;
+  return !!body && body.innerText.includes(String(args[0])); }
 };

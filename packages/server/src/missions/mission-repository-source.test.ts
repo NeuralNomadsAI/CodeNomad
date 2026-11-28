@@ -7,8 +7,9 @@ import path from "node:path"
 import { ForgeWorkItems } from "../forge/work-items"
 import { forgeWebUrl } from "../forge/providers"
 import type { ForgeResponse, ForgeTransport } from "../forge/transport"
-import { readMissionRepositorySource } from "./mission-repository-source"
-import { missionRepositoryConditionSchema, missionRepositoryCheckpointSchema, repositoryEvents, type MissionRepositoryCondition } from "./mission-repository-condition"
+import { readMissionRemoteBranch, readMissionRepositorySource } from "./mission-repository-source"
+import { missionRepositoryConditionSchema, missionRepositoryCheckpointSchema, repositoryEvents, type MissionRepositoryCondition,
+  type MissionRemoteBranchCondition } from "./mission-repository-condition"
 import { missionLaunchPolicySchema } from "./launch-policy"
 import { missionSourceKey } from "./mission-document"
 
@@ -42,6 +43,38 @@ function fixture(provider: MissionRepositoryCondition["provider"], event: Missio
 }
 const events = (read: Awaited<ReturnType<typeof readMissionRepositorySource>>) => missionRepositoryCheckpointSchema.parse(read.checkpoint.value).events
 
+for (const [provider, endpoint] of [
+  ["github", "repos/acme/repo/branches/release%2Fdev"],
+  ["gitlab", "projects/group%2Fsub%2Fproject/repository/branches/release%2Fdev"],
+  ["gitea", "repos/acme/repo/branches/release%2Fdev"],
+] as const) test(`${provider}: read and revalidate the exact remote branch without a local fetch`, async () => {
+  const f = fixture(provider, "pull-request-merged")
+  const { event: _event, author: _author, ...repository } = f.condition
+  const condition: MissionRemoteBranchCondition = { ...repository, kind: "remote-branch-commits", ref: "refs/heads/release/dev" }
+  let oid = "a".repeat(40), name = "release/dev", status = 200
+  const request = f.transport.request
+  f.transport.request = (path, signal) => path === "user" ? request(path, signal) : Promise.resolve({
+    status, headers: new Map(), body: JSON.stringify({ name, commit: provider === "github" ? { sha: oid } : { id: oid } }),
+  }).then(data => { assert.equal(path, endpoint); return data })
+  const read = (previous?: Parameters<typeof readMissionRemoteBranch>[2]) => readMissionRemoteBranch(condition, "/root", previous, undefined, f.forge)
+  assert.deepEqual(missionLaunchPolicySchema.parse({ when: [condition] }), { when: [condition] })
+  const baseline = await read()
+  assert.equal(baseline.changed, false)
+  assert.equal(f.requests.filter(path => path === "user").length, 1, "one account read before commit-time revalidation")
+  assert.equal((await read(baseline.checkpoint)).changed, false)
+  oid = "b".repeat(40)
+  const update = await read(baseline.checkpoint)
+  assert.deepEqual(update.checkpoint.value, { oid })
+  assert.equal(update.changed, true)
+  assert.equal((await read(baseline.checkpoint)).changed, true, "the old checkpoint has not been consumed")
+  assert.equal((await read(update.checkpoint)).changed, false)
+  oid = "c".repeat(40)
+  await assert.rejects(update.revalidate()); assert.throws(update.current)
+  name = "other"; await assert.rejects(read(baseline.checkpoint))
+  name = "release/dev"; status = 404; await assert.rejects(read(baseline.checkpoint))
+  status = 200; f.remote("other/repo"); await assert.rejects(read(baseline.checkpoint))
+})
+
 for (const provider of ["github", "gitlab", "gitea"] as const) for (const event of repositoryEvents)
   test(`${provider} ${event}: baseline, author, historical merged work, ties, retry and consumption`, async () => {
     const f = fixture(provider, event)
@@ -49,9 +82,11 @@ for (const provider of ["github", "gitlab", "gitea"] as const) for (const event 
     const baseline = await f.read()
     assert.equal(baseline.changed, false); assert.deepEqual(events(baseline), [])
     f.date(LATER)
-    f.pages(() => ({ rows: [f.row(4, LATER, "bob"), f.row(3, LATER), f.row(2, AT), f.row(1, AT)] }))
+    const ascii = "a".repeat(239)
+    f.pages(() => ({ rows: [f.row(4, LATER, "bob"), { ...f.row(3, LATER), title: ascii + "\u{1f600}" }, f.row(2, AT), f.row(1, AT)] }))
     const read = await f.read(baseline.checkpoint)
     assert.equal(read.changed, true); assert.deepEqual(events(read).map(row => row.id), ["2", "3"])
+    assert.equal(events(read)[1]?.title, ascii)
     assert.deepEqual(events(await f.read(baseline.checkpoint)), events(read), "failed passages keep their unconsumed window")
     assert.deepEqual(events(await f.read(read.checkpoint)), [])
     assert.equal(read.checkpoint.key, missionSourceKey(f.condition))

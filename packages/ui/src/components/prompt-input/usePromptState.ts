@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, on, onCleanup, onMount, type Accessor } from "solid-js"
 import { addToHistory, getHistory } from "../../stores/message-history"
 import {
   clearSessionDraftPrompt,
@@ -16,6 +16,8 @@ type PromptStateOptions = {
   instanceId: Accessor<string>
   sessionId: Accessor<string>
   instanceFolder: Accessor<string>
+  /** Persistence identity, separate from the physical directory used for file operations. */
+  historyKey?: Accessor<string>
   onSessionDraftLoaded?: (draft: string) => void
 }
 
@@ -31,6 +33,7 @@ type PromptState = {
   clearPrompt: () => void
 
   draftLoadedNonce: Accessor<number>
+  draftRevision: Accessor<number>
 
   history: Accessor<string[]>
   historyIndex: Accessor<number>
@@ -52,17 +55,21 @@ export function usePromptState(options: PromptStateOptions): PromptState {
   const [historyIndex, setHistoryIndex] = createSignal(-1)
   const [historyDraft, setHistoryDraft] = createSignal<string | null>(null)
   const [draftLoadedNonce, setDraftLoadedNonce] = createSignal(0)
+  const [draftRevision, setDraftRevision] = createSignal(0)
+  const draftKey = createMemo(() => `${options.instanceId()}:${options.sessionId()}`)
 
-  const setPrompt = (value: string) => {
+  const setPrompt = (value: string) => batch(() => {
+    setDraftRevision(previous => previous + 1)
     setPromptInternal(value)
     // Persist drafts only when the user is at the "fresh" position (not browsing history).
     // This keeps the bottom-of-history draft stable even if the user edits recalled history entries.
     if (historyIndex() === -1) {
       setSessionDraftPrompt(options.instanceId(), options.sessionId(), value)
     }
-  }
+  })
 
   const clearPrompt = () => {
+    setDraftRevision(previous => previous + 1)
     clearSessionDraftPrompt(options.instanceId(), options.sessionId())
     setPromptInternal("")
   }
@@ -78,6 +85,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
   const stopListeningForDraftHydration = onSessionDraftHydrated((instanceId, sessionId, draft) => {
     if (instanceId !== options.instanceId() || sessionId !== options.sessionId()) return
+    setDraftRevision(previous => previous + 1)
     if (historyIndex() !== -1) {
       setHistoryDraft(draft)
       return
@@ -90,7 +98,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
   createEffect(
     on(
-      () => `${options.instanceId()}:${options.sessionId()}`,
+      draftKey,
       () => {
         const instanceId = options.instanceId()
         const sessionId = options.sessionId()
@@ -101,6 +109,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
         const storedPrompt = getSessionDraftPrompt(instanceId, sessionId)
 
         setPromptInternal(storedPrompt)
+        setDraftRevision(previous => previous + 1)
 
         resetHistoryNavigation()
 
@@ -112,14 +121,14 @@ export function usePromptState(options: PromptStateOptions): PromptState {
 
   onMount(() => {
     void (async () => {
-      const loaded = await getHistory(options.instanceFolder())
+      const loaded = await getHistory(options.historyKey?.() ?? options.instanceFolder())
       setHistory(loaded)
     })()
   })
 
   const recordHistoryEntry = async (entry: string) => {
     try {
-      await addToHistory(options.instanceFolder(), entry)
+      await addToHistory(options.historyKey?.() ?? options.instanceFolder(), entry)
       setHistory((prev) => {
         const next = [entry, ...prev]
         if (next.length > HISTORY_LIMIT) {
@@ -199,6 +208,7 @@ export function usePromptState(options: PromptStateOptions): PromptState {
     clearPrompt,
 
     draftLoadedNonce,
+    draftRevision,
 
     history,
     historyIndex,

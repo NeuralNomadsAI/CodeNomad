@@ -43,6 +43,7 @@ export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
   label?: string
+  getCopyText?: () => string
   onFullDiffAccess?: (diffText: string) => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs

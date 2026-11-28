@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process"
 import { existsSync, realpathSync, statSync } from "node:fs"
+import { open, realpath, stat } from "node:fs/promises"
 import { extname, isAbsolute, join, relative, resolve } from "node:path"
 
 export type WorkspaceOpenTarget = "default" | "reveal" | "terminal" | "editor"
@@ -26,8 +27,8 @@ interface WorkspaceOpenDependencies {
 }
 
 const BLOCKED_DEFAULT_OPEN_EXTENSIONS = new Set([
-  ".appimage", ".application", ".chm", ".com", ".cpl", ".desktop", ".exe", ".jar", ".lnk", ".msi",
-  ".msp", ".pif", ".scr", ".url",
+  ".appimage", ".application", ".chm", ".com", ".cpl", ".desktop", ".exe", ".fileloc", ".inetloc", ".jar",
+  ".lnk", ".msi", ".msp", ".pif", ".scr", ".terminal", ".url", ".webloc",
 ])
 
 const SAFE_WINDOWS_OPEN_EXTENSIONS = new Set([
@@ -49,7 +50,7 @@ export function defaultOpenMode(path: string, platform: NodeJS.Platform): "open"
   const stats = statSync(path)
   const extension = extname(path).toLowerCase()
   if (stats.isDirectory()) {
-    if (platform === "darwin" && extension === ".app") throw new Error("Application bundles cannot be opened externally")
+    if (platform === "darwin" && (extension === ".app" || extension === ".workflow")) throw new Error("Application bundles cannot be opened externally")
     return "open"
   }
   if (platform === "win32") {
@@ -176,6 +177,99 @@ async function launchFirst(candidates: LaunchCandidate[], selectedPath: string, 
   throw lastError instanceof Error ? lastError : new Error("No supported application was found")
 }
 
+/** Whether a file's first bytes read as text, as the file preview decides: no
+ * NUL byte and valid UTF-8 (a character cut at a full sample's end still counts). */
+export async function looksLikeText(path: string): Promise<boolean> {
+  const sample = Buffer.alloc(8192)
+  const file = await open(path, "r")
+  let length: number
+  try { length = (await file.read(sample, 0, sample.length, 0)).bytesRead } finally { await file.close() }
+  const bytes = sample.subarray(0, length)
+  if (bytes.includes(0)) return false
+  try {
+    // Streaming leaves a character cut at a full sample's end undecided.
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: length === sample.length })
+    return true
+  } catch {
+    return false
+  }
+}
+
+export type LocalPathKeep = "none" | "text" | "files"
+
+/** `opened` by the system, `kept` for the caller to show, or `missing`. */
+export type LocalPathResult = "opened" | "kept" | "missing"
+
+/** Whether `path` is an absolute path on a local disk: a drive path on
+ * Windows, never a UNC or device path, which reach the network or devices. */
+export function isLocalDiskPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" ? /^[A-Za-z]:[\\/]/.test(path) : path.startsWith("/") && !path.startsWith("//")
+}
+
+/** Opens an absolute local `path` with the system: a folder in the file
+ * manager, a file with its default application under `defaultOpenMode`'s
+ * protections. Resolves `missing` for a missing path and `kept`, opening
+ * nothing, when it leaves the path to the caller (`keep`): text files
+ * (`text`), every file (`files`), and paths off the local disks or naming
+ * special files. Under `none` those reject, as do inaccessible paths and
+ * failed openings. */
+export async function openLocalPath(path: string, keep: LocalPathKeep, dependencies?: WorkspaceOpenDependencies): Promise<LocalPathResult> {
+  if (!dependencies) throw new Error("Native workspace openers are unavailable")
+  if (!isLocalDiskPath(path)) {
+    // Checked before any filesystem access: a UNC path would reach the network.
+    if (keep !== "none") return "kept"
+    throw new Error("Only absolute paths on a local disk can be opened")
+  }
+  let selectedPath: string
+  try {
+    selectedPath = await realpath(path)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return "missing"
+    throw error
+  }
+  const stats = await stat(selectedPath)
+  const folder = stats.isDirectory()
+  // A FIFO or device is neither shown nor read: reading one can block forever.
+  if (!folder && !stats.isFile()) {
+    if (keep !== "none") return "kept"
+    throw new Error("Only files and folders can be opened")
+  }
+  // The file reader shows text up to the server's 5 MiB read limit.
+  const text = !folder && keep === "text" && stats.size <= 5 * 1024 * 1024 && await looksLikeText(selectedPath)
+  if (!folder && (keep === "files" || text)) return "kept"
+  await openDefault(selectedPath, folder ? selectedPath : resolve(selectedPath, ".."), dependencies)
+  return "opened"
+}
+
+async function openDefault(selectedPath: string, cwd: string, dependencies: WorkspaceOpenDependencies): Promise<void> {
+  const mode = defaultOpenMode(selectedPath, process.platform)
+  if (mode === "edit" || mode === "choose") {
+    const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows"
+    const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    const rundll32 = join(systemRoot, "System32", "rundll32.exe")
+    const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath '${selectedPath.replace(/'/g, "''")}' -Verb Edit`
+    const encoded = Buffer.from(script, "utf16le").toString("base64")
+    const candidates: LaunchCandidate[] = [
+      ...(mode === "edit" ? [{
+        command: powershell,
+        args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        passPath: false,
+        waitForExit: true,
+      }] : []),
+      {
+        command: rundll32,
+        args: ["shell32.dll,OpenAs_RunDLL"],
+        verifyStart: true,
+      },
+    ]
+    await launchFirst(candidates, selectedPath, cwd, dependencies.spawnProcess ?? spawn)
+    return
+  }
+  const error = await dependencies.openPath(selectedPath)
+  if (error) throw new Error(error)
+}
+
 export async function openWorkspaceTarget(
   target: WorkspaceOpenTarget,
   workspaceFolder: string,
@@ -195,31 +289,7 @@ export async function openWorkspaceTarget(
   const cwd = statSync(selectedPath).isDirectory() ? selectedPath : resolve(selectedPath, "..")
 
   if (target === "default") {
-    const mode = defaultOpenMode(selectedPath, process.platform)
-    if (mode === "edit" || mode === "choose") {
-      const systemRoot = process.env.SystemRoot?.trim() || "C:\\Windows"
-      const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-      const rundll32 = join(systemRoot, "System32", "rundll32.exe")
-      const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath '${selectedPath.replace(/'/g, "''")}' -Verb Edit`
-      const encoded = Buffer.from(script, "utf16le").toString("base64")
-      const candidates: LaunchCandidate[] = [
-        ...(mode === "edit" ? [{
-          command: powershell,
-          args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-          passPath: false,
-          waitForExit: true,
-        }] : []),
-        {
-          command: rundll32,
-          args: ["shell32.dll,OpenAs_RunDLL"],
-          verifyStart: true,
-        },
-      ]
-      await launchFirst(candidates, selectedPath, cwd, spawnProcess)
-      return
-    }
-    const error = await dependencies.openPath(selectedPath)
-    if (error) throw new Error(error)
+    await openDefault(selectedPath, cwd, dependencies)
     return
   }
 

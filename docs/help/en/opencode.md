@@ -17,8 +17,8 @@ The **OpenCode version** card shows **Running service** separately when it diffe
 
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
-| Minimum | OpenCode **2.3.0** | Required for this CodeNomad release. Conversations saved by earlier versions stay readable after updating. |
-| Recommended | OpenCode **2.3.0** | Qualified target; currently the same version as the minimum. |
+| Minimum | OpenCode **2.4.2** | Required for this CodeNomad release. Conversations saved by earlier versions stay readable after updating. |
+| Recommended | OpenCode **2.4.2** | For CodeNomad **1.2.0**. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
 ## Host, WSL and shared-service scope {#execution-host}

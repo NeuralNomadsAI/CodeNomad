@@ -1,16 +1,143 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Loader2 } from "lucide-solid"
-import { createEffect, createSignal, createUniqueId, Show, type Component } from "solid-js"
+import { createEffect, createSignal, createUniqueId, For, onCleanup, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import type { RemoteServerInput } from "../lib/hooks/use-remote-server-profiles"
+import { remoteServerErrorKey } from "../lib/hooks/use-remote-server-profiles"
+import { classifyCodeNomadLink, carriesCredentials } from "../lib/codenomad-link"
+import { captureRequestFocus } from "../lib/request-focus"
+import { useConfig } from "../stores/preferences"
+import { SettingsInfoTip } from "./settings/settings-info-tip"
+import { serverApi } from "../lib/api-client"
+import { secretEntryAllowed } from "../lib/server-meta"
 
-interface RemoteServerDialogProps {
+interface DialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSubmit: (input: RemoteServerInput, openWindow: boolean) => Promise<unknown>
 }
 
-export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) => {
+export const ServerEditor: Component<DialogProps & {
+  onSubmit: (input: RemoteServerInput, current: () => boolean) => Promise<unknown>
+  initial?: RemoteServerInput
+}> = (props) => {
+  const { t } = useI18n()
+  const config = useConfig()
+  const [sshHost, setSshHost] = createSignal("")
+  const [sshHosts, setSshHosts] = createSignal<string[]>([])
+  const sshListId = createUniqueId()
+  createEffect(() => {
+    if (!props.open || config.preferences().multiBackend !== true) return
+    let current = true
+    const controller = new AbortController()
+    onCleanup(() => { current = false; controller.abort() })
+    setSshHosts([])
+    void serverApi.listSshHosts(controller.signal).then(result => { if (current) setSshHosts(result.hosts) }).catch(() => {})
+  })
+  const [name, setName] = createSignal("")
+  const [baseUrl, setBaseUrl] = createSignal("")
+  const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
+  const [error, setError] = createSignal<string>()
+  const [busy, setBusy] = createSignal(false)
+  const errorId = createUniqueId()
+  let generation = 0, alive = true, returnFocus = true
+  let opener: HTMLElement | undefined
+  let releaseFocus = () => {}
+  createEffect(() => {
+    const initial = props.initial
+    generation++
+    releaseFocus()
+    setBusy(false); setError(undefined)
+    setName(props.open ? initial?.name ?? "" : "")
+    setBaseUrl(props.open ? initial?.baseUrl ?? "" : "")
+    setSkipTlsVerify(props.open ? initial?.skipTlsVerify ?? false : false)
+    setSshHost(props.open ? initial?.ssh?.host ?? "" : "")
+  })
+  onCleanup(() => { alive = false; generation++; releaseFocus(); setBaseUrl("") })
+  const submit = async () => {
+    if (busy() || !props.open || config.preferences().multiBackend !== true) return
+    if (!baseUrl().trim()) { setError("settings.servers.dialog.errorRequired"); return }
+    if (carriesCredentials(baseUrl())) { setBaseUrl(""); setError("folderSelection.browseMenu.errorCredentials"); return }
+    const link = classifyCodeNomadLink(baseUrl())
+    if (!link) { setError("folderSelection.browseMenu.errorInvalid"); return }
+    if (link.kind === "pairing" && !secretEntryAllowed()) { setBaseUrl(""); setError("remoteBrowse.secretEntryForbidden"); return }
+    const flight = ++generation, initial = props.initial, focus = captureRequestFocus()
+    releaseFocus = focus.dispose
+    const current = () => alive && props.open && flight === generation && props.initial === initial && config.preferences().multiBackend === true
+    const input = { id: initial?.id, name: name(), baseUrl: baseUrl(), skipTlsVerify: skipTlsVerify(),
+      ...(sshHost().trim() ? { ssh: { host: sshHost().trim() } } : {}) }
+    if (link.kind === "pairing") setBaseUrl("")
+    setBusy(true); setError(undefined)
+    try {
+      await props.onSubmit(input, current)
+      if (current()) { returnFocus = focus.retained(); props.onOpenChange(false) }
+    } catch (failure) { if (current() && !(failure instanceof DOMException && failure.name === "AbortError")) setError(remoteServerErrorKey(failure)) }
+    finally { focus.dispose(); if (current()) setBusy(false) }
+  }
+  const enter = (event: KeyboardEvent) => {
+    if (event.key === "Enter" && !event.isComposing && event.target instanceof HTMLInputElement && event.target.type === "text") { event.preventDefault(); void submit() }
+  }
+  const close = (open: boolean) => { if (!open) { generation++; releaseFocus(); setBaseUrl(""); setBusy(false) }; props.onOpenChange(open) }
+  const changed = () => { generation++; releaseFocus(); setBusy(false); setError(undefined) }
+  return (
+    <Dialog open={props.open} onOpenChange={close}>
+      <Dialog.Portal><Dialog.Overlay class="modal-overlay" />
+        <div class="fixed inset-0 z-[1300] flex items-center justify-center p-4">
+          <Dialog.Content class="modal-surface w-full max-w-lg flex flex-col max-h-[90dvh]" tabIndex={-1}
+            onOpenAutoFocus={event => {
+              opener = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
+              event.preventDefault()
+              if (event.target instanceof Element) event.target.querySelector<HTMLInputElement>('input[type="text"]')?.focus({ preventScroll: true })
+            }}
+            onCloseAutoFocus={event => {
+              event.preventDefault()
+              if (returnFocus && opener?.isConnected && (document.activeElement === document.body || event.target instanceof Node && event.target.contains(document.activeElement))) opener.focus()
+              returnFocus = true
+            }} onKeyDown={enter}>
+            <div class="window-header"><Dialog.Title class="window-title">{t(props.initial?.id ? "folderSelection.remoteProject.edit" : "folderSelection.browseMenu.add")}</Dialog.Title></div>
+            <div class="window-body flex flex-col gap-4">
+              <div class="flex flex-col gap-2 text-sm text-secondary"><label class="flex flex-col gap-2">
+                <span class="flex items-center gap-2">{t("settings.servers.dialog.url")}<SettingsInfoTip text={t("folderSelection.servers.dialog.urlHint")} /></span>
+                <input type="text" class="selector-input w-full" dir="ltr" aria-label={t("settings.servers.dialog.url")}
+                  aria-invalid={error() ? "true" : undefined} aria-describedby={error() ? errorId : undefined}
+                  value={baseUrl()} onInput={event => {
+                    changed()
+                    const value = event.currentTarget.value
+                    if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
+                      event.currentTarget.value = ""; setBaseUrl(""); setError("remoteBrowse.secretEntryForbidden"); return
+                    }
+                    if (classifyCodeNomadLink(value)?.baseUrl !== classifyCodeNomadLink(baseUrl())?.baseUrl) setSkipTlsVerify(false)
+                    setBaseUrl(value); setError(undefined)
+                  }} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} />
+              </label></div>
+              <label class="flex flex-col gap-2 text-sm text-secondary"><span>{t("settings.servers.dialog.name")}</span>
+                <input type="text" class="selector-input w-full" value={name()} onInput={event => { changed(); setName(event.currentTarget.value) }} placeholder={t("folderSelection.servers.dialog.namePlaceholder")} />
+              </label>
+              <label class="flex flex-col gap-2 text-sm text-secondary">
+                <span class="flex items-center gap-2">{t("folderSelection.servers.dialog.sshHost")}<SettingsInfoTip text={t("folderSelection.servers.dialog.sshHint")} /></span>
+                <input type="text" class="selector-input w-full" dir="ltr" aria-label={t("folderSelection.servers.dialog.sshHost")} value={sshHost()} list={sshListId}
+                  onInput={event => { changed(); setSshHost(event.currentTarget.value); setSkipTlsVerify(false) }} />
+                <datalist id={sshListId}><For each={sshHosts()}>{host => <option value={host} />}</For></datalist>
+              </label>
+              <label class="flex items-start gap-3 text-sm text-secondary">
+                <input type="checkbox" aria-label={t("folderSelection.browseMenu.skipTls")} checked={skipTlsVerify()} onChange={event => { changed(); setSkipTlsVerify(event.currentTarget.checked) }} />
+                <span>{t("folderSelection.browseMenu.skipTls")}</span><SettingsInfoTip text={t("settings.servers.dialog.skipTls")} />
+              </label>
+              <Show when={error()}>{key => <p id={errorId} class="server-add-field-error" role="alert">{t(key())}</p>}</Show>
+            </div>
+            <div class="window-footer">
+              <button type="button" class="selector-button selector-button-secondary w-auto px-4" onClick={() => close(false)}>{t("folderSelection.servers.dialog.cancel")}</button>
+              <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit()}>{t("folderSelection.servers.dialog.save")}</button>
+            </div>
+          </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog>
+  )
+}
+
+export const RemoteServerDialog: Component<DialogProps & {
+  onSubmit: (input: RemoteServerInput, openWindow: boolean) => Promise<unknown>
+}> = (props) => {
   const { t } = useI18n()
   const [name, setName] = createSignal("")
   const [baseUrl, setBaseUrl] = createSignal("")
@@ -29,6 +156,9 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
 
   const submit = async (openWindow: boolean) => {
     if (busy()) return
+    if (classifyCodeNomadLink(baseUrl())?.kind === "pairing" && !secretEntryAllowed()) {
+      setBaseUrl(""); setError(t("remoteBrowse.secretEntryForbidden")); return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -57,7 +187,13 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
             <div class="flex flex-col gap-2 text-sm text-secondary">
               <label class="flex flex-col gap-2">
                 <span>{t("folderSelection.servers.dialog.url")}</span>
-                <input class="selector-input w-full" value={baseUrl()} onInput={(event) => setBaseUrl(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} aria-describedby={urlHintId} />
+                <input class="selector-input w-full" value={baseUrl()} onInput={(event) => {
+                  const value = event.currentTarget.value
+                  if (classifyCodeNomadLink(value)?.kind === "pairing" && !secretEntryAllowed()) {
+                    event.currentTarget.value = ""; setBaseUrl(""); setError(t("remoteBrowse.secretEntryForbidden")); return
+                  }
+                  setBaseUrl(value)
+                }} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} aria-describedby={urlHintId} />
               </label>
               <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
             </div>
@@ -71,7 +207,7 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(false)}>{t("folderSelection.servers.dialog.save")}</button>
               <button type="button" class="selector-button selector-button-secondary w-auto px-4" disabled={busy()} onClick={() => void submit(true)}>
                 <Show when={busy()} fallback={<span>{t("folderSelection.servers.dialog.connect")}</span>}>
-                  <span class="inline-flex items-center gap-2"><Loader2 class="w-4 h-4 animate-spin" />{t("folderSelection.servers.dialog.connecting")}</span>
+                  <span class="inline-flex items-center gap-2"><span class="inline-flex animate-spin"><Loader2 class="w-4 h-4" /></span>{t("folderSelection.servers.dialog.connecting")}</span>
                 </Show>
               </button>
             </div>

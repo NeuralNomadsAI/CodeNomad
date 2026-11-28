@@ -13,9 +13,13 @@ export const assetsResultSchema = z.union([blocked, z.object({ status: z.literal
 export const assetReadResultSchema = z.union([blocked, z.object({ status: z.literal("asset"),
   mime: z.string().regex(/^[\w.+-]+\/[\w.+-]+$/).max(128), uri: z.string().max(ASSET_URI_LIMIT) }).strict().refine(isEmbeddedAsset)])
 export function isEmbeddedAsset(file: { mime: string; uri: string }): boolean {
-  if (file.uri.length > ASSET_URI_LIMIT) return false
+  if (typeof file.mime !== "string" || typeof file.uri !== "string" || file.uri.length > ASSET_URI_LIMIT
+    || file.mime.length > 128 || !/^[\w.+-]+\/[\w.+-]+$/.test(file.mime)) return false
   const prefix = `data:${file.mime};base64,`, body = file.uri.slice(prefix.length)
-  return file.uri.startsWith(prefix) && body.length > 0 && body.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(body)
+  if (!file.uri.startsWith(prefix) || !body.length || body.length % 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(body)) return false
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  return body.endsWith("==") ? (alphabet.indexOf(body.at(-3)!) & 15) === 0
+    : body.endsWith("=") ? (alphabet.indexOf(body.at(-2)!) & 3) === 0 : true
 }
 export type AssetTarget = z.infer<typeof assetTargetSchema>
 export type AssetsResult = z.infer<typeof assetsResultSchema>

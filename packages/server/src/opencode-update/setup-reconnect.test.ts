@@ -11,19 +11,20 @@ import { rememberRuntime } from "../opencode/compatibility/runtime"
 import { WorkspaceManager } from "../workspaces/manager"
 import { OpenCodeSharedService, type OpenCodeServiceLifecycle } from "../workspaces/opencode-service"
 import { OpenCodeUpdateService } from "./service"
+import { MINIMUM, RECOMMENDED, newerPatch } from "../opencode/runtime-version-fixture"
 
 test("optional setup rebinds real workspace ownership without restarting the supported older daemon", async () => {
   const parent = path.join(os.tmpdir(), "opencode")
   await mkdir(parent, { recursive: true })
   const root = await mkdtemp(path.join(parent, "codenomad-setup-reconnect-"))
-  const originalBinary = path.join(root, "2.3.0", "opencode.exe")
-  const installedBinary = path.join(root, "2.3.1", "opencode.exe")
+  const originalBinary = path.join(root, RECOMMENDED, "opencode.exe")
+  const installedBinary = path.join(root, newerPatch(), "opencode.exe")
   let selected = originalBinary
   let starts = 0
   let restarts = 0
   let reloads = 0
   const endpoint: Endpoint = { url: "http://127.0.0.1:1" }
-  rememberRuntime(endpoint, { version: "2.3.0", pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM, pid: 123, discovery: "info" })
   const lifecycle: OpenCodeServiceLifecycle = {
     discover: async () => endpoint,
     ensure: async () => { starts++; throw new Error("The existing daemon must not be started again") },
@@ -52,12 +53,12 @@ test("optional setup rebinds real workspace ownership without restarting the sup
   })
   const updater = new OpenCodeUpdateService({
     resolveBinary: () => ({ path: selected, label: "Fixture OpenCode" }),
-    probeBinary: binary => ({ valid: true, version: binary === installedBinary ? "2.3.1" : "2.3.0" }),
-    resolveLatestVersion: async () => "2.3.1",
+    probeBinary: binary => ({ valid: true, version: binary === installedBinary ? newerPatch() : RECOMMENDED }),
+    resolveLatestVersion: async () => newerPatch(),
     canUpgradeBinary: () => true,
     upgradeBinary: async () => {
       selected = installedBinary
-      return { success: true, version: "2.3.1" }
+      return { success: true, version: newerPatch() }
     },
     lifecycle: async binary => (await manager.setupServiceOptions(binary.path)).lifecycle,
     admitActivation: binary => manager.assertSetupExecutionHost(binary.path),
@@ -78,8 +79,8 @@ test("optional setup rebinds real workspace ownership without restarting the sup
 
     const status = await updater.start(false)
     assert.equal(status.state, "ready")
-    assert.equal(status.currentVersion, "2.3.1")
-    assert.equal(status.daemonVersion, "2.3.0")
+    assert.equal(status.currentVersion, newerPatch())
+    assert.equal(status.daemonVersion, MINIMUM)
     assert.equal(status.serviceState, "restart_available")
     assert.equal(status.canRestart, true, "non-disruptive reconnect retains explicit activation")
     assert.throws(() => originalConnection.assertCurrent(), /OpenCode connection changed/)

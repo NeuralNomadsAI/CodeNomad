@@ -33,7 +33,18 @@ export function seedSessionMessagesV2(
   expectedRevision?: number,
   preserveOmitted = false,
   confirmPending = true,
-): boolean {
+  /** REST/history loads opt in: batches larger than one chunk hydrate across
+   * task boundaries, fenced against concurrent writes. Returns whether the
+   * whole snapshot committed. */
+  chunked = false,
+  /** Checked right before the chunked finalize writes: a load that lost its
+   * authority while its chunks computed must not publish. */
+  guard?: () => boolean,
+  /** Latest-window loads keep rows streamed between chunks; a history
+   * replacement drops them exactly as the synchronous path omits rows its
+   * page does not hold. */
+  keepStreamedArrivals = false,
+): boolean | Promise<boolean> {
   if (!session || !Array.isArray(messages)) return false
   const store = messageStoreBus.getOrCreate(instanceId)
   if (expectedRevision !== undefined && !canHydrateMessages(expectedRevision, store.getSessionRevision(session.id))) return false
@@ -66,7 +77,10 @@ export function seedSessionMessagesV2(
     bumpRevision: false,
   }))
 
-  store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending })
+  const hydrated = store.hydrateMessages(metadata.id, normalizedMessages, messageInfos?.values(), { preserveOmitted, confirmPending, chunked, guard, keepStreamedArrivals })
+  if (hydrated && typeof (hydrated as Promise<boolean>).then === "function") {
+    return (hydrated as Promise<boolean>).then((committed) => committed)
+  }
   return true
 }
 

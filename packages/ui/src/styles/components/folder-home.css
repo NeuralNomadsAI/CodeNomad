@@ -1,66 +1,27 @@
 .folder-home-root {
-  height: 100dvh;
+  height: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  background-color: var(--surface-secondary);
+  background-color: var(--surface-shade-light);
 }
 
-.folder-home-shell {
-  min-height: 100%;
-}
-
-@media (max-width: 639px) {
-  .folder-home-shell {
-    padding-top: 3.5rem;
-  }
-}
-
-.folder-home-hero {
-  margin-bottom: 1.5rem;
-}
-
-/* Brand logos follow their title, never the window (dev-docs/UI_CONVENTIONS.md). */
-.folder-home-logo {
-  height: 4rem;
-}
-
-.folder-home-content,
-.folder-home-main,
-.folder-home-list-column,
-.folder-home-actions-column {
-  overflow: visible;
-}
-
+.folder-home-shell { height: 100%; max-width: 60rem; padding-block: 1.5rem; }
+.folder-home-hero { margin-block-end: 1.5rem; }
+.folder-home-logo { height: 4rem; }
 .folder-home-main {
-  display: flex;
-  flex-direction: column;
-  min-height: max-content;
-}
-
-.folder-home-actions-column {
-  min-height: max-content;
-}
-
-.folder-home-list-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(16rem, 1fr);
   min-height: 16rem;
-  height: var(--folder-home-actions-height, auto);
-  max-height: var(--folder-home-actions-height, none);
 }
-
-.folder-home-list-panel .panel-header {
-  flex-shrink: 0;
-}
-
-.folder-home-list-panel .panel-list--fill {
-  height: auto;
-  min-height: 0;
-}
-
-.folder-home-actions-column .button-primary {
-  min-height: 3rem;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0;
-}
+.folder-home-main > section { min-height: 0; }
+.folder-home-main .panel-header { flex-shrink: 0; background-color: var(--surface-secondary); }
+.folder-home-actions { flex-shrink: 0; margin-block-end: var(--space-sm); }
+.folder-home-actions .window-action:not(:hover) { background-color: var(--surface-control); }
+.folder-home-actions .window-action:last-child { margin-inline-start: auto; }
+.folder-home-actions .window-action { white-space: normal; }
+.folder-home-recent-source { overflow: hidden; }
+.folder-home-recent-item .action-overflow-trigger { display: inline-flex; }
 
 .folder-home-open-instance-button {
   display: inline-flex;
@@ -78,23 +39,17 @@
   text-transform: uppercase;
   transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
-
 .folder-home-open-instance-button:hover:not(:disabled),
 .folder-home-open-instance-button:focus-visible {
   border-color: var(--accent-hover);
   background-color: var(--accent-hover);
   color: var(--text-on-accent);
 }
-
 .folder-home-open-instance-button:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
 }
-
-.folder-home-open-instance-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
+.folder-home-open-instance-button:disabled { cursor: not-allowed; opacity: 0.5; }
 
 .folder-home-recent-primary-action {
   position: absolute;
@@ -105,45 +60,22 @@
   background: transparent;
   cursor: pointer;
 }
+.folder-home-recent-primary-action:focus { outline: none; }
+.panel-list-item-highlight .folder-home-recent-primary-action:focus-visible { box-shadow: inset 0 0 0 2px var(--focus-ring-color); }
+.folder-home-recent-primary-action:disabled { cursor: not-allowed; }
+.folder-home-recent-item.folder-home-recent-item-action-active { background-color: transparent !important; box-shadow: none !important; }
 
-.folder-home-recent-primary-action:focus {
-  outline: none;
+@media (min-width: 768px) {
+  .folder-home-actions { position: absolute; inset-block-start: 1rem; inset-inline: 1.5rem; }
 }
 
-.folder-home-recent-primary-action:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--focus-ring-color);
-}
-
-.folder-home-recent-primary-action:disabled {
-  cursor: not-allowed;
-}
-
-.folder-home-row-action:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--focus-ring-offset), 0 0 0 4px var(--focus-ring-color);
-}
-
-.folder-home-recent-item.folder-home-recent-item-action-active {
-  background-color: transparent !important;
-  box-shadow: none !important;
-}
-
-@media (min-width: 1024px) {
+@media (max-width: 639px) {
+  .folder-home-shell { padding-block-start: 1rem; }
   .folder-home-main {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    align-items: start;
-  }
-
-  .folder-home-list-column,
-  .folder-home-actions-column {
-    min-width: 0;
-  }
-
-}
-
-@media (max-height: 720px) and (min-width: 1024px) {
-  .folder-home-hero {
-    margin-bottom: var(--space-md);
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--folder-home-pressed-browse-height, none);
+    grid-auto-rows: minmax(0, max-content);
+    /* Leave room for two full panels; short rows give their space to longer ones. */
+    min-height: 33rem;
   }
 }

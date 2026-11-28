@@ -51,25 +51,32 @@ Erledigt ein anderer Client eine Anfrage, kann sie hier verschwinden. Ein Timeou
 2. Öffnen Sie für Entscheidungen ohne Quellnachricht **Berechtigungsentscheidungen der Sitzung**.
 3. Verwenden Sie **Weitere Entscheidungen laden** zum Fortfahren oder **Erneut versuchen** nach einem Lesefehler.
 
-Belege erfassen bekannte Anfragen/Ressourcen, die bestätigte Entscheidung sowie verfügbare Begründung/Herkunft. **Entscheidung in CodeNomad**, **Automatisch · Yolo** und **Native Entscheidung** unterscheiden beobachtete Ursprünge; eine native Erledigung beweist keinen Benutzerklick in diesem Fenster.
+Belege erfassen bekannte Anfragen/Ressourcen, die bestätigte Entscheidung sowie verfügbare Begründung/Herkunft. **Entscheidung in CodeNomad**, **Automatische Entscheidung** und **Native Entscheidung** unterscheiden beobachtete Ursprünge; eine native Erledigung beweist keinen Benutzerklick in diesem Fenster.
 
 Belege sind schreibgeschützte CodeNomad-Anmerkungen, keine nativen Nachrichten oder Berechtigungsregel-Editoren. Sie sind von nativer Vollverlaufssuche, Nachrichtenkopie und Export ausgeschlossen. Sie können während CodeNomads Offline-Zeit verpasste Entscheidungen nicht rekonstruieren; ein erfolgreiches Werkzeugergebnis ersetzt keinen fehlenden Beleg. Eine Sitzungslöschung entfernt deren Belege.
 
-## Yolo-Modus und Familienumfang {#yolo-mode}
+## Berechtigungsmodus für Unterhaltungen {#conversation-mode}
 
-1. Wählen Sie eine Unterhaltung und öffnen Sie **Status → Yolo-Modus**.
-2. Aktivieren Sie ihn nur, wenn automatische Berechtigungsfreigaben für die gesamte Familie akzeptabel sind.
-3. Deaktivieren Sie ihn vor weiterer nicht vertrauenswürdiger Arbeit; prüfen Sie offene Anfragen und bereits laufende Werkzeuge.
+Wählen Sie eine Unterhaltung, öffnen Sie **Status → Berechtigungen** und klicken Sie auf einen Modus. Bei eingeklapptem Abschnitt zeigt ein Blitz (Autonom) oder ein Schild (Beaufsichtigt) den zuletzt bekannten Modus an.
 
-Obwohl die Steuerung eine Sitzung nennt, gilt sie effektiv für die ermittelte Familienwurzel und Nachfahren: Aktivieren/Deaktivieren von einem Kind aus betrifft diese Familie. Ein nativer Fork gilt als eigene Wurzel. Dies ist keine globale Genehmigung für alle Projekte oder unabhängigen Unterhaltungen.
+- **Autonom** — Befolgt die Berechtigungsregeln von OpenCode.
+- **Beaufsichtigt** — Fragt vor Dateiänderungen und Shell-Befehlen des Agenten nach. Globale Verbote sowie Verbote für das Projekt und die Unterhaltung bleiben für diese Aktionen wirksam; Erlaubnisregeln führen zu einer Anfrage. Passende, von OpenCode gespeicherte Genehmigungen über **Immer erlauben** gelten weiterhin.
 
-Yolo genehmigt **nur Berechtigungen**. Es beantwortet keine Fragen oder Forms, ergänzt keine fehlenden Angaben, garantiert keinen Ausführungserfolg und umgeht keine Backend-Zugehörigkeitsprüfungen. Das CodeNomad-Backend führt die automatische Genehmigung durch: Ein einzelnes Fenster zu schließen deaktiviert sie nicht, solange das Backend aktiv bleibt; ein gestopptes Backend kann keine Anfragen weiter genehmigen. Die Familieneinstellung wird gespeichert und beim erneuten Laden des Arbeitsbereichs wieder eingelesen.
+Beide Modi nutzen die Sitzungsregeln von OpenCode, auch in dessen Terminaloberfläche, wenn Sie dort dieselbe Unterhaltung im selben Dienst öffnen. Der Wechsel zu **Autonom** entfernt nur die für die Beaufsichtigung hinzugefügten Regeln. Die OpenCode-Konfigurationsdateien bleiben unverändert. CodeNomad genehmigt in keinem Modus Anfragen automatisch.
 
-Yolo auszuschalten widerruft keine bereits angenommene Entscheidung und macht keine Datei-/Netzwerkauswirkungen rückgängig. Prüfen Sie **Automatisch · Yolo**-Belege und stoppen Sie die Ausführung bei Bedarf ausdrücklich. Für Automatisierung mit menschlichen Freigaben siehe [Missionen](missions.md).
+Der beaufsichtigte Modus ist keine Sandbox. Lesezugriffe, Zugriffe außerhalb des Projekts und MCP-Werkzeuge behalten ihre eigenen Regeln. Offene Anfragen behalten ihre ursprünglichen Regeln.
+
+Bei einem Subagenten zeigt und ändert **Berechtigungen** den Modus der Hauptunterhaltung. Bestehende Subagenten behalten bei einem Moduswechsel ihre Regeln. Startet ein Subagent einen weiteren, übernimmt dieser die Regeln seines unmittelbaren Elternagenten.
+
+Eine verzweigte Unterhaltung übernimmt die Regeln ihrer Quelle und hat einen eigenen Modus. Kann CodeNomad nicht prüfen, welche Regeln zu entfernen sind, bleiben diese erhalten und Sie können weiterhin Nachrichten senden.
+
+Ist der Modus nicht bestätigt, wählen Sie **Berechtigungen neu laden**. Zum Festlegen des Startmodus siehe [Berechtigungen für neue Unterhaltungen](settings.md#new-conversation-permissions).
 
 ## Fehlende oder veraltete Anfragen wiederherstellen {#request-recovery}
 
 1. Prüfen Sie die Verbindungsanzeige und verbinden Sie sich erneut mit demselben Backend/Projekt.
 2. Lassen Sie die Wiederherstellung offene native Anfragen abgleichen; bekannte Anfragen und Entwürfe bleiben bei unvollständiger Abdeckung erhalten.
 
-Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und die Warnung erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).
+Vorübergehende Wiederherstellungsfehler werden im Hintergrund ohne Benachrichtigung erneut versucht. Wenn das mitgelieferte OpenCode-Plugin wartende Anfragen nicht auflisten kann, erscheint pro Backend ein Hinweis im Browser-Tab, bis die Wiederherstellung gelingt.
+
+Eine unvollständige Antwort ist keine maßgebliche leere Warteschlange, und ein Hinweis auf ein fehlendes Plugin erlaubt keine Wiederholung eines Prompts, einer Antwort oder Freigabe. Konfigurationsneuladen kann native Forms/Berechtigungen abbrechen; verwenden Sie es nicht als routinemäßige Anfrageaktualisierung. Siehe [Fehlerbehebung](troubleshooting.md) und [OpenCode-Einrichtung](opencode.md).

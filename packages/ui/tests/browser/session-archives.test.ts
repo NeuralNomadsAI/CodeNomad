@@ -87,3 +87,36 @@ test("archive and restore remain keyboard accessible through the compact action 
     ])
   } finally { await page.close() }
 })
+
+test("archive icons survive a native rename and update on both surfaces when archived", async () => {
+  const page = await browser.newPage()
+  await page.route("**/api/**", route => route.fulfill({ json: {} })); await events.route(page)
+  try {
+    await page.goto(url); await page.waitForFunction(() => Boolean((window as any).fixture))
+    const target = row(page, "done")
+    await target.locator(".session-item-select").click()
+    await page.locator(".session-list-container").evaluate(element => { element.parentElement!.style.width = "340px" })
+    const trigger = target.getByRole("button", { name: "More actions", exact: true })
+    await trigger.press("Enter")
+
+    const selectors = [
+      '[data-session-id="done"] button[data-action-key="archive"] svg',
+      '.action-overflow-content [data-action-key="archive"] svg',
+    ]
+    for (const selector of selectors) await page.locator(`${selector}.lucide-archive`).waitFor({ state: "attached" })
+    const icons = await page.evaluateHandle(selectors => selectors.map(selector => document.querySelector(selector)), selectors)
+    const title = "Renamed conversation ready to archive"
+    await page.evaluate(title => (window as any).fixture.rename("done", title), title)
+    await target.getByText(title, { exact: true }).waitFor()
+    assert.deepEqual(
+      await icons.evaluate((nodes, selectors) => selectors.map((selector, i) => document.querySelector(selector) === nodes[i]), selectors),
+      [true, true],
+      "a rename must retain both the inline and the overflow archive SVG",
+    )
+
+    await page.evaluate(() => (window as any).fixture.event("done", true))
+    for (const selector of selectors) await page.locator(`${selector}.lucide-archive-restore`).waitFor({ state: "attached" })
+    await target.locator('button[data-action-key="archive"][aria-label="Restore session"]').waitFor({ state: "attached" })
+    await page.getByRole("menuitem", { name: "Restore session", exact: true }).waitFor()
+  } finally { await page.close() }
+})

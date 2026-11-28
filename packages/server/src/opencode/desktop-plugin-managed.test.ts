@@ -1,5 +1,4 @@
 import assert from "node:assert/strict"
-import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -108,14 +107,18 @@ test("translates only filesystem IO while retaining WSL native paths and URL dia
   assert.equal(managedDesktopPluginForSource(installations, installations[0].plugin.replace("literal", "Literal"), path.posix), undefined)
 })
 
-test("does not recognize the Missions carrier provider as a plugin runtime", async t => {
+test("recognizes Missions shims with or without their runtime artifact and rejects provider-only artifact shims", async t => {
   const fixture = await createFixture(t)
-  const provider = Buffer.from("provider fixture")
-  await fixture.install("missions", ["codenomad.missions"], provider)
+  const installed = await fixture.install("missions", ["codenomad.missions"])
   const installations = await fixture.read()
-  const providerFile = path.join(fixture.paths.data, "missions", `${createHash("sha256").update(provider).digest("hex")}.provider.mjs`)
-  assert.equal(managedDesktopPluginForSource(installations, providerFile, nativePaths), undefined)
-  assert.equal(managedDesktopPluginForSource(installations, pathToFileURL(providerFile).href, nativePaths), undefined)
+  assert.equal(installations.length, 1)
+  assert.equal(installations[0].plugin, installed.plugin)
+  const sha = "a".repeat(64), provider = { file: nativePaths.join(nativePaths.dirname(installed.plugin), `${sha}.provider.mjs`), sha256: sha }
+  const runtime = { file: installed.plugin, sha256: nativePaths.basename(installed.plugin, ".mjs") }
+  const shim = (artifacts: object) => installed.source.replace(/\)\n$/, `, ${JSON.stringify(artifacts)})\n`)
+  for (const artifacts of [{ runtime }, { provider, runtime }])
+    assert.equal(parseManagedDesktopPluginEntry("missions", shim(artifacts), nativePaths)!.plugin, installed.plugin)
+  assert.throws(() => parseManagedDesktopPluginEntry("missions", shim({ provider }), nativePaths), /Invalid managed Missions artifacts/)
 })
 
 for (const damage of ["malformed shim", "extra shim code", "digest tamper", "missing payload", "renamed shim"] as const)
@@ -161,8 +164,8 @@ async function createFixture(t: TestContext, dataName = "data") {
   return {
     root, paths,
     read: () => readManagedDesktopPlugins({ globalDirectory: paths.config, paths: nativePaths, hostPath: async native => native, assertCurrent() {} }),
-    install: async (feature: DesktopPluginFeature, ids: string[], provider?: Buffer) => {
-      const stop = await installDesktopPluginPresence(feature, bundleFor(ids), paths, () => {}, undefined, provider)
+    install: async (feature: DesktopPluginFeature, ids: string[]) => {
+      const stop = await installDesktopPluginPresence(feature, bundleFor(ids), paths)
       await stop()
       const entry = path.join(paths.config, "plugins", `codenomad-${feature}.ts`)
       const source = await fs.readFile(entry, "utf8")

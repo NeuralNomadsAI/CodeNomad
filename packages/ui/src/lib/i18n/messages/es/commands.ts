@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "cerrar, detener",
 
   "commands.scrubSessions.label": "Depurar sesiones",
-  "commands.scrubSessions.description": "Eliminar sesiones vacías, sesiones de subagente que ya completaron su tarea principal y sesiones bifurcadas innecesarias.",
+  "commands.scrubSessions.description": "Eliminar sesiones verificadas como vacías e inactivas.",
   "commands.scrubSessions.keywords": "limpieza, blanco, vacías, sesiones, quitar, eliminar, depurar",
 
   "commands.instanceInfo.label": "Info de la instancia",

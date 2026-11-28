@@ -1,9 +1,8 @@
 import { Context, Effect, Option, Predicate, Schema } from "effect"
+import { createHash } from "node:crypto"
 import { AsyncLocalStorage } from "node:async_hooks"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Shell } from "@opencode/schema/shell"
-import { Form } from "@opencode/schema/form"
-import { Permission } from "@opencode/schema/permission"
 import type { SqlClient } from "effect/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { stableToken } from "../../missions/receipt-identity"
@@ -16,7 +15,12 @@ import { coordinatorBaselineSchema, COORDINATOR_INPUT_MARKER, type CoordinatorBa
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const transactionGraph = new AsyncLocalStorage<Context.Context<never>>()
+export class ScheduledCoordinatorRefusal extends Error {
+  constructor(readonly reason: "coordinator-busy" | "coordinator-owned" | "coordinator-is-source") { super(reason) }
+}
 export const withNativeSourceTransaction = <A>(graph: Context.Context<never>, use: () => A): A => transactionGraph.run(graph, use)
+export const readNativeSourceRows = (client: SqlClient.SqlClient, graph: Context.Context<never>, sql: string, args: readonly unknown[]) =>
+  Effect.runSync(client.unsafe(sql, args).withoutTransform.pipe(Effect.provide(transactionGraph.getStore() ?? graph)))
 const nativeKey = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
 export const nativeBackgroundSQL = `SELECT key,json_extract(value,'$.recovery.kind') AS kind,
   json_extract(value,'$.recovery.sessionID') AS sessionID,json_extract(value,'$.recovery.parentSessionID') AS parentSessionID,
@@ -47,9 +51,29 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
   const shellService = Context.getOption(graph, Context.Service<never, unknown>("@opencode/Shell"))
   const read = (sql: string, args: readonly unknown[]) => {
     alive()
-    const result = Effect.runSync(database.db!.$client!.unsafe(sql, args).withoutTransform.pipe(Effect.provide(transactionGraph.getStore() ?? graph)))
+    const result = readNativeSourceRows(database.db!.$client!, graph, sql, args)
     if (!Array.isArray(result)) throw new Error("Mission source projection unavailable")
     return result as Record<string, unknown>[]
+  }
+  // Match the ordinary range reader's boundaries, including stray project keys.
+  // Rehash inside the existing synchronous transaction fence, including malformed
+  // values and original JSON spelling; timestamps and event counts are not proof.
+  const journalDigest = (prefix: string) => {
+    const start = nativeKey(prefix)
+    const end = start.slice(0, -1) + String.fromCharCode(start.charCodeAt(start.length - 1) + 1)
+    const hash = createHash("sha256")
+    let after = start, inclusive = true
+    for (;;) {
+      const page = read(`SELECT key,value FROM kv WHERE key${inclusive ? ">=" : ">"}? AND key<? ORDER BY key LIMIT 32`, [after, end])
+      for (const { key, value } of page) {
+        if (typeof key !== "string" || typeof value !== "string" || !key.startsWith(start) || key === after && !inclusive)
+          throw new Error("Mission source journal projection unavailable")
+        hash.update(`${key.length}:${key}${value.length}:`, "utf16le").update(value, "utf16le")
+        after = key
+        inclusive = false
+      }
+      if (page.length < 32) return hash.digest("base64url")
+    }
   }
   return () => {
     const proofs: { sql: string; args: readonly unknown[]; digest: string }[] = []
@@ -91,7 +115,12 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           throw new Error("Prepared coordinator is not empty or its selection changed")
       },
       document: (key: string) => { pin("SELECT value FROM kv WHERE key=? AND length(value)<=262144", [nativeKey(key)]) },
-      journal: (prefix: string, exceptKey?: string) => {
+      journal: (prefix: string, exceptKey?: string, ordinary = false) => {
+        if (ordinary && exceptKey === undefined) {
+          const digest = journalDigest(prefix)
+          checks.push(() => { if (journalDigest(prefix) !== digest) throw new Error("Mission source changed during preparation") })
+          return
+        }
         const start = nativeKey(prefix), end = `${start}\uffff`
         const args = [start, end, exceptKey === undefined ? "" : nativeKey(exceptKey)]
         const size = read("SELECT count(*) AS count,coalesce(sum(length(value)),0) AS size FROM kv WHERE key>=? AND key<? AND key<>?", args)[0]
@@ -99,39 +128,12 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           || Number(size.size) > 16 * 1024 * 1024) throw new Error("Mission source journal capacity")
         pin("SELECT key,value FROM kv WHERE key>=? AND key<? AND key<>? ORDER BY key LIMIT 2037", args)
       },
+      // Pins the chosen family for ownership; an active conversation queues the passage prompt natively.
       coordinator: (id: string) => {
         const cte = `WITH RECURSIVE family(id) AS (SELECT id FROM session_v2 WHERE id=? UNION SELECT s.id FROM session_v2 s JOIN family f ON s.parent_id=f.id LIMIT 4097)`
-        const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model,s.time_suspended,
-          (SELECT count(*) FROM session_inbox i WHERE i.session_id=s.id) AS inbox,
-          (SELECT count(*) FROM session_message m,json_each(${nativeMessageDataSQL},'$.content') p
-            WHERE m.session_id=s.id AND m.type='assistant' AND json_extract(p.value,'$.type')='tool'
-            AND json_extract(p.value,'$.state.status') IN ('running','streaming')) AS tools
+        const members = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.metadata,s.agent,s.model
           FROM session_v2 s JOIN family f ON s.id=f.id ORDER BY s.id`, [id])
-        if (!members.length || members.length > 4096 || members.some(row => row.time_suspended != null || row.inbox !== 0 || row.tools !== 0))
-          throw new Error("coordinator-busy")
-        const ids = new Set(members.map(row => String(row.id)))
-        const list = (name: string, codec: Schema.Codec<unknown, unknown>) => {
-          const service = Context.get(graph, Context.Service<never, unknown>(name)) as { list?(): Effect.Effect<unknown, unknown> }
-          if (!Predicate.isFunction(service.list)) throw new Error("Coordinator request coverage unavailable")
-          const effect = service.list()
-          if (!Effect.isEffect(effect)) throw new Error("Coordinator request coverage unavailable")
-          const value = Effect.runSync(effect.pipe(Effect.provide(graph)))
-          Schema.decodeUnknownSync(codec)(value)
-          if (!Array.isArray(value) || value.length > 1024) throw new Error("Coordinator request coverage unavailable")
-          return value as Record<string, unknown>[]
-        }
-        checks.push(() => {
-          const sessions = Context.get(graph, Context.Service<never, unknown>("@opencode/Session")) as { active?: unknown }
-          if (!Effect.isEffect(sessions.active)) throw new Error("Coordinator activity coverage unavailable")
-          const active = Effect.runSync((sessions.active as Effect.Effect<unknown, unknown>).pipe(Effect.provide(graph)))
-          if (!(active instanceof Set) || active.size > 4096) throw new Error("Coordinator activity coverage unavailable")
-          const requests = [...list("@opencode/Form", Schema.Array(Schema.toType(Form.Info))),
-            ...list("@opencode/Permission", Schema.Array(Schema.toType(Permission.Request)))]
-          const shells = list("@opencode/Shell", Schema.Array(Schema.toType(Shell.Info)))
-          if ([...active].some(member => ids.has(String(member)))
-            || requests.some(item => item.sessionID == null || ids.has(String(item.sessionID)))
-            || shells.some(item => nativeShellBlocksFamily(item, ids))) throw new Error("coordinator-busy")
-        })
+        if (!members.length || members.length > 4096) throw new ScheduledCoordinatorRefusal("coordinator-owned")
       },
       conversation: (id: string) => {
         const rows = pin("SELECT id,parent_id,project_id,directory,workspace_id,metadata,revert,time_suspended FROM session_v2 WHERE id=?", [id])
@@ -146,7 +148,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
           { ...JSON.parse(row.data), id: row.id, type: row.type })) !== digest) throw new Error("Mission source message changed")
       },
       family: (id: string, messageID?: string, captureBaseline = false, inherited?: CoordinatorBaseline) => {
-        const background = captureBaseline ? pin(nativeBackgroundSQL, []) : []
+        const background = captureBaseline ? read(nativeBackgroundSQL, []) : []
         if (captureBaseline) assertNativeBackgroundRows(background)
         const awaiting = new Set(background.map(item => String(item.kind === "subagent" ? item.parentSessionID : item.sessionID)))
         if (captureBaseline && Option.isSome(shellService)) {
@@ -159,14 +161,15 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
             return items.filter(item => item.status === "running").map(item => ({ id: item.id,
               sessionID: typeof item.metadata.sessionID === "string" ? item.metadata.sessionID : null })).sort((a, b) => a.id.localeCompare(b.id))
           }
-          const shellsNow = projection(), original = canonicalAuthority(shellsNow)
-          for (const shell of shellsNow) if (shell.sessionID) awaiting.add(shell.sessionID)
-          checks.push(() => { if (canonicalAuthority(projection()) !== original) throw new Error("Native background shell changed during preparation") })
+          for (const shell of projection()) if (shell.sessionID) awaiting.add(shell.sessionID)
         }
         const cte = `WITH RECURSIVE family(id) AS (SELECT id FROM session_v2 WHERE id=? UNION SELECT s.id FROM session_v2 s JOIN family f ON s.parent_id=f.id LIMIT 4097)`
         const ids = read(`${cte} SELECT id FROM family`, [id])
         if (ids.length > 4096) throw new Error("Mission source family capacity")
-        const baseline = pin(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.time_suspended,
+        // Admission captures an active family's baseline as observed: its ongoing turn keeps
+        // writing, and the passage prompt queues behind it. Settlement still pins everything.
+        const observe = captureBaseline ? read : pin
+        const baseline = observe(`${cte} SELECT s.id,s.parent_id,s.project_id,s.directory,s.workspace_id,s.time_suspended,
           (SELECT count(*) FROM session_inbox i WHERE i.session_id=s.id) AS inbox,
           (SELECT max(seq) FROM session_message m WHERE m.session_id=s.id) AS seq${inherited ? `,s.metadata,
           (SELECT json_object('id',m.id,'seq',m.seq,'type',m.type,'data',m.data) FROM session_message m
@@ -190,7 +193,7 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
         }
         // The latest seq alone survives pruning or rewriting the original input.
         // Pin the exact correlation used by H11, including empty projections.
-        pin(`${cte} SELECT s.id,
+        observe(`${cte} SELECT s.id,
           (SELECT json_object('id',m.id,'seq',m.seq,'type',m.type,'data',m.data) FROM session_message m
             WHERE m.session_id=s.id AND CASE WHEN s.id=? AND ? IS NOT NULL THEN m.id=?
               ELSE m.type IN ('user','synthetic') END ORDER BY m.seq ASC LIMIT 1) AS origin,
@@ -226,4 +229,4 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
 })
 type SourceFence = ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>
 export type NativeSourceFence = Omit<SourceFence, "preparedSession" | "selectedSession" | "absentSession" | "coordinator">
-  & Partial<Pick<SourceFence, "coordinator">>
+  & Partial<Pick<SourceFence, "coordinator" | "absentSession">>

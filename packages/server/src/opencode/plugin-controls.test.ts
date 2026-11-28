@@ -120,6 +120,9 @@ describe("OpenCode V2 plugin activation controls", () => {
         ? path.join(fixture.projectDirectory, "plugins", "reviewer")
         : path.join(fixture.projectDirectory, ".opencode", "plugins", "reviewer")
       const entrypoint = path.join(sourceDirectory, "server.js")
+      // The declared folder's selected entrypoint is the file plugin.list reports.
+      fs.mkdirSync(sourceDirectory, { recursive: true })
+      fs.writeFileSync(entrypoint, "export default {}\n")
       fixture.runtime.push({
         id: "acme.reviewer",
         source: { type: "local", path: entrypoint },
@@ -236,7 +239,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-acme.reviewer", "-acme.linter"])
   })
 
-  it("appends a later exact rule to re-enable without deleting the disabling rule", async () => {
+  it("re-enables an unreported plugin by deleting its disabling rule, never writing its bare ID", async () => {
     const fixture = createFixture({
       globalPlugins: [{ package: "@acme/reviewer", options: { strict: true } }],
       projectPlugins: ["-acme.reviewer"],
@@ -250,9 +253,19 @@ describe("OpenCode V2 plugin activation controls", () => {
       enabled: true,
     })
 
+    assert.notEqual(response.snapshot.controls.find((entry) => entry.id === "acme.reviewer")?.effective, "disabled")
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, [])
+  })
+
+  it("appends a later exact rule for a loaded plugin when deletion alone cannot re-enable it", async () => {
+    const fixture = createFixture({
+      globalPlugins: [{ package: "@acme/reviewer" }, "-acme.reviewer"],
+      projectPlugins: [],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")],
+    })
+    const response = await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "project", enabled: true })
     assert.equal(response.rule, "acme.reviewer")
-    assert.equal(response.snapshot.controls.find((entry) => entry.id === "acme.reviewer")?.effective, "enabled")
-    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["-acme.reviewer", "acme.reviewer"])
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["acme.reviewer"])
   })
 
   it("replaces the plugin's earlier exact rules instead of growing the file on each toggle", async () => {
@@ -441,11 +454,11 @@ describe("OpenCode V2 plugin activation controls", () => {
       location: fixture.location,
       pluginId: "known",
       scope: "global",
-      enabled: true,
+      enabled: false,
     })
 
-    assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "enabled")
-    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["{env:PLUGIN_RULE}", "known"])
+    assert.equal(response.snapshot.controls.find((entry) => entry.id === "known")?.effective, "disabled")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["{env:PLUGIN_RULE}", "-known"])
   })
 
   it("persists the requested rule when a raw replacement or deletion has overtaken daemon normalization", async () => {
@@ -494,13 +507,14 @@ describe("OpenCode V2 plugin activation controls", () => {
       const targetFile = path.join(projectDirectory, ".opencode", "opencode.jsonc")
       for (const directory of [globalDirectory, projectDirectory, ancestorDirectory]) fs.mkdirSync(directory)
       if (trailingVirtualRule) fs.mkdirSync(path.dirname(targetFile))
-      fs.writeFileSync(directFile, `{ "plugins": [], "model": "unchanged" }\n`)
+      // The runtime reports "known" for this declaration, which precedes the Project layer: its bare ID selects it.
+      fs.writeFileSync(directFile, `{ "plugins": ["known-package"], "model": "unchanged" }\n`)
       fs.writeFileSync(ancestorFile, `{ "plugins": ["-known"] }\n`)
       const directBefore = fs.readFileSync(directFile, "utf8")
       const ancestorBefore = fs.readFileSync(ancestorFile, "utf8")
       const entries = [
         { type: "directory", path: globalDirectory },
-        { type: "document", path: directFile, info: { plugins: [] } },
+        { type: "document", path: directFile, info: { plugins: ["known-package"] } },
         { type: "document", path: ancestorFile, info: { plugins: ["-known"] } },
         { type: "directory", path: ancestorDirectory },
         ...(trailingVirtualRule ? [{ type: "directory", path: path.dirname(targetFile) }] : []),
@@ -609,7 +623,8 @@ describe("OpenCode V2 plugin activation controls", () => {
     fs.mkdirSync(globalDirectory, { recursive: true })
     fs.mkdirSync(projectConfigDirectory, { recursive: true })
     const entries = [
-      { type: "document", info: { plugins: ["known"] } },
+      // The leading virtual document declares the package the runtime reports "known" for.
+      { type: "document", info: { plugins: ["known-package", "known"] } },
       { type: "directory", path: globalDirectory },
       { type: "document", path: path.join(projectConfigDirectory, "opencode.jsonc"), info: { plugins: [] } },
       { type: "directory", path: projectConfigDirectory },
@@ -650,6 +665,165 @@ describe("OpenCode V2 plugin activation controls", () => {
       (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden",
     )
     assert.deepEqual((parse(fs.readFileSync(owned.globalFile, "utf8")) as any).plugins, [])
+  })
+
+  it("never writes a bare ID before its verified definition in OpenCode's applied order", async () => {
+    // The plugin is defined by the Project declaration, after Global: a bare ID in Global would be a package spec.
+    const fixture = createFixture({ globalPlugins: ["-*", "-acme.reviewer"], projectPlugins: ["@acme/reviewer"],
+      runtime: [activePlugin("acme.reviewer", "@acme/reviewer")] })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", "deleting the exact rule leaves the wildcard")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "-acme.reviewer"])
+    assert.deepEqual((parse(fs.readFileSync(fixture.projectFile, "utf8")) as any).plugins, ["@acme/reviewer"])
+  })
+
+  it("counts an undeclared local plugin as defined only where native discovery loads it", async () => {
+    // Native discovery loads the immediate children of a reported plugin(s)/ folder: a .ts/.js file as itself, a
+    // directory through its server or index module. Anything else is a removed declaration still reported while the
+    // daemon reloads, or a nested module discovery never loads.
+    for (const [relative, discovered] of [
+      [["plugins", "external.ts"], true], [["plugin", "external.js"], true],
+      [["plugins", "external", "server.js"], true], [["plugins", "external", "index.mts"], true],
+      [["plugins", "resources", "external", "server.js"], false], [["plugins", "external", "lib", "util.js"], false],
+      [["plugins", "external.json"], false], [["plugins", "external", "main.js"], false], [["..", "external", "index.js"], false],
+    ] as const) {
+      const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+      const local = path.join(fixture.globalDirectory, ...relative)
+      fs.mkdirSync(path.dirname(local), { recursive: true })
+      fs.writeFileSync(local, "export default {}\n")
+      fixture.runtime.push({ id: "acme.external", source: { type: "local", path: local }, features: {}, state: { status: "active" } })
+      const enable = fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true })
+      const label = relative.join("/")
+      if (discovered) {
+        await enable
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "acme.external"], label)
+      } else {
+        await assert.rejects(enable, (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", label)
+        assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"], `no bare ID without a definition: ${label}`)
+      }
+    }
+  })
+
+  it("refuses a bare ID for a discovered plugin whose entrypoint no longer exists while the inventory still reports it", async () => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const entrypoint = path.join(fixture.globalDirectory, "plugins", "external", "server.js")
+    fs.mkdirSync(path.dirname(entrypoint), { recursive: true })
+    fs.writeFileSync(entrypoint, "export default {}\n")
+    fixture.runtime.push({ id: "acme.external", source: { type: "local", path: entrypoint }, features: {}, state: { status: "active" } })
+    // The folder is deleted; the daemon has not reloaded yet, so plugin.list still reports the plugin.
+    fs.rmSync(path.dirname(entrypoint), { recursive: true })
+    assert.ok((await fixture.controls.read("workspace", fixture.location)).controls.some(control => control.id === "acme.external"))
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+    // A directory where the entrypoint was is not a regular file either.
+    fs.mkdirSync(entrypoint, { recursive: true })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.external", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+  })
+
+  it("counts a discovered plugin only at the entrypoint the resolver selects, server before index", async () => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const bundle = path.join(fixture.globalDirectory, "plugins", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fixture.runtime.push({ id: "bundle.other", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+    // With server.js present, discovery loads server.js for "bundle": the reported index.js defines nothing there.
+    fs.writeFileSync(path.join(bundle, "server.js"), "export default {}\n")
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+    // Two candidates for one name make the selection uncertain too.
+    fs.rmSync(path.join(bundle, "server.js"))
+    fs.writeFileSync(path.join(bundle, "index.ts"), "export default {}\n")
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    // index.js alone is the selection: the bare ID follows its definition.
+    fs.rmSync(path.join(bundle, "index.ts"))
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.other"])
+  })
+
+  it("classifies a local declaration before any lookup: a declared file defines nothing even when the inventory reports it", async () => {
+    // OpenCode drops the Global file declaration (configured paths must be directories); only Project defines it.
+    const fixture = createFixture({ globalPlugins: [], runtime: [] })
+    const bundle = path.join(fixture.projectDirectory, "..", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fixture.setGlobalPlugins([path.join(bundle, "index.js"), "-*"])
+    fixture.setProjectPlugins([bundle])
+    fixture.runtime.push({ id: "bundle.plugin", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+    const snapshot = await fixture.controls.read("workspace", fixture.location)
+    assert.deepEqual(snapshot.configured.sources.map(({ target, pluginId }) => ({ target, pluginId })),
+      [{ target: path.join(bundle, "index.js"), pluginId: undefined }, { target: bundle, pluginId: "bundle.plugin" }])
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.plugin", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [path.join(bundle, "index.js"), "-*"])
+  })
+
+  it("never lets an explicit local folder define a nested plugin's ID for a bare write", async () => {
+    // bundle/other is defined only by the Project declaration: a bare ID in Global would precede it.
+    const fixture = createFixture({ globalPlugins: [], runtime: [] })
+    const bundle = path.join(fixture.projectDirectory, "..", "bundle")
+    fs.mkdirSync(path.join(bundle, "other"), { recursive: true })
+    fs.writeFileSync(path.join(bundle, "index.js"), "export default {}\n")
+    fs.writeFileSync(path.join(bundle, "other", "index.js"), "export default {}\n")
+    fixture.setGlobalPlugins([bundle, "-*"])
+    fixture.setProjectPlugins([path.join(bundle, "other")])
+    fixture.runtime.push({ id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.other", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, [bundle, "-*"])
+  })
+
+  it("selects a linked server entrypoint whose internal name starts with ..", async t => {
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const bundle = path.join(fixture.globalDirectory, "plugins", "bundle")
+    fs.mkdirSync(bundle, { recursive: true })
+    fs.writeFileSync(path.join(bundle, "..entry.js"), "export default {}\n")
+    try {
+      fs.symlinkSync(path.join(bundle, "..entry.js"), path.join(bundle, "server.js"), "file")
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+      t.skip("file symbolic links unavailable")
+      return
+    }
+    // "..entry.js" stays inside the folder: the selection is certain and the bare ID follows its definition.
+    fixture.runtime.push({ id: "bundle.entry", source: { type: "local", path: path.join(bundle, "server.js") }, features: {}, state: { status: "active" } })
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "bundle.entry", scope: "global", enabled: true })
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*", "bundle.entry"])
+  })
+
+  it("never writes a Global bare ID for a nested plugin declared only in Project", async () => {
+    // plugins/resources has no entrypoint, so discovery skips it: the reviewer is defined only by the Project entry.
+    const fixture = createFixture({ globalPlugins: ["-*"], runtime: [] })
+    const nested = path.join(fixture.globalDirectory, "plugins", "resources", "reviewer")
+    fixture.setProjectPlugins([nested])
+    fixture.runtime.push({ id: "acme.reviewer", source: { type: "local", path: path.join(nested, "server.js") }, features: {}, state: { status: "active" } })
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden")
+    assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["-*"])
+  })
+
+  it("refuses an enable whose deletion leaves a wildcard disabling the plugin, writing nothing", async () => {
+    for (const wildcard of ["-*", "-acme.*"]) {
+      const fixture = createFixture({ globalPlugins: ["@acme/reviewer", wildcard, "-acme.reviewer"], runtime: [] })
+      await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "acme.reviewer", scope: "global", enabled: true }),
+        (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", wildcard)
+      assert.deepEqual((parse(fs.readFileSync(fixture.globalFile, "utf8")) as any).plugins, ["@acme/reviewer", wildcard, "-acme.reviewer"], wildcard)
+    }
+  })
+
+  it("never writes a bare ID no loaded plugin defines: re-enabling deletes its rules or is refused", async () => {
+    // A bare ID is a package spec OpenCode installs from the registry unless a plugin defines it earlier.
+    const fixture = createFixture({ globalPlugins: ["unreported-package", "-ponytail"], projectPlugins: [], runtime: [] })
+    const plugins = (file: string) => (parse(fs.readFileSync(file, "utf8")) as any).plugins
+    await assert.rejects(fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "ponytail", scope: "project", enabled: true }),
+      (error: unknown) => error instanceof PluginControlsError && error.kind === "forbidden", "only a bare ID could enable Project")
+    assert.deepEqual([plugins(fixture.globalFile), plugins(fixture.projectFile)], [["unreported-package", "-ponytail"], []])
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId: "ponytail", scope: "global", enabled: true })
+    assert.deepEqual([plugins(fixture.globalFile), plugins(fixture.projectFile)], [["unreported-package"], []], "deletion alone re-enables Global")
   })
 
   it("fails closed when the selected configuration document is malformed", async () => {
@@ -891,6 +1065,69 @@ describe("CodeNomad-managed plugin provenance and recovery", () => {
 })
 
 describe("CodeNomad-managed plugin re-enable with an exact disabling rule", () => {
+  it("writes both exact Global Missions rules, even when the inherited Global state agrees", async () => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: ["-codenomad.*"], projectPlugins: [pluginId] })
+    await installManaged(fixture, "missions", pluginId)
+    const change = (enabled: boolean) => fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled, managedBy: "codenomad",
+    })
+    const project = fs.readFileSync(fixture.projectFile, "utf8")
+    const off = await change(false)
+    assert.equal(off.rule, `-${pluginId}`)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-codenomad.*", `-${pluginId}`])
+    assert.equal(off.snapshot.controls.find(control => control.id === pluginId)?.effective, "enabled")
+    fixture.setGlobalPlugins(["-codenomad.*", `-${pluginId}`])
+    const on = await change(true)
+    assert.equal(on.rule, pluginId)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, ["-codenomad.*", pluginId])
+    assert.equal(fs.readFileSync(fixture.projectFile, "utf8"), project)
+    fixture.setGlobalPlugins([pluginId])
+    assert.equal((await change(false)).rule, `-${pluginId}`)
+    assert.deepEqual(parse(fs.readFileSync(fixture.globalFile, "utf8")).plugins, [`-${pluginId}`])
+  })
+
+  it("refuses a managed-only Global write for a non-managed Missions ID", async () => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: [`-${pluginId}`] })
+    await assert.rejects(fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad",
+    }), { kind: "forbidden" })
+  })
+
+  it("keeps the wildcard's leading comment when replacing an exact Missions rule", async () => {
+    const pluginId = "codenomad.missions", wildcard = "-codenomad.*"
+    const fixture = createFixture({ globalPlugins: [pluginId, wildcard] })
+    await installManaged(fixture, "missions", pluginId)
+    fs.writeFileSync(fixture.globalFile, `{\n  "plugins": [\n    "${pluginId}",\n    // Disable other bundled plugins\n    "${wildcard}" // Applies to all CodeNomad plugins\n  ]\n}\n`)
+    await fixture.controls.mutate("workspace", { location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad" })
+    const text = fs.readFileSync(fixture.globalFile, "utf8")
+    assert.deepEqual(parse(text).plugins, [wildcard, `-${pluginId}`])
+    assert.match(text, /\/\/ Disable other bundled plugins\r?\n\s*"-codenomad\.\*"/)
+    assert.match(text, /"-codenomad\.\*", \/\/ Applies to all CodeNomad plugins\r?\n\s*"-codenomad\.missions"/)
+  })
+
+  it("reports a linked Global Missions target without editing its destination", async t => {
+    const pluginId = "codenomad.missions"
+    const fixture = createFixture({ globalPlugins: [pluginId] })
+    await installManaged(fixture, "missions", pluginId)
+    const destination = path.join(path.dirname(fixture.projectFile), "linked-config.jsonc")
+    const original = fs.readFileSync(fixture.globalFile, "utf8")
+    fs.renameSync(fixture.globalFile, destination)
+    try {
+      fs.symlinkSync(destination, fixture.globalFile, "file")
+    } catch (error) {
+      if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+      t.skip("file symbolic links unavailable")
+      return
+    }
+    await assert.rejects(fixture.controls.mutate("workspace", {
+      location: fixture.location, pluginId, scope: "global", enabled: false, managedBy: "codenomad",
+    }), { kind: "unavailable" })
+    assert.equal(fs.readFileSync(destination, "utf8"), original)
+    assert.equal(fs.lstatSync(fixture.globalFile).isSymbolicLink(), true)
+  })
+
   it("removes the exact disabling rule instead of appending a positive ID", async () => {
     for (const scope of ["global", "project"] as const) {
       const fixture = createFixture({

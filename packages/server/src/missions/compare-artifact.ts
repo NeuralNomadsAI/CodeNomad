@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { MissionJsonValue, MissionTask } from "./model"
+import { truncateMissionText } from "./truncate-text"
 
 const text = z.string().min(1).max(20_000)
 const ref = z.string().min(1).max(64)
@@ -31,7 +32,7 @@ export function comparisonText(value: z.infer<typeof compareArtifact>): string {
   const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ")
   return "| | A | B |\n|---|---|---|\n" + value.results.map(item => `| ${cell(item.criterion)} | ${item.a} | ${item.b} |`).join("\n")
     + "\n\n" + value.results.map(item => `${item.criterion}: ${item.observation}\n\n${item.evidence.map(ref => {
-      const label = ref.kind === "file" ? ref.path : `${ref.messageID.slice(0, 20)}/${ref.partID.slice(0, 20)}`
+      const label = ref.kind === "file" ? ref.path : `${truncateMissionText(ref.messageID, 20)}/${truncateMissionText(ref.partID, 20)}`
       return `- ${label.replace(/[\\\`*_[\]<>]/g, "\\$&")}`
     }).join("\n")}`).join("\n\n")
 }

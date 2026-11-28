@@ -84,20 +84,25 @@ export function projectLifecycle(events: readonly MissionEvent[]): { runState: M
     receiptID: event.id, sessionID: event.sessionID, acknowledgementState: event.nativeAcknowledgement ? "known" as const : "unknown" as const,
     ...(event.nativeAcknowledgement ? { nativeAcknowledgement: event.nativeAcknowledgement } : {}),
   }] : [])
-  const acknowledged = new Set(receipts.map(receipt => receipt.sessionID))
-  const pending = operation.targets.filter(target => !acknowledged.has(target.sessionID)).map(target => target.sessionID)
-  const completedRevision = pending.length ? undefined : events.reduce((revision, event, index) =>
+  const completedRevision = () => events.reduce((revision, event, index) =>
     event.id === operation.id || event.type === "mission.control-applied" && isControlReceipt(event, operation, event.sessionID) ? index + 1 : revision, 0)
   const paused = operation.action === "start" ? pausedDescendants(scoped, operation) : undefined
+  return projectControl(operation, receipts, completedRevision, paused, Boolean(unavailable.controlUnavailable))
+}
+
+export function projectControl(operation: MissionControlRequestedEvent, receipts: MissionLifecycleReceipt[],
+  lastRevision: number | (() => number), paused: MissionLifecycleOperation["pausedDescendants"], unavailable: boolean): ReturnType<typeof projectLifecycle> {
+  const acknowledged = new Set(receipts.map(receipt => receipt.sessionID))
+  const pending = operation.targets.filter(target => !acknowledged.has(target.sessionID)).map(target => target.sessionID)
   return {
-    ...unavailable,
+    ...(unavailable ? { controlUnavailable: true } : {}),
     runState: operation.action === "stop" ? "stopped" : operation.action === "pause" ? "paused" : "running",
     control: {
       id: operation.id, missionID: operation.missionID, requestID: operation.requestID, expectedRevision: operation.expectedRevision,
       action: operation.action, targets: operation.targets, pending, receipts,
       ...(operation.graceful ? { graceful: true as const } : {}),
       ...(operation.recurrence ? { recurrence: operation.recurrence } : {}),
-      ...(completedRevision !== undefined ? { completedRevision } : {}),
+      ...(!pending.length ? { completedRevision: typeof lastRevision === "number" ? lastRevision : lastRevision() } : {}),
       ...(paused ? { pausedDescendants: paused } : {}),
     },
   }
@@ -109,12 +114,19 @@ function pausedDescendants(events: readonly MissionEvent[], start: MissionContro
   const before = events.slice(0, events.indexOf(start))
   const pause = [...before].reverse().find(event => event.type === "mission.control-requested")
   if (!pause || pause.type !== "mission.control-requested" || pause.action !== "pause") return undefined
+  return projectPauseEvidence(pause, sessionID => {
+    const receipts = before.filter(event => event.type === "mission.control-applied" && isControlReceipt(event, pause, sessionID))
+    return receipts.length === 1 && receipts[0].type === "mission.control-applied" ? receipts[0].nativeAcknowledgement : undefined
+  })
+}
+
+export function projectPauseEvidence(pause: MissionControlRequestedEvent,
+  acknowledgement: (sessionID: string) => MissionNativeAcknowledgement | undefined): NonNullable<MissionLifecycleOperation["pausedDescendants"]> {
   if (pause.graceful) return { sessions: [], partial: false, graceful: true as const }
   const sessions = new Set<string>()
   let partial = false
   for (const target of pause.targets) {
-    const receipts = before.filter(event => event.type === "mission.control-applied" && isControlReceipt(event, pause, target.sessionID))
-    const ack = receipts.length === 1 && receipts[0].type === "mission.control-applied" ? receipts[0].nativeAcknowledgement : undefined
+    const ack = acknowledgement(target.sessionID)
     if (ack?.disposition === "target-missing") continue
     const descendants = ack?.disposition === "interrupt-observed" ? ack.descendants : undefined
     if (!descendants || !descendants.complete || descendants.sessions.length < descendants.interrupted) partial = true

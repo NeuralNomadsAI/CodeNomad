@@ -195,6 +195,24 @@ filesystem targets.
 
 ## Authorized HTTP operations
 
+Remote browsers use the authenticated UI admission matrix in
+[Remote Control](REMOTE_CONTROL.md#saved-profile-relay). With the strict host-owned
+`multiBackend` flag enabled (the default), paired Remote Control devices, verified HTTPS clients
+and declared LAN HTTP sessions can use the exact memory routes on the host and
+through saved-profile relays. PWA requests follow their current URL's channel.
+Relayed memory retains the current backend proof, destination schemas and
+project-directory ownership. The selected Preferences project owns review,
+editing and Tidy up on that backend.
+
+The common pre-body hook captures the request principal. Its signal fences
+project-identity follow-ups, repository-lock waits, read/writability checks,
+locked mutation decisions and response publication. Each lock waiter owns its
+cancellation. After writing, syncing and closing the temporary journal, the
+original signal is checked immediately before its atomic rename. That publication
+admits a durable transaction; accepted transactions and their Git recovery finish
+while revoked callers lose their acknowledgements. Individual host filesystem/Git reads retain their bounded
+native lifetime, with the original signal checked before subsequent work.
+
 `memory/api.ts` validates the shared UI/tool operation contract from
 `memory/contract.ts`. `POST /api/memory` takes `{ operation, context? }`; operations
 are `list`, `read` with `query` (exact ID first, then title), `save` with `content`,
@@ -293,7 +311,8 @@ against current reality. Cleanup errors carry no memory content into logs.
 
 The English instruction string always includes the recording rules, even when
 both lists are empty: corrections/preferences, successful unusual approaches,
-costly facts absent from code/docs, one fact per entry, saving before the final
+costly facts absent from code/docs, never a one-off approval, a fixed incident or
+work in progress, one fact per entry, saving before the final
 response with a one-sentence acknowledgement, and reference-only designation of
 an external memory. It directs the agent to read before acting and verify file
 and command claims. Title/type pairs travel as escaped JSON, with Unicode control
@@ -323,6 +342,15 @@ the main window's active project and selected session Location on General demand
 native Preferences keeps its explicit resolved context. Without an authorized
 project only About you can be selected. Titles/types/text have localized labels
 in all ten UI languages, and supplementary copy uses `SettingsInfoTip`.
+Qualified remote projects select `agentMemoryFor(instanceId)`: scopes, enablement,
+reads, edits and cleanup checks retain that backend's attachment and relay transport.
+HTTP context carries its raw workspace ID. Draft and badge frontiers include the
+backend identity; unavailable Preferences projects keep the card inactive and
+retain unsent drafts for the same project owner.
+Local calls retain `localHttp`. The UI relay requires a current relay proof
+for exact POST `/api/memory` and GET/PUT `/api/memory/settings`. The destination
+admits these methods over its authenticated direct server-device transport;
+Remote Control browser admission follows the host flag and principal contract above.
 The cleanup action and its info tip wrap as one group. Editable title/text fields
 derive direction from their contents, and list titles use bidirectional isolation.
 
@@ -378,6 +406,9 @@ in the project's session inventory and shows the localized cleanup failure.
 intent. Electron and Tauri accept it only from the trusted Preferences main
 frame, compare it to the host's current Preferences project, and forward to that
 window's exact local opener. Missing openers fail explicitly. The main renderer
+also checks the remote intent's `serverId` against its admitted backend before
+any preflight or session creation; both native hosts compare it to their current request.
+The main renderer
 claims each Tauri event hint through the native host, which returns the pending
 intent only to its targeted local window and only once. The main renderer
 alone owns session creation, tab/session activation and the initial send through
@@ -447,6 +478,9 @@ for cross-process contention. The five committed entries, fresh locked decisions
 Windows sharing failures and crash-recovery history remain asserted. Readiness
 and lock-candidate publication coordinate handoffs; test polling deadlines bound
 missing signals independently of the unchanged product lock deadline.
+`memory/cancellation.integration.ts` checks independently cancelled lock/read/write
+waiters, revocation during temporary-journal fsync, pre-rename refusal and
+post-journal durability with real Git/filesystem IO.
 
 ```text
 node --import tsx --test packages/ui/tests/contracts/agent-memory-types.test.ts

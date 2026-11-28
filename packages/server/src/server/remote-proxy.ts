@@ -10,12 +10,20 @@ import { framesNoBody } from "./bodiless-request"
 import { addProxiedHttpMethods } from "./proxied-http-methods"
 import { ROUTER_OPTIONS } from "./routed-path"
 import { guardProxyListener } from "./proxy-destination"
+import { parseCookies } from "../auth/http-auth"
+import { isLocalRequest } from "../remote-control/request-origin"
+import { isLiveVoiceRoute, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
+import { LIVE_VOICE_PATH } from "../speech/live-voice-contract"
+import { proxyRemoteVoice } from "./remote-proxy-voice"
+import { requestAdmission } from "./request-admission"
+import type { Socket } from "node:net"
 
 const LOOPBACK_HOST = "127.0.0.1"
 const BOOTSTRAP_PAGE_PATH = "/__codenomad/auth/token"
 const BOOTSTRAP_EXCHANGE_PATH = "/__codenomad/api/auth/token"
 const SESSION_IDLE_TTL_MS = 30 * 60_000
 const SESSION_DISPOSAL_TIMEOUT_MS = 5_000
+const voiceWindowCookie = (sessionId: string) => `codenomad_voice_window_${sessionId}`
 
 interface RemoteProxySession {
   id: string
@@ -23,6 +31,7 @@ interface RemoteProxySession {
   targetBaseUrl: URL
   localBaseUrl: URL
   activated: boolean
+  voiceWindowToken?: string
   cookiePrefix: string
   app: FastifyInstance
   dispatcher?: Agent
@@ -86,6 +95,35 @@ export class RemoteProxySessionManager {
     const abortController = new AbortController()
     const app = createRemoteProxyApp(this.options.httpsOptions)
     let session: RemoteProxySession | null = null
+    let voiceSocketOpen = false
+
+    app.server.on("upgrade", (request, socket: Socket, head) => {
+      try {
+        if (!isLiveVoiceRoute(request.url)) return refuseVoiceUpgrade(socket, "404 Not Found")
+        const current = session
+        const cookies = parseCookies(request.headers.cookie)
+        if (!current?.activated || current.abortController.signal.aborted || !isLocalRequest({ raw: request })
+          || request.headers.host !== current.localBaseUrl.host || request.headers.origin !== current.localBaseUrl.origin
+          || !current.voiceWindowToken || cookies?.[voiceWindowCookie(current.id)] !== current.voiceWindowToken) {
+          return refuseVoiceUpgrade(socket, "403 Forbidden")
+        }
+        proxyRemoteVoice({
+          request, socket, head, skipTlsVerify,
+          target: new URL(buildUpstreamUrl(current.targetBaseUrl, request.url!)),
+          origin: current.targetBaseUrl.origin,
+          cookie: rewriteRequestCookieHeader(request.headers.cookie ?? "", current.cookiePrefix),
+          lifetime: current.abortController.signal,
+          claim: () => {
+            if (voiceSocketOpen) return false
+            voiceSocketOpen = true
+            // Release even if the request fails the WebSocket parser's handshake checks.
+            socket.once("close", () => { voiceSocketOpen = false })
+            current.lastAccessAt = Date.now()
+            return true
+          },
+        })
+      } catch { socket.destroy() }
+    })
 
     app.get(BOOTSTRAP_PAGE_PATH, async (request, reply) => {
       if (!this.options.authManager.isLoopbackRequest(request)) {
@@ -118,6 +156,10 @@ export class RemoteProxySessionManager {
 
       session.activated = true
       session.lastAccessAt = Date.now()
+      if (!session.voiceWindowToken && request.headers.origin === session.localBaseUrl.origin && request.headers.host === session.localBaseUrl.host) {
+        session.voiceWindowToken = randomBytes(32).toString("base64url")
+        reply.header("set-cookie", `${voiceWindowCookie(session.id)}=${session.voiceWindowToken}; Path=${LIVE_VOICE_PATH}; Secure; HttpOnly; SameSite=Strict`)
+      }
       reply.send({ ok: true })
     })
 
@@ -407,7 +449,6 @@ async function proxyRequest(args: {
     method: request.method,
     headers,
     dispatcher: session.dispatcher,
-    signal: session.abortController.signal,
     redirect: "manual",
   }
 
@@ -419,8 +460,10 @@ async function proxyRequest(args: {
     }
   }
 
+  const admission = requestAdmission(request, reply)
+  const signal = AbortSignal.any([session.abortController.signal, admission.signal])
   try {
-    const response = await fetch(upstreamUrl, init as any)
+    const response = await fetch(upstreamUrl, { ...init, signal })
     reply.code(response.status)
     applyResponseHeaders(reply, response, session)
 
@@ -433,10 +476,13 @@ async function proxyRequest(args: {
     reply.raw.writeHead(reply.statusCode, toOutgoingHeaders(reply.getHeaders()))
     await pipeline(Readable.fromWeb(response.body as any), reply.raw)
   } catch (error) {
+    if (admission.signal.aborted) return
     logger.error({ err: error, upstreamUrl }, "Failed to proxy remote session request")
     if (!reply.sent) {
       reply.code(502).send({ error: "Remote proxy request failed" })
     }
+  } finally {
+    admission.dispose()
   }
 }
 

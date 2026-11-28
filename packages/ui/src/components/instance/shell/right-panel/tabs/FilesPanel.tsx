@@ -88,7 +88,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
           else if (!props.gitAvailable) void props.gitInit.recheck()
           else if (props.mode === "history") void props.history.refresh()
           else void props.git.refreshGitStatus()
-        }}><RefreshCw size={14} class={loading() ? "animate-spin" : ""} /></button>
+        }}><span class="inline-flex" classList={{ "animate-spin": loading() }}><RefreshCw size={14} /></span></button>
       </div>
       <select class="git-panel-worktree" value={props.slug} aria-label={props.t("gitPanel.worktree")} title={props.directory}
         onChange={event => props.onWorktreeChange(event.currentTarget.value)}>

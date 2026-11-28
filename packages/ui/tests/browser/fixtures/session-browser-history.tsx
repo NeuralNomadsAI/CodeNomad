@@ -1,6 +1,7 @@
 import { nativeFixture } from "./browser-frame-native-bridge"
 import { serverApi } from "../../../src/lib/api-client"
-import { getSessionPreview, openSessionPreview, sessionPreviews } from "../../../src/stores/session-previews"
+import { acceptPreviewOwnership, getSessionPreview, openSessionPreview, requestSessionPreview, sessionPreviews, settleSessionPreviewOpen, showSessionPreview } from "../../../src/stores/session-previews"
+import { changeBrowserPreviewOwnership, hasNativePreviewOwnership, onBrowserPreviewOwnership, onNativeBrowserOpen } from "../../../src/lib/native/browser"
 import { initializeClientState, writeClientLayoutValue } from "../../../src/stores/client-state"
 import { getTabViewState, seedTabViewState } from "../../../src/stores/tab-view-state"
 import { migrateLegacyTabPreviews } from "../../../src/stores/tab-view-state-migration"
@@ -63,6 +64,19 @@ serverApi.previewWorkspaceFile = async (id, path) => ({
 } as any)
 serverApi.fetchWorktreeGitDiff = async () => ({ path: "diff.ts", before: "const value = 1\n", after: "const value = 2\n" } as any)
 const shell = (window as any).fixture
+if (hasNativePreviewOwnership()) {
+  await onBrowserPreviewOwnership(acceptPreviewOwnership, ({ instanceId, sessionId }) => {
+    shell.selectOccurrence(instanceId)
+    showSessionPreview(sessionId, instanceId)
+  })
+  await onNativeBrowserOpen(() => {}, ({ sessionID, instanceId, url, requestID }) => {
+    void openSessionPreview(sessionID, url, instanceId, undefined, { requestID, instanceId }, undefined, () =>
+      changeBrowserPreviewOwnership({ action: "ready", sessionId: sessionID, instanceId, requestID }))
+      .then(() => shell.selectOccurrence(instanceId))
+  }, ({ sessionID, instanceId, requestID, committedUrl }) => {
+    settleSessionPreviewOpen(sessionID, instanceId, requestID, committedUrl)
+  })
+}
 shell.addSession("second")
 let eventTime = 1000
 let surfaceIntent: ReturnType<typeof beginGesture>
@@ -89,11 +103,26 @@ Object.assign(shell, {
   captureSurfaceIntent: () => { surfaceIntent = beginGesture({ instanceId: ids[0], sessionId: "session" }) },
   surfaceIntentCurrent: () => surfaceIntent.current(),
   native: nativeFixture,
-  openPreview: (sessionId: string, url: string, instanceId = ids[0]) => openSessionPreview(sessionId, url, instanceId),
+  openPreview: (sessionId: string, url: string, instanceId = ids[0]) => hasNativePreviewOwnership()
+    ? requestSessionPreview(sessionId, instanceId, url) : openSessionPreview(sessionId, url, instanceId),
+  deliverAgentOpen: async (url: string, instanceId: string) => {
+    const sessionID = "session", requestID = "agent"
+    nativeFixture.emit("browser-target:open", { sessionID, requestID, url, instanceId: nativeFixture.ownerOf(sessionID) ?? instanceId })
+  },
+  openNativePreview: (requestID: string, url: string) => {
+    const sessionId = "session", instanceId = ids[0]
+    const intent = beginGesture({ instanceId, sessionId })
+    return openSessionPreview(sessionId, url, instanceId, intent, { requestID, instanceId })
+  },
+  settleNativePreview: (requestID: string, committedUrl?: string, keepGuest?: boolean, successorUrl?: string) =>
+    settleSessionPreviewOpen("session", ids[0], requestID, committedUrl, keepGuest, successorUrl),
   preview: (sessionId: string, instanceId = ids[0]) => {
     if (!isInstanceOccurrenceOpen(instanceId)) return null
-    const preview = getSessionPreview(sessionId)
-    return preview && { ...preview, mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
+    const preview = getSessionPreview(sessionId, instanceId)
+    if (!preview) return null
+    const { owner: { client: { id, baseUrl, eventsUrl }, signal: { aborted } }, ...snapshot } = preview
+    return { ...snapshot, owner: { client: { id, baseUrl, eventsUrl }, signal: { aborted } },
+      mode: getTabViewState(instanceId).previews?.[sessionId]?.mode ?? "chat" }
   },
   savedPreview: (sessionId: string, instanceId = ids[0]) => ({ ...savedSessionBrowser(sessionId), ...getTabViewState(instanceId).previews?.[sessionId] }),
   previewModes: (instanceId: string) => getTabViewState(instanceId).previews,

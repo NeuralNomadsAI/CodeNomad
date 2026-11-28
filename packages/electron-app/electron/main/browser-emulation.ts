@@ -7,13 +7,15 @@ import { browserEmulationProfile } from "../../../ui/src/lib/native/browser-emul
 const ownedAttachments = new WeakSet<WebContents>()
 const currentProfiles = new WeakMap<WebContents, string>()
 
-export async function setBrowserEmulation(guest: WebContents, preset: unknown): Promise<void> {
+export async function setBrowserEmulation(guest: WebContents, preset: unknown, takeAttachment?: () => boolean): Promise<void> {
   browserEmulationProfile(preset)
   const next = preset as string
   const previous = currentProfiles.get(guest) ?? "none"
   if (previous === next && (next === "none" || guest.debugger.isAttached())) return
   if (!guest.debugger.isAttached()) {
     guest.debugger.attach("1.3")
+    ownedAttachments.add(guest)
+  } else if (takeAttachment?.()) {
     ownedAttachments.add(guest)
   }
   const apply = async (id: string) => {
@@ -45,7 +47,7 @@ export async function setBrowserEmulation(guest: WebContents, preset: unknown): 
     await apply(next)
     currentProfiles.set(guest, next)
     // Applications often cache UA detection at startup; apply before reloading.
-    guest.reload()
+    if (guest.getURL() !== "about:blank") guest.reload()
   } catch (error) {
     await apply(previous)
     throw error

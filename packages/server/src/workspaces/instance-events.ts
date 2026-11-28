@@ -52,6 +52,7 @@ interface EventRoute {
   signal: AbortSignal
   queue: InstanceEventQueue
   key: string
+  payload: object
   bytes: number
   recipients: Array<{ id: string; epoch: number }>
   receivedAt: number
@@ -177,8 +178,8 @@ export class InstanceEventBridge {
             id: workspace.id, epoch: this.workspaceEpochs.get(workspace.id) ?? 0,
           }))
           queue.enqueue(`resolve:${key}`, bytes, () => this.publishEvent(event, {
-            current, signal: attempt.signal, queue, key, bytes, recipients, receivedAt,
-          }))
+             current, signal: attempt.signal, queue, key, bytes, payload: event, recipients, receivedAt,
+           }), event)
         }
         if (!this.controller.signal.aborted) throw failure ?? new Error("Shared OpenCode event stream ended")
       } catch (error) {
@@ -212,11 +213,19 @@ export class InstanceEventBridge {
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
     const shellId = this.shellId(event)
-    if (event.type === "session.moved" && sessionId) this.sessionLocations.delete(sessionId)
+    const envelope = event.location ? readLocationRef(event.location) : undefined
+    if (event.type === "session.moved" && sessionId) {
+      this.sessionLocations.delete(sessionId)
+      const destination = readLocationRef(event.data.location)
+      if (destination) {
+        this.deliverEvent(event, envelope, route, destination)
+        return
+      }
+    }
 
     // A scoped event is native location authority, not merely a cwd hint. Keep
     // that full pair for subsequent locationless PTY/Shell/session events.
-    const resolved = event.location ? readLocationRef(event.location)
+    const resolved = event.location ? envelope
       : (ptyId ? this.ptyLocations.get(ptyId) : undefined)
         ?? this.ptyInfoLocation(event)
         ?? (shellId ? this.shellLocations.get(shellId) : undefined)
@@ -270,25 +279,38 @@ export class InstanceEventBridge {
     return `location:${JSON.stringify([location?.directory, location?.workspaceID])}`
   }
 
-  private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute): void {
+  private deliverEvent(event: OpenCodeEvent, location: LocationRef | undefined, route: EventRoute, destination?: LocationRef): void {
     const resolvedAt = Date.now()
     const sessionId = this.sessionId(event)
+    // Like native location subscriptions, a move reaches both owners. A
+    // recipient of the session's earlier events learns that it left even
+    // when the envelope names only its destination.
     for (const { id: instanceId, epoch } of route.recipients) {
       const current = () => route.current() && (this.workspaceEpochs.get(instanceId) ?? 0) === epoch
       route.queue.enqueue(`deliver:${JSON.stringify([instanceId, route.key])}`, route.bytes, async () => {
         if (!current()) return
         const lookupStarted = Date.now()
-        let allowed = !location
+        const heldSession = Boolean(destination && sessionId && this.sessionRecipients.get(sessionId)?.has(instanceId))
+        let allowed: boolean
+        let ownsDestination: boolean
+        let lookupFailed: boolean
         let revision: number
-        try {
-          do {
-            revision = this.ownershipRevision
-            if (location) allowed = await this.resolveLocationOwner(instanceId, location, current, route.signal)
-            if (!current()) return
-          } while (revision !== this.ownershipRevision)
-        } catch {
-          // The event may belong to this recipient: make it reconcile instead of losing it silently.
-          if (current()) this.requestRoutingResync(instanceId)
+        const owns = (candidate: LocationRef) => this.resolveLocationOwner(instanceId, candidate, current, route.signal).catch(() => {
+          lookupFailed = true
+          return false
+        })
+        do {
+          revision = this.ownershipRevision
+          lookupFailed = false
+          allowed = heldSession || (!location && !destination) || (!!location && await owns(location))
+          // An unreadable source does not settle ownership of the destination.
+          if (!current()) return
+          ownsDestination = !!destination && await owns(destination)
+          allowed ||= ownsDestination
+          if (!current()) return
+        } while (revision !== this.ownershipRevision)
+        if (!allowed && lookupFailed) {
+          this.requestRoutingResync(instanceId)
           return
         }
         // Stopped recipients and work from an earlier connection never publish.
@@ -308,10 +330,11 @@ export class InstanceEventBridge {
         // A recipient that received this session's events and is now refused
         // without a move cannot tell an unreadable checkout from a foreign one:
         // it reconciles. A location it never owned stays a silent rejection.
-        if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
+        if (event.type === "session.moved" && ownsDestination) this.rememberSessionRecipient(sessionId, instanceId)
+        else if (event.type === "session.moved" || event.type === "session.deleted") this.forgetSessionRecipient(sessionId, instanceId)
         else if (allowed) this.rememberSessionRecipient(sessionId, instanceId)
         else if (location && this.sessionRecipients.get(sessionId)?.has(instanceId)) this.requestRoutingResync(instanceId)
-      })
+      }, route.payload)
     }
   }
 

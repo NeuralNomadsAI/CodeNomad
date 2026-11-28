@@ -21,9 +21,10 @@ Native package checks and updates retain their target and commit authority.
 
 `POST /api/workspaces/:id/plugin-sources` (`{ location, scope, spec }`) appends
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
-scope, target, entryIndex, expectedRevision }`) removes one entry. Both routes are strict, map
+scope, target, entryIndex, expectedRevision }`) removes one source with its plugin's
+rules, or (`{ location, scope, pluginId, expectedRevision }`) an orphan ID's rules. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`, `dependent-rule`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -48,10 +49,50 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   releases the queue after a 5 s grace; the abandoned turn then fails its next
   signal check, before any write.
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
-  still declares `target` (a string, or an object's `package`); otherwise `stale`
-  (409). The result must parse to the original minus exactly that element.
-  Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
-  never touched.
+  still declares `target` (a string, or an object's `package`) and that the snapshot
+  of the freshly read document reads it as a source; otherwise `stale` (409). The same
+  edit re-evaluates, in the [applied order](#applied-order) without that source, every
+  string entry the snapshot reads as an exact rule of the source's `pluginId` in that
+  document: a bare `id` is deleted unless a verified definition still precedes it (it
+  would otherwise be a package spec OpenCode installs from the registry), and a `-id` is
+  deleted only when the [loader proof](#loader-proof) shows no other loader is left;
+  otherwise it stays and its row can be removed later. In every other document applied at the
+  requesting location, a bare `id` that a verified definition preceded only through the
+  removed source would become a package spec too: it is deleted from the location's other
+  writable target in the same request, and anywhere else (inherited, inline or other
+  documents) it refuses the whole removal with `dependent-rule` (422). Wildcards,
+  prefixes, other plugins' rules and `-id` rules of other documents are never touched.
+  A source without `pluginId` (disabled, failed before exporting an ID) keeps its rules.
+  Each result must parse to its original minus exactly those elements, and OpenCode's
+  package cache is never touched.
+  `PluginControls.editPluginDocuments` performs the request: it holds the Global then the Project queue, checks the
+  confirmed revision of the source's document, reads every writable target and prepares (locks in physical path
+  order) and verifies each changed file before the first rename, so a refusal or failed check writes nothing.
+  Commits follow safety order: dependent cleanups first, the source's document last, so a failure between renames
+  leaves every remaining bare `id` after its definition. Locations that are not open (other projects sharing
+  the Global document) cannot be enumerated: a bare `id` in their Project documents is not re-checked.
+- **Orphan rules**: a control is `orphan` when it has no runtime entry, verified descriptor
+  or builtin status and the [loader proof](#loader-proof) shows nothing can load its ID. Its
+  row's **Remove from Global/Project** (per writable scope holding its exact rules) sends
+  `pluginId`; the server recomputes `orphan` with the full proof inside the mutation lock and
+  deletes those rules alone. Rule-only removal is refused for any other ID. An orphan row has no
+  Global/Project switches. Reads list discovery only when some control lacks a runtime entry,
+  descriptor and builtin status; without a certain listing (WSL, read error) no control is orphan.
+- **Loader proof**: one predicate (`anotherLoader` in `plugin-controls.ts`) decides every
+  removal that deletes a `-id`: source removal and rule-only removal of an orphan. A loader
+  is possible when another document declaration exists (same `pluginId`, target or package
+  identity), any declaration lacks an exported ID (it may define any ID), an inventory entry
+  reports the ID and is not the removed source (whatever its path), or a discovery child may
+  load it. The immediate children of the reported plugin(s)/ folders are listed once
+  (`plugin-discovery-loaders.ts`, at most 256 per folder and per child folder, read-only); a
+  child is excluded only when native discovery would skip it or it maps to inventory entries
+  or a verified descriptor of other IDs only. An inventory entry maps to a child only when its
+  path is that child's single selected entrypoint (`discoveryEntrypointOf`, as named or after
+  resolving links and junctions); another module of the child (an `index` behind a `server`,
+  a nested plugin) or an uncertain selection leaves it unclassified. A
+  listing that is not certain (unmapped path, read error, too many children, WSL) counts as
+  a possible loader. Activation deletes `-id` rules only to perform a requested enable (or
+  while replacing them with a disable), so it needs no proof.
   Source removal is independent of catalog, family or binding count.
   The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
   and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
@@ -78,9 +119,22 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   absent is `unconfirmed` (**Not confirmed**, with a Refresh action). `plugin.list`
   omits disabled plugins and exposes no package-to-ID link for them, so a disabled
   package with an exact `-id` rule shows two rows: its ID row with switches, and
-  its unconfirmed source row carrying the Remove items.
+  its unconfirmed source row carrying the Remove items. Removing that source leaves the
+  ID row orphan, with its own Remove items.
 - **Correlation**: snapshot sources carry `pluginId` when runtime inventory or a verified
-  managed installation associates their source, so Remove items attach to ordinary plugin rows. A row offers removal only
+  managed installation associates their source, so Remove items attach to ordinary plugin rows. Each declaration is
+  classified first, with OpenCode's rule (`plugin/module.ts`): a target that is absolute after `file://` and `./`/`../`
+  resolution is local, anything else a package. A package source is associated only by its exact native target. An
+  explicit local declaration is associated only through a verified descriptor or the one local resolver (`declaredEntrypointOf`, built on the same `selectedEntrypoint` as discovery):
+  native loading drops a declared file and resolves a declared folder `server` before `index`, so an inventory entry
+  identifies the declaration only when its path is that single selected entrypoint, as named or after resolving links.
+  Containment, a sibling module, several IDs at that entrypoint or an uncertain selection leave it without `pluginId`:
+  it then counts as a possible loader of any ID and never authorizes a bare write. Through WSL (no host listing) local
+  declarations stay unidentified. No lookup by raw target string crosses the classification: the inventory's target map
+  holds package targets only, and the Plugins surface treats a declaration as loaded or attaches its Remove items only
+  by `pluginId` or an exact package target, so an unidentified local declaration keeps its own row. A string or object
+  entry whose exact target `plugin.list` reports as a package is a source at its first declaration, even when an
+  earlier rule names the same ID, so a failed package keeps its Remove items. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other
   documents are shown, never edited.
 
@@ -102,6 +156,11 @@ links remain detectable instead of being dereferenced by path translation.
 Configuration-document reads, permissions and mutations use native distro IO.
 Never classify a plugin by its display name, ID or a `codenomad` prefix alone. A third-party
 homonym retains its ordinary controls.
+
+The right panel's [Missions gesture](MISSIONS.md#activation) uses the existing
+activation mutation with a managed-identity requirement and an exact Global rule.
+Managed attention omits a Missions disable decided by the exact Global
+`-codenomad.missions` rule. Other disables retain scoped **Re-enable**.
 
 The per-feature build scripts emit a minimal descriptor on the runtime payload's first line:
 `// CodeNomad plugin IDs: ["..."]`. These IDs are inside the SHA-256-verified payload bytes.
@@ -141,11 +200,59 @@ whose package has not loaded yet is therefore fetched from the registry (`packag
 and `packages/core/src/plugin/supervisor.ts` in OpenCode). Source declarations remain in place when an
 activation rule is written.
 
+### Applied order
+
+`opencode/plugin-activation-order.ts` models that order for every mutation. Builtin, SDK and directory-discovered
+plugins (including verified CodeNomad descriptors) are defined before every document; documents then apply in
+`config.get` order (Global before Project), entries in array order. `plugin.list` gives no discovery origin, only a
+local plugin's resolved server entrypoint, so CodeNomad mirrors native discovery (`plugin/source-directory.ts`,
+`plugin/host.ts`): it examines only the immediate children of the `plugin/` and `plugins/` folders of each
+configuration directory `config.get` reports, a `.ts`/`.js` file child loading as itself and a directory child
+through `Host.resolve`, `server` before `index`. One function, `discoveryEntrypointOf` in
+`plugin-discovery-loaders.ts`, returns the child's single selected entrypoint for both positive writes and the loader
+proof's child mapping: the file child itself, or the one `server.<ext>` candidate (else the one `index.<ext>`) with a
+Node-inferred extension (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.mjs`, `.cts`, `.cjs`) that is a regular file resolving
+inside the folder (relative paths are checked by whole `..` segment, so internal names such as `..entry.js` stay
+inside). The Bun resolver has its own extension order and directory rules, so a selection is certain only when both
+runtimes agree on the exact name. A child is skipped only on proof: a dangling link, a file child without a
+`.ts`/`.js` name, an entry that is neither file nor directory, or a folder with no entry whose name is `server` or
+`index`, or starts with `server.` or `index.`, in any letter case (case-insensitive file systems resolve
+`Server.js`). Every doubt leaves the child unclassified: a read error, a candidate group other than exactly one
+exact-case `server.<ext>` (else `index.<ext>`), a candidate that is not a regular file, or an entrypoint resolving
+outside the folder. Write decisions (activation and removal, inside their mutation lock) count a reported local
+entry as discovered only when that selection is exactly its path, as named or after resolving links, so a deleted
+folder or a `server` module taking precedence over a reported `index` defines nothing. Without a host listing (WSL)
+nothing is verified and the bare write is refused. Display reads keep the cheap shape check
+(`discoveryEntrypointShape`). Nested modules, package `main`, `server/index` and symlinked real paths never count, and
+any other undeclared inventory entry (a removed declaration the daemon still reports while it reloads) defines
+nothing. Each
+add carries the ID it verifiably defines: the runtime reports that exact ID for that source, or a verified managed
+descriptor. `-x` disables only plugins defined before it, and an add selects only plugins defined before it. The
+snapshot classifies each positive entry the same way: it is an activation rule only when a definition precedes it,
+never because an earlier `-id` names the ID, and otherwise a source declaration (a package spec).
+
+- **Uncertainty**: wherever the model cannot prove a fact, it refuses positive bare writes and keeps negative `-id`
+  rules, which install nothing.
+- **Safe positive rule**: a bare `id` at a position is written only when a verified definition precedes it, or the
+  ID is a reserved `opencode.*` selector. CodeNomad appends at the end of the target document, so a definition in a
+  later document (Global rule, Project declaration) never qualifies.
+- **Requested state**: a scope's state evaluates the documents through that scope's last one, for that ID only,
+  wildcards included. Without a verified definition in that prefix the ID is assumed defined first, so every rule
+  that could apply to it does. An activation succeeds only when this state is the requested one; a disappearing row
+  keeps the wildcard state it evaluates to.
+
 The native plugin API offers `plugin.list`/`plugin.check`/`plugin.update`, and the
 pinned client's `config.update` accepts only its declared preference fields, so
 activation is one narrow, authenticated configuration-file mutation.
 
 ## Authority and precedence
+
+UI plugin controls and source requests select `backendOf(instanceId)` and send
+the raw workspace ID from `parseInstanceKey`. Native package actions, MCP reads
+and toggles, and skill discovery use the owning backend's root proxy client.
+Captured attachment signals fence queued work, late publications and dependent
+refreshes; completed operations release their own busy state. Missing owners and
+backend errors fail closed, while local requests retain their existing wire format.
 
 Every read and mutation starts with the workspace's acquired, authenticated
 OpenCode connection and an ownership check for the complete native location.
@@ -191,7 +298,7 @@ Global switch, even though it controls the plugin's final effective state.
 Object-form sources remain source records, but are also replayed as ordered add
 operations when they re-enable an already resolved plugin, matching OpenCode's
 native supervisor. Relative and `file://` local declarations are correlated with
-the resolved runtime entrypoint before that ordered replay.
+their selected entrypoint (see **Correlation**) before that ordered replay.
 
 Changing sessions inside one worktree reuses its snapshot, and the first read
 waits until the Plugins surface is visible and expanded. Location-scoped plugin events mark
@@ -214,9 +321,10 @@ commands without a generic metadata round-trip.
 
 `packages/server/src/opencode/plugin-control-document.ts` owns the file
 operation. Activation rules and source declarations use the same primitive:
-source add/remove runs through `PluginControls.editConfigDocument`, whose awaited
-callback edits the freshly read document (`plugin-source-document.ts` holds the
-spec validation, package identity and removal edit). The pinned connection is rechecked before committing its edit.
+source add runs through `PluginControls.editConfigDocument`, whose awaited
+callback edits the freshly read document, and removal through `PluginControls.editPluginDocuments` over the
+location's writable documents (`plugin-source-document.ts` holds the spec validation, package identity and removal
+edit). The pinned connection is rechecked before committing each edit.
 
 `PluginControls.read` supplies `targets[].expectedRevision` only when the displayed daemon plugin entries
 match the raw writable document, including full options. The opaque HMAC binds the workspace, canonical
@@ -224,8 +332,8 @@ Location, scope, logical/physical destination, selected WSL distro, current auth
 document existence, native mode, BOM and complete text. Its random key and connection tokens stay private
 to the service instance; configuration values stay out of the token and diagnostics. Mutation-produced
 overlays acquire removal authority through reconciliation. `PluginSources.remove` requires this token;
-`editConfigDocument(..., signal?, strictDocuments?, expectedRevision?)` compares it inside the existing mutation queue before
-editing the freshly read document. Changed options at the same source/index, content, destination, mode or
+`editPluginDocuments` (like `editConfigDocument(..., signal?, strictDocuments?, expectedRevision?)`) compares it inside the
+mutation queues before editing the freshly read documents. Changed options at the same source/index, content, destination, mode or
 connection refuse with `stale` and require a fresh selection/confirmation.
 
 1. Read at most 4 MiB and require valid UTF-8 JSON/JSONC with one array-valued
@@ -233,13 +341,15 @@ connection refuse with `stale` and require a fresh selection/confirmation.
 2. Resolve physical file destinations, including symlinked parent directories,
    and fail closed on malformed content, invalid plugin entries, circular links,
    or filesystem errors.
-3. Edit with `jsonc-parser`: append one source spec string, delete exactly one verified source element,
-   or write one activation. An activation deletes the target document's earlier exact `id`/`-id` rules for
-   that plugin, then appends the requested rule, or only deletes them, whichever first produces exactly the
-   snapshot appending the rule would produce: every control's effective state and displayed switches, and
-   every source. Otherwise it only appends. Entries the snapshot reads as source declarations (a package named
-   like its ID), broad selectors and other files are never deleted, and a placeholder or watcher-lag projection
-   (not no-op safe) keeps the plain append. Each deleted entry is re-verified in the read document. Comments, source
+3. Edit with `jsonc-parser`: append one source spec string, delete one verified source element with its
+   plugin's verified exact rules (or an orphan ID's rules), or write one activation. Element deletions take their
+   ranges from the parse tree (`deletePluginEntries`), which keeps compact arrays valid. An activation tries, in
+   order, deleting the target document's exact `id`/`-id` rules for that plugin, deleting them and appending the
+   requested rule, and appending it, and writes the first that reaches the [requested state](#applied-order) while
+   any bare `id` it writes satisfies the safe positive rule. When none qualifies the route refuses with `forbidden`
+   before any write. Entries the snapshot reads as source declarations (a package named like its ID), broad
+   selectors and other files are never deleted, and a placeholder or watcher-lag projection (not no-op safe) only
+   appends. Each deleted entry is re-verified in the read document. Comments, source
    objects, options, unknown keys, ordering, indentation, line endings, and a
    UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
@@ -298,25 +408,10 @@ receives the current acquired configuration entries and native target position.
 Missions settings request strict document acquisition, rejecting JSON and JSONC
 coexistence in the same layer; plugin source edits retain the selected target
 and propagate their deadline signal through acquisition and commit. Missions'
-`native-experimental-settings.ts` authors schedules/depth, retaining explicit
-companion values. Depth writes preserve inherited schedule activation when the
-local block omits its flag. Schedule activation copies every effective inherited
-experimental option when creating a whole-block override. Adding schedules to an
-existing block keeps its options, including the native default selected by an
-absent depth key. Existing file-byte expectations and the
+depth editor writes `experimental.subagent_depth` alone, and
+`native-experimental-settings.ts` refuses a block whose Missions settings are
+malformed or duplicated. Existing file-byte expectations and the
 physical replacement lock fence concurrent writers.
-
-`editConfigDocuments` prepares and verifies each required target before its first
-rename. The Missions activation journal records its project-only plan before effects,
-an attempt before each rename, and each exact acknowledgement. A read-only target,
-masking block, discovered explicit OFF or native environment OFF refuses preparation.
-An already enabled Location receives a zero-target ready proof without configuration
-writes. Persisted intentions with global targets retain exact attempted effects for
-read-only reconciliation. Never write global or unattempted targets from those intentions.
-An uncertain attempted write is reconciled only by its exact result bytes, preserving
-a later explicit OFF. `native-schedule-settings-activation.ts` acknowledges readiness
-after the effective native Location flag enables schedules, within ten seconds,
-under the acquired connection and host/distro authority.
 
 OpenCode watches these configuration roots. Never restart the daemon or report a
 successful file write as an active plugin: the mutation response publishes the
@@ -331,6 +426,9 @@ guessed paths.
 
 ## Validation
 
+- Backend-owned plugin controls/sources, native package actions, MCP reads/toggles
+  and skill discovery, missing owners, refusal handling, local wire parity and
+  attachment revocation: `packages/ui/src/lib/backend-plugin-routing.test.ts`.
 - `scripts/test-plugin-runtime-native.mjs <absolute-cli>` runs an isolated native daemon and
   verifies the reported local source against the generated shim or referenced bundle and the
   session-pruning payload descriptor against the exported plugin ID.
@@ -345,12 +443,29 @@ guessed paths.
 - JSONC preservation, malformed input, optimistic conflict, atomic replace, and rule replacement with
   re-verified deletions: `plugin-control-document.test.ts`
 - rule replacement on toggle (no growth over repeated toggles, removal-only re-enable and disable, broad
-  selectors, rules in another scope, source declarations named like their ID, managed re-enable):
-  `plugin-controls.test.ts`
+  selectors, rules in another scope, source declarations named like their ID, managed re-enable), and the
+  removal-only or refused enables of IDs without a preceding verified definition, wildcards left disabling, undeclared
+  local inventory counted only at the entrypoint native discovery selects (nested plugins, deleted entrypoints, an
+  `index` behind a `server` and ambiguous candidates refused), and an explicit local folder never defining a nested
+  plugin's ID or a declared file defining one:
+  `plugin-controls.test.ts`; the applied-order evaluator: `plugin-activation-order.test.ts`
 - spec validation, package identity, append and exact removal (comments, CRLF,
-  BOM, object entries, stale index): `plugin-source-document.test.ts`
-- source add/remove ownership, scope availability, duplicates across scopes,
-  rule retention, inventory correlation and the strict route:
+  BOM, object entries, stale index, rules removed with their source, compact arrays): `plugin-source-document.test.ts`
+- source add/remove ownership, scope availability, duplicates across scopes, rule removal with the source (active and
+  failed plugins, wildcards, other plugins and scopes kept), rule retention for unknown IDs, bare names loaded as
+  packages, rules kept for a failed ID-less package or a remaining declaration, a bare ID removed when it would
+  precede the remaining definition, the Project's dependent bare ID removed with a Global source (or the removal
+  refused for an inline document), the source document committed last under an injected commit failure, a disable
+  kept while a plugin(s)/ folder still discovers the plugin (also through a junction to the declared folder) or
+  another inventory entry reports its ID, one loader proof for orphan rows, rule-only and source removal (a
+  disabled discovered file, an unidentified declaration), a discovery child identified only by its own entrypoint (a
+  nested plugin's inventory leaves it unclassified) and only by the selected entrypoint (`server` before `index`), a
+  folder skipped only on proof (`Server.js`, a linked entrypoint inside or outside the folder keep the disable), an
+  explicit local declaration identified only by its own selected entrypoint (a nested plugin neither identifies it
+  nor counts as the removed source's own entry), a
+  bare name after its own `-id` read as a package,
+  orphan rule removal and refusal,
+  inventory correlation and the strict route:
   `plugin-sources.test.ts`
 - confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
   without catalog/status/binding/census IO, and durable removal versus runtime state: `plugin-sources.test.ts`.
@@ -383,7 +498,8 @@ guessed paths.
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
 - Add window (Global default, Project warning, refusals), Installing until the
-  inventory reports, version/update/ref tooltips, Remove items, the pending
+  inventory reports, version/update/ref tooltips, Remove items (failed packages and switchless orphan rule rows included;
+  an unidentified local declaration keeps its own row), the pending
   timeout with an injected clock and the GUI notice:
   `packages/ui/tests/browser/plugin-sources.test.ts`
 
@@ -396,6 +512,6 @@ guessed paths.
 - Keep the Plugins surface minimal: plugin names and versions, one compact row-action icon when applicable, and Global/Project switches. The row menu (`components/plugin-row-actions.tsx`, memoized item descriptors) names each exact operation: package check or update with its native target, **Remove from Global/Project** per removable declaration, and Refresh for unconfirmed sources; a single package item keeps its package icon. Put source/status/version/target details, failure `ref`s and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary; source rows carry only a short state label (**Installing**/**Not confirmed**). The compact Refresh and Add icons occupy the name-column header; Refresh spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and `plugin-source-add.css`, and menu chrome is shared with `action-overflow-menu`.
 - The Plugins Add menu (`components/plugin-add-menu.tsx`) uses stable item descriptors for **Add an integration…** and **Add a plugin…**. The integration catalog window (`integration-catalog-window.tsx`) uses shared window primitives, overlay surface, an upper-right close button and reviewed catalog IDs through `pluginSourcesStore.installIntegration`; native integrations lock the focusable scope selector to Global. Confirmation uses the shared 600 ms guard. Installation hints and reconciliation use the existing source store.
 - The Add plugin window (`components/plugin-source-add.tsx`) is a transient `.window-*` popover without a close button: a `--surface-field` spec input, the native scope select (Global default, Project disabled when unavailable), the trust sentence and the Project warning. It closes on success and keeps refusals inline; it never announces an active plugin.
-- A recognized integration has exactly one surface, its Plugins row ([integration rows](OPENCODE_INTEGRATIONS.md#ui-read-model)): display name, version, `PluginActivationSwitch` with its `integration` flag (the accent switch of Yolo and the settings, `ACCENT_SWITCH_SX`, instead of the green plugin variant), and under it a state line that always says where the integration stands and acts when it can (install or update the application part, attach or detach the displayed conversation). Its `PluginRowActions` menu adds the connection line, documentation and application (re)installation before the ordinary items. Source ambiguity labels a Plugins row **Non-conforming** and attributes it to no integration. Supplemental integration details use tooltips with localized terse labels.
-- Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.
+- A recognized integration has exactly one surface, its Plugins row ([integration rows](OPENCODE_INTEGRATIONS.md#ui-read-model)): display name, version, `PluginActivationSwitch` with its `integration` flag (the settings switch accent, `ACCENT_SWITCH_SX`, instead of the green plugin variant), and under it a state line that always says where the integration stands and acts when it can (install or update the application part, attach or detach the displayed conversation). Its `PluginRowActions` menu adds the connection line, documentation and application (re)installation before the ordinary items. Source ambiguity labels a Plugins row **Non-conforming** and attributes it to no integration. Supplemental integration details use tooltips with localized terse labels.
+- Plugins that fail before exporting an ID remain visible by their native package target or local path, with failure details in the name tooltip; package entries retain check/update actions and their declaration's Remove items, while a failed local row never takes a declaration's Remove items (the declaration keeps its own row). Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds. Managed failures belong to the attention block.
 - Plugins rows use the app's ordinary tooltips: the native `title` attribute (multi-line with `\n`) on names, the state line, switches and row actions, never Kobalte `Tooltip` or a custom tooltip surface. A row's details also go into a hidden element the row names through `aria-describedby` (`<name id>-details`), and every control keeps its `aria-label`, so keyboard and screen-reader users get the same text.

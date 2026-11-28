@@ -20,10 +20,37 @@ const APPIMAGE_PLUGIN_FILE = "linuxdeploy-plugin-appimage.AppImage"
 const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex")
 const read = (file) => fs.readFileSync(path.join(root, file), "utf8")
 
-function lockedVersion(lock, name) {
-  const version = lock.packages?.[`node_modules/${name}`]?.version
-  if (!version) throw new Error(`package-lock.json does not lock ${name} at the root`)
+function lockedVersion(lock, name, workspace) {
+  const key = `node_modules/${name}`
+  const local = workspace && lock.packages?.[`${workspace}/${key}`]
+  const version = (local || lock.packages?.[key])?.version
+  if (!version) throw new Error(`package-lock.json does not lock ${name} for ${workspace ?? "the root"}`)
   return version
+}
+
+function appBuilderVersion(lock) {
+  let selected
+  for (const owner of ["packages/electron-app/node_modules/app-builder-bin", "node_modules/app-builder-bin"]) {
+    if (!Object.hasOwn(lock.packages ?? {}, owner)) continue
+    const entry = lock.packages[owner]
+    let url
+    try { if (typeof entry?.resolved === "string") url = new URL(entry.resolved) } catch {}
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)
+      || typeof entry.version !== "string" || entry.version !== entry.version.trim()
+      || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(entry.version)
+      || !url || !entry.resolved.startsWith("https://") || /\s/.test(entry.resolved)
+      || url.protocol !== "https:" || !url.hostname || url.username || url.password
+      || typeof entry.integrity !== "string" || !/^sha512-[A-Za-z0-9+/]{86}==$/.test(entry.integrity)
+      || Buffer.from(entry.integrity.slice(7), "base64").toString("base64") !== entry.integrity.slice(7)) {
+      throw new Error(`package-lock.json has an invalid app-builder-bin identity at ${owner}`)
+    }
+    if (selected && ["version", "resolved", "integrity"].some((field) => selected[field] !== entry[field])) {
+      throw new Error("package-lock.json has conflicting app-builder-bin identities")
+    }
+    selected = entry
+  }
+  if (!selected) throw new Error("package-lock.json does not lock app-builder-bin for packages/electron-app")
+  return selected.version
 }
 
 // Defaults shared by @electron/get (env-paths), app-builder (GetCacheDirectory)
@@ -60,7 +87,8 @@ function spec(kind, host, inputs) {
     const paths = [electronDir(host)]
     // electron-builder's own downloads: fpm (deb) and winCodeSign (rcedit).
     if (platform !== "darwin") paths.push(path.join(cacheHome(host), "electron-builder", platform === "win32" ? "Cache" : ""))
-    const key = `electron-${id}-${lockedVersion(lock, "electron")}-app-builder-bin-${lockedVersion(lock, "app-builder-bin")}`
+    const workspace = "packages/electron-app"
+    const key = `electron-${id}-${lockedVersion(lock, "electron", workspace)}-app-builder-bin-${appBuilderVersion(lock)}`
     return { key, paths }
   }
   if (kind === "cargo") {

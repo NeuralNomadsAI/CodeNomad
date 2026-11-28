@@ -19,12 +19,12 @@ Bindings are saved in CodeNomad UI configuration and affect clients sharing that
 
 ## Renderer defaults {#renderer-defaults}
 
-`Mod` means `Ctrl` on Windows/Linux and `Cmd` on macOS. These are defaults, not guarantees that the OS/native host will deliver the key. Scope matters: the same key can serve a different action on the home page, in a composer or in search.
+`Mod` means `Ctrl` on Windows/Linux and `Cmd` on macOS. These are defaults, not guarantees that the OS/native host will deliver the key. Scope matters: the same key can serve a different action in an empty tab, in a composer or in search.
 
 | Action | Default |
 | --- | --- |
 | Open command palette | `Mod+Shift+P` |
-| New instance / Browse for a folder on the home page | `Mod+N` |
+| New instance / Open an empty tab | `Mod+N` |
 | Close app tab | `Mod+W` |
 | Previous / next app tab | `Mod+[` / `Mod+]` |
 | App tab 1–9 | `Mod+1` through `Mod+9` |
@@ -73,3 +73,5 @@ Plain browser windows also retain their browser shortcuts. If a binding never re
 Digit-row and square-bracket shortcuts use physical key positions for recording, execution and conflict checks, including AZERTY/QWERTZ layouts. Other keys use their logical values. Record on the keyboard you intend to use, then check the displayed result.
 
 During IME composition, text entry takes precedence. Prompt history and Escape actions also depend on focus, picker/shell state and the current operation; do not assume every ArrowUp or Escape is an unconditional global action. On desktop, sending moves focus to the conversation so arrows, paging keys and Space scroll it; typing a character returns to the composer with that character, and **Focus prompt** returns there before using prompt history.
+
+[New instance](projects.md#new-instance-launcher).

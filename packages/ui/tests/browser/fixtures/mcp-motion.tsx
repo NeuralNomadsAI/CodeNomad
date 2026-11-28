@@ -6,6 +6,7 @@ import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { shellStore } from "../../../src/stores/shells"
+import { sdkManager } from "../../../src/lib/sdk-manager"
 import type { Instance } from "../../../src/types/instance"
 import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
@@ -17,6 +18,7 @@ const client = { mcp: {
   connect: (input: any) => mutate(input, "connected"),
   disconnect: (input: any) => mutate(input, "disabled"),
 } }
+;(sdkManager as any).clients.set("mcp-motion:/workspaces/mcp-motion/instance", client)
 const [instance, setInstance] = createSignal<Instance>({
   id: "mcp-motion", folder: "/fixture", port: 0, pid: 0, proxyPath: "/fixture", status: "ready", client: client as any,
   metadata: { mcpStatus: { location: { directory: "/fixture" }, data: names.map(name => ({ name, status: { status: "connected" } })) } as any },
@@ -50,7 +52,7 @@ function Fixture() {
     <StatusTab instanceId="mcp-motion" instance={instance()} t={t} activeSession={() => null}
       isActive={() => true} expandedItems={expanded} onExpandedItemsChange={setExpanded}
       customization={() => ({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-        hiddenStatusSectionIds: ["tokens", "yolo-mode", "provider-usage", "background-processes", "plugins"],
+        hiddenStatusSectionIds: ["tokens", "permissions", "provider-usage", "background-processes", "plugins"],
       })} onCustomizationChange={() => {}} />
   </main>
 }

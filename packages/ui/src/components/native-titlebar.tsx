@@ -4,7 +4,6 @@ import { useI18n } from "../lib/i18n"
 import { isMac } from "../lib/keyboard-utils"
 import { runtimeEnv } from "../lib/runtime-env"
 import { runNativeWindowAction, showNativeTitlebarMenu, startNativeWindowDrag, type NativeTitlebarMenu } from "../lib/native/window-controls"
-import AppActions from "./app-actions"
 import { BrandLogo } from "./brand-logo"
 
 interface NativeTitlebarProps {
@@ -12,8 +11,6 @@ interface NativeTitlebarProps {
   /** Show the CodeNomad mark instead of the title text; the title remains its accessible name. */
   logo?: boolean
   menus?: boolean
-  /** Hold the app actions on macOS (see `appActionsInTitlebar`). */
-  actions?: boolean
   onClose?: () => void | Promise<void>
 }
 
@@ -24,8 +21,6 @@ const macOS = isMac()
 
 /** Local desktop application windows draw this title bar instead of a native one. */
 export const hasNativeTitlebar = runtimeEnv.windowContext === "local" && runtimeEnv.host !== "web"
-/** On macOS the main window's title bar, otherwise empty, holds the app actions instead of the project tab bar. */
-export const appActionsInTitlebar = hasNativeTitlebar && macOS
 
 /**
  * The traffic lights never zoom, so the macOS bar undoes the host's page zoom from
@@ -80,9 +75,6 @@ export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
         </nav>
       </Show>
       <div class="native-titlebar-drag-region" />
-      <Show when={props.actions && macOS}>
-        <AppActions class="native-titlebar-actions" />
-      </Show>
       <Show when={!macOS}>
         <div class="native-titlebar-controls">
           <button type="button" class="native-titlebar-button" data-titlebar-interactive onClick={() => void runNativeWindowAction("minimize")} aria-label={t("window.controls.minimize")} title={t("window.controls.minimize")}>

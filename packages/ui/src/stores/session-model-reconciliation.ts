@@ -1,4 +1,5 @@
 import { getLogger } from "../lib/logger"
+import { backendEvents } from "../lib/server-events"
 import { instances } from "./instances"
 import { getRootClient } from "./opencode-client"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
@@ -19,8 +20,9 @@ export function reconcileSessionModel(instanceId: string, sessionId: string): Pr
     return previous.promise
   }
   const owner = instances().get(instanceId)?.client
+  const signal = backendEvents.signalForInstance(instanceId)
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const current = () => Boolean(owner && instances().get(instanceId)?.client === owner &&
+  const current = () => Boolean(!signal?.aborted && owner && instances().get(instanceId)?.client === owner &&
     getOpenCodeInstanceGeneration(instanceId) === generation)
   const state = { dirty: false, current, promise: Promise.resolve() }
   state.promise = serializeSessionAction(instanceId, sessionId, async () => {
@@ -28,13 +30,14 @@ export function reconcileSessionModel(instanceId: string, sessionId: string): Pr
       state.dirty = false
       const captured = sessions().get(instanceId)?.get(sessionId)
       if (!current() || !captured) return
-      const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: AbortSignal.timeout(8000) })
+      const timeout = AbortSignal.timeout(8000)
+      const info = await getRootClient(instanceId).session.get({ sessionID: sessionId }, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
       if (!current()) return
       if (state.dirty) continue
-      withSession(instanceId, sessionId, session => {
+      withSession(instanceId, sessionId, (session, previous) => {
         // Session replacement or another authoritative refresh owns its newer
         // selection; never resurrect a removed session or overwrite that value.
-        if (session.model !== captured.model || !info.model) return false
+        if (previous.model !== captured.model || !info.model) return false
         session.model = { providerId: info.model.providerID, modelId: info.model.id }
       })
     } while (state.dirty)

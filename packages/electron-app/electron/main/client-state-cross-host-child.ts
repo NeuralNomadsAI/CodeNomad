@@ -75,5 +75,5 @@ process.stdout.write(`${JSON.stringify({
 process.stdin.resume()
 process.stdin.once("end", () => {
   if (manager) void manager.drainAndReleasePrimary().finally(() => process.exit())
-  else registration?.release()
+  else void registration?.release().catch((error) => { console.error(error); process.exitCode = 1 })
 })

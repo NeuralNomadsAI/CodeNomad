@@ -117,7 +117,7 @@ test("stream disposal aborts pending work and revokes allocated audio", () => wi
   await page.evaluate(() => (window as any).fixture.toggle("a"))
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 2)
   await page.evaluate(() => (window as any).fixture.resolve(1))
-  await page.waitForFunction(() => (window as any).fixture.snapshot().audios.length === 1)
+  await state(page, "a", "playing")
   await page.evaluate(() => (window as any).fixture.remove("a"))
   const stopped = await snapshot(page)
   assert.deepEqual(stopped.aborted, [true, true])
@@ -125,10 +125,17 @@ test("stream disposal aborts pending work and revokes allocated audio", () => wi
   assert.deepEqual(stopped.audios[0], { paused: true, src: "", loads: 1 })
 }))
 
+test("streaming feeds later chunks while the audio decoder waits for enough data to play", () => withPage(async page => {
+  await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "split", "streaming"); f.toggle("a") })
+  await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
+  await page.evaluate(() => (window as any).fixture.resolveSplit(0))
+  await page.waitForFunction(() => (window as any).fixture.snapshot().audios[0]?.paused === false)
+}))
+
 test("stop and disposal fence buffered responses and capabilities still loading", () => withPage(async page => {
   await page.evaluate(() => { const f = (window as any).fixture; f.mount("a", "buffered"); f.toggle("a") })
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 1)
-  await page.evaluate(() => { const f = (window as any).fixture; f.stop("a"); f.resolve(0) })
+  await page.evaluate(() => { const f = (window as any).fixture; f.toggle("a"); f.resolve(0) })
   await state(page, "a", "idle")
   await page.evaluate(() => (window as any).fixture.toggle("a"))
   await page.waitForFunction(() => (window as any).fixture.snapshot().pending === 2)
@@ -139,6 +146,60 @@ test("stop and disposal fence buffered responses and capabilities still loading"
   })
   // Cross one event-loop turn so all deliberately resolved continuations run.
   await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
-  assert.equal((await snapshot(page)).pending, 2, "disposed capability wait must not start synthesis")
+  const stopped = await snapshot(page)
+  assert.equal(stopped.pending, 2, "disposed capability wait must not start synthesis")
+  assert.deepEqual(stopped.aborted, [true, true])
+  assert.equal(stopped.audios.length, 0)
+}))
+
+test("a retained action cannot start synthesis after its view unmounts", () => withPage(async page => {
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    f.mount("a", "removed")
+    void f.toggleAfterRemove("a")
+  })
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)))
+  const stopped = await snapshot(page)
+  assert.equal(stopped.pending, 0)
+  assert.equal(stopped.audios.length, 0)
+}))
+
+test("buffered playback uses the binary route without newer AbortSignal methods", () => withPage(async page => {
+  await page.route("**/api/speech/synthesize/stream", route => route.fulfill({
+    status: 200, contentType: "audio/mpeg", body: Buffer.from([97]),
+  }))
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    f.useRealTransport()
+    f.mount("a", "buffered")
+    Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
+    Object.defineProperty(AbortSignal.prototype, "throwIfAborted", { value: undefined, configurable: true })
+    f.toggle("a")
+  })
+  await state(page, "a", "playing")
+  await page.evaluate(() => (window as any).fixture.toggle("a"))
+  await state(page, "a", "idle")
+  assert.deepEqual((await snapshot(page)).revoked, ["blob:speech-1"])
+}))
+
+for (const classic of [false, true]) test(`${classic ? "Classic" : "manual"} synthesis 401 leaves the delayed pairing check alive without AbortSignal.any`, () => withPage(async page => {
+  await page.route("**/api/speech/synthesize/stream", route => route.fulfill({ status: 401, json: { error: "Expired" } }))
+  let release!: () => void
+  const afterPlayback = new Promise<void>(resolve => { release = resolve })
+  await page.route("**/api/auth/status", async route => {
+    await afterPlayback
+    await route.fulfill({ json: { authenticated: false, pairingRequired: true } })
+  })
+  await page.evaluate(classic => {
+    const f = (window as any).fixture
+    f.useRealTransport()
+    Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true })
+    if (classic) f.startClassic()
+    else { f.mount("a", "auth"); f.toggle("a") }
+  }, classic)
+  if (classic) await page.waitForFunction(() => (window as any).fixture.classicFailed())
+  else await state(page, "a", "idle")
+  release()
+  await page.waitForFunction(() => (window as any).fixture.authRequired())
   assert.equal((await snapshot(page)).audios.length, 0)
 }))

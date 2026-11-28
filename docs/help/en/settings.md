@@ -1,16 +1,19 @@
 # Settings and layout
 
+Preferences uses the selected project's server for project settings, providers, statistics and memory, including **Tidy up**. An unavailable server keeps project controls inactive. Device settings and SideCars stay local. Images and Web search settings follow the project's server, including that server's global defaults.
+
 ## Open settings and identify the scope {#open-settings}
 
-1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
+1. Open **Settings** with the **Open settings** gear in the tab bar. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
-Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
+Most choices apply immediately, including Mission preferences, which save each change as you make it. Voice API settings, custom palette colors and Config Files keep an explicit **Save**. Hover or focus the **i** beside a setting's title for a short explanation. When it links to help, click, press Enter or tap to open the relevant section in your interface language, in the system browser or a separate browser tab. Tooltip-only icons show their explanation on tap. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
 
 | State | What it controls |
 | --- | --- |
-| CodeNomad configuration | UI preferences, speech, SideCars and server settings for clients using that configuration. Preferences without a badge are not stored per device either; **Server setting** marks server-side configuration such as Speech, SideCars, Remote Control and Environment Variables. |
+| CodeNomad configuration | Shared UI preferences and **Server setting** controls, including Voice API settings, SideCars, Remote Control and Environment Variables. |
+| Voice engines | The [desktop dictation engine](voice.md#desktop-dictation) applies across projects on this device. The [conversation engine](voice.md#conversation) is selected for the desktop profile or the browser profile and connected server. |
 | Window/project-tab layout | Open panels, selected tabs, reader state and restorable drafts/layout. These are not OpenCode configuration. |
 | Global/Project OpenCode settings | Native plugin/configuration changes at their displayed scope. Project controls require an active project/Location. |
 | Desktop data profile | Native windows, restore state and browser storage, independently of the configuration file and shared OpenCode service. See [Desktop windows and data](desktop.md). |
@@ -37,7 +40,13 @@ If colors become hard to read, set **Contrast → On**. You can also select a bu
 
 In **Settings → General**, **Keep the computer awake while CodeNomad is running** is off by default. Turn it on to prevent system sleep while a local CodeNomad window is open (including minimized), even when no session is working; the screen can still turn off. When off, CodeNomad keeps the computer awake only while a session is working. This option appears only in local desktop-app windows and Preferences; it is hidden in browser and remote views.
 
+## New conversation permissions {#new-conversation-permissions}
+
+In **Settings → General → New conversation permissions**, choose **Autonomous** (the default) or **Supervised** for new top-level conversations you create in CodeNomad. This leaves existing conversations unchanged. To change one, open [Status → Permissions](permissions.md#conversation-mode) in that conversation.
+
 ## Persistent agent memory {#agent-memory}
+
+Authenticated users over Remote Control, verified HTTPS, LAN or an installed PWA can review, edit and **Tidy up** memory for the selected local or remote project.
 
 CodeNomad attempts to remove the session's stale memory instructions; if that cleanup also fails, the previous instructions can remain until a successful refresh.
 
@@ -67,26 +76,30 @@ Drag a docked panel's inner edge to resize it.
 2. Open **Customize right panel** in the right panel. Use checkboxes to choose built-in tabs and Status sections; at least one Status section remains visible. Drag across these checkboxes to set several at once.
 3. Drag right-panel tabs to reorder them. Use **Reset** to restore built-in layout choices.
 
-Reorder any Status section by dragging or with Up/Down keys. Visibility and order persist across reloads.
+Reorder any Status section by dragging its grip or with Up/Down keys. Visibility and order persist across reloads.
 
-Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
+Status includes token information, Permissions, provider Usage, background shells, MCP and Plugins. While the conversation has a [goal](conversations.md#goal), a goal line above these sections shows it; that line is not a section and cannot be hidden or moved. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
 
-Built-in layout is window layout, not a project mutation. Extension checkboxes are different: they activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
+Built-in layout belongs to the window. The [Missions checkbox](missions.md#activation) also changes Global plugin activation and is skipped when dragging across checkboxes. Extension checkboxes activate code across all projects using the configuration. **Reset** does not change extension consent. See [Panel extensions](extensions.md).
 
 ## Transcript detail and composer size {#transcript-composer}
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
-2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**) for thinking, diagnostics, tool inputs, tokens, system messages and each tool type, or use the conversation's **Message content** popup, which shares these choices.
+2. Set each row's **Default state** (**Hidden**, **Collapsed** or **Expanded**), or use the conversation's **Message content** popup, which shares these choices. For **Tool groups**, **Disabled** gives each call its own card; **Collapsed** and **Expanded** set how groups open.
 3. In **General**, check **Show the message timeline**, **Put the first/latest message arrows under the timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
 The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.
 
-Composer height follows the visible conversation, including the software keyboard: minimum 8% with a 44 px floor, maximum 60%. Manual height is remembered proportionally; narrow width and long text do not raise those limits. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
+Manual composer sizing uses the conversation height without the on-screen keyboard: minimum 8% with a 44 px floor, maximum 60%. Narrow width and long text do not raise those limits. When the keyboard opens, the field can shrink temporarily to leave room for controls and messages, without changing the saved height proportion. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
 
 ## Notifications and badges {#notifications}
 
-1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
+For a project tab on another CodeNomad server, notifications include the server name. **View conversation** opens that exact project and conversation; detaching the server clears its notices.
+
+Compaction of technical Mission sessions is silent.
+
+1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request permission** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
 
@@ -95,6 +108,8 @@ By default, **A session needs your answer** and **A session finished** go to Sys
 Browser/OS permission belongs to the device and application origin; a saved preference cannot override a denial. If blocked, enable notifications in browser or operating-system settings, then return here. Unsupported environments keep the System column disabled.
 
 The bell/history unread count, which only counts notifications routed to History, drives the browser favicon dot and native application badge.
+
+If your system supports notification actions, clicking a notification opens the conversation if it’s still open. Whether the window comes to the front depends on your desktop environment.
 
 ## Advanced options {#advanced}
 
@@ -111,4 +126,4 @@ The bell/history unread count, which only counts notifications routed to History
 | Hold long assistant replies | Stops automatic following when a streaming reply grows beyond the viewport. |
 | Environment Variables | Applied server-side before each prompt or session command; reads do not update already-running execution. See [OpenCode setup](opencode.md). |
 
-For keyboard configuration use [Keyboard shortcuts](shortcuts.md); for voice controls use [Voice input and playback](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).
+For keyboard configuration use [Keyboard shortcuts](shortcuts.md); **Voice** groups [Dictation, Playback and Conversation](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).

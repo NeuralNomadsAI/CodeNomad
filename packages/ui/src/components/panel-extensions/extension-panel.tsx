@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-j
 import type { PanelExtensionContext, PanelExtensionSummary } from "../../../../server/src/api-types"
 import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
 import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
@@ -24,17 +25,24 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   let authenticated = false
   const handshake = generateUUID()
   const controller = new AbortController()
-  const send = (value: unknown) => { if (!disposed && authenticated) port?.postMessage(value) }
+  const operation = captureBackendOperation(props.instanceId, controller.signal)
+  const send = (value: unknown) => { if (!disposed && operation.current() && authenticated) port?.postMessage(value) }
   const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
   // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
   const manifest = props.entry.manifest
+  const items = manifest.apiVersion === 3 || (manifest.apiVersion === 4 && manifest.permissions.includes("repository.workItems.read"))
+    ? useWorkItemsChannel({ ...authority, captureOperation: captureBackendOperation }) : undefined
+  const api4 = manifest.apiVersion === 4
+    ? useApi4Channel({ ...authority, name: manifest.name, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host }) : undefined
+  // Each channel ignores the other's messages.
   const receive = manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
-    : manifest.apiVersion === 3 ? useWorkItemsChannel(authority)
-      : manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host })
-        : () => {}
-  void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, controller.signal).then(result => {
-    if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
-  }).catch(() => { if (!disposed) setFailed(true) })
+    : (value: unknown) => { void items?.(value); void api4?.(value) }
+  void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, operation.signal).then(result => {
+    if (!disposed && operation.current()) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
+  }).catch(() => { if (!disposed && operation.current()) setFailed(true) })
+  const revoke = () => { authenticated = false; port?.close(); api4?.dispose(); setDocument(undefined) }
+  operation.signal.addEventListener("abort", revoke, { once: true })
+  onCleanup(() => operation.signal.removeEventListener("abort", revoke))
   const publish = () => {
     const style = getComputedStyle(globalThis.document.documentElement)
     const colors = Object.fromEntries(Object.entries({ background: "--surface-secondary", text: "--text-primary",
@@ -43,7 +51,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     colors.surface = resolveCssColor("--surface-canvas")
     const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
       ...(props.entry.manifest.apiVersion >= 2 ? { colors } : {}) }
-    if (authenticated) port?.postMessage({ type: "context", context })
+    if (operation.current() && authenticated) port?.postMessage({ type: "context", context })
   }
   createEffect(publish)
   const palette = new MutationObserver(publish)
@@ -51,14 +59,15 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   onCleanup(() => palette.disconnect())
   onCleanup(() => { disposed = true; controller.abort(); port?.close() })
   const loaded = () => {
+    if (!operation.current()) return
     // Never reconnect the capability channel after self-navigation/reload.
-    if (initialized) { authenticated = false; port?.close(); setDocument(undefined); setFailed(true); return }
+    if (initialized) { authenticated = false; port?.close(); api4?.dispose(); setDocument(undefined); setFailed(true); return }
     initialized = true
     const channel = new MessageChannel()
     port = channel.port1
     port.onmessage = event => {
-      if (!disposed && !authenticated && event.data?.type === "ready" && event.data.handshake === handshake) { authenticated = true; publish() }
-      else if (!disposed && authenticated) void receive(event.data)
+      if (!disposed && operation.current() && !authenticated && event.data?.type === "ready" && event.data.handshake === handshake) { authenticated = true; publish() }
+      else if (!disposed && operation.current() && authenticated) void receive(event.data)
     }
     frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
   }

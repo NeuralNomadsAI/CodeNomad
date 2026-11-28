@@ -68,6 +68,7 @@ export interface Session extends Omit<SDKSession, "parentID" | "model"> {
   generationAdmissionToken?: number // Guards recovery state while a new input is being admitted
   generationAdmissionEpoch?: number // Retains the local admission fence after its acknowledgement
   generationAdmissionIdleBoundary?: number // Native idle baseline captured at admission, independent of provisional metadata reads
+  idleReadAdmissionEpoch?: number // Latest acknowledged admission covered by an authoritative idle read
   modelSelectionPending?: boolean // Protects optimistic model choice from catalog snapshots during its native write
 }
 

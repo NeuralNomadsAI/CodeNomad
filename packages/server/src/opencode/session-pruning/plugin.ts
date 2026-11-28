@@ -8,18 +8,19 @@ import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "./history-contract"
 import { queryBoundHistory, pruneBoundBatch } from "./history-service"
-import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "./navigation-contract"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema, sessionAttachmentInputSchema, sessionAttachmentResultSchema } from "./navigation-contract"
 import { readOutlinePreviews } from "./outline-preview"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
 import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "./assets-contract"
 import { listSessionAssets, readSessionAsset } from "./assets-store"
-import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationInputSchema,
+import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationNativeInputSchema,
   imagesConversationResultSchema, imagesInputSchema, imagesResultSchema } from "./assets-gallery-contract"
 import { galleryImageReference, listGalleryImages, readGalleryImage } from "./assets-gallery"
 import { imagesConversationRpc } from "./assets-conversation"
 import { historyRankedInputSchema, historyRankedResultSchema } from "./history-ranked-contract"
 import { queryBoundRankedHistory, registerSessionSearch } from "./history-ranked-service"
+import { readStoredUserFile } from "./user-files"
 
 export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: {
   ...pruningRpcDefinition.methods,
@@ -27,6 +28,8 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   historyRanked: { input: historyRankedInputSchema, output: historyRankedResultSchema },
   pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
   window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
+  windowUserFilesV1: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
+  sessionAttachment: { input: sessionAttachmentInputSchema, output: sessionAttachmentResultSchema },
   outline: { input: outlineInputSchema, output: outlineResultSchema },
   // Versioned rather than extending `outline`, whose older callers reject new keys.
   outlineLayout: { input: outlineInputSchema, output: outlineLayoutResultSchema },
@@ -36,7 +39,7 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   images: { input: imagesInputSchema, output: imagesResultSchema },
   imageRead: { input: imageReadInputSchema, output: imageReadResultSchema },
   imageReference: { input: imageReferenceInputSchema, output: imageReferenceResultSchema },
-  imagesConversation: { input: imagesConversationInputSchema, output: imagesConversationResultSchema },
+  imagesConversation: { input: imagesConversationNativeInputSchema, output: imagesConversationResultSchema },
 } })
 
 // Native local-plugin entry point. Only a user's pruning RPC changes content.
@@ -57,6 +60,10 @@ export default Plugin.define({
       imagesConversation: (input, call) => imagesConversationRpc(ctx, input, call.signal),
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
+      windowUserFilesV1: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readNavigationWindow(db, scope, input.target, call.signal, true)),
+      sessionAttachment: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        async (db, scope) => readStoredUserFile(db, scope, input, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after, input.known)),
       outlineLayout: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,

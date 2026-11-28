@@ -219,6 +219,16 @@ it("preserves unauthenticated, runtime-override and disabled-auth password error
   }
 })
 
+it("keeps disabled auth open when another local app set an undecodable cookie", async () => {
+  const f = await fixture({ dangerouslySkipAuth: true })
+  try {
+    const status = await f.app.inject({ url: "/api/auth/status", headers: { cookie: "other_app=50%" } })
+    assert.equal(status.json().authenticated, true)
+  } finally {
+    await f.close()
+  }
+})
+
 it("keeps bootstrap password changes ordered and recovers the queue after a persistence failure", async () => {
   const f = await fixture({ persist: false, generateToken: true })
   try {

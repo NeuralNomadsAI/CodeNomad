@@ -6,6 +6,7 @@ describe("memory integrations", { concurrency: 1 }, async () => {
   await import("./rules.integration")
   await import("./project-identity.integration")
   await import("./lock.integration")
+  await import("./cancellation.integration")
   await import("../server/routes/memory.integration")
   await import("./store.integration")
 })

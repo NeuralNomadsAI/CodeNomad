@@ -46,8 +46,21 @@ challenge as history queries. Never expose generic RPC or SQL access through the
   isolated OpenCode fixture compares their complete payloads with native export
   and single-message reads, with media refs inlined as native reads return them
   (`session-pruning/media-blob.ts`). Budgets are 16 MiB per message and 24 MiB per
-  window of that native form; oversized windows fail explicitly instead of silently
-  omitting content.
+   window of that native form; oversized windows fail explicitly instead of silently
+   omitting content.
+- `X-CodeNomad-User-Files: reference-v1` requests user attachment labels and
+  content digests without inline bytes. The accepted window identifies the
+   projection with `userFiles: "reference-v1"` and applies the same response
+   budgets, with shorter pages when the raw projection input reaches 64 MiB.
+   `/api/events?userFiles=reference-v1` applies the projection to queued user
+   input. Native inbox frames beyond the shared reader's 16 Mi-unit limit use
+   references before routing; streams without the opt-in reconnect for an
+   authoritative queue read. The raw inbox frame bound is 32 MiB. Clients fetch
+   an attachment by session, message, ordinal and digest from
+   `session-attachment`, up to 8 MiB. The plugin reads the stored message and
+   its owned blobs, then confirms that the requested digest is current before
+   publication. Queued files are readable once the message is stored; external
+   files remain unavailable.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
   return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace
@@ -137,7 +150,12 @@ the rail's `foldTimelineSegments` both group through `groupTranscriptRows`
 text or thinking around it shares one row and one marker; hidden thinking and
 system context leave the rail but still end the row before them. Resident messages use their exact part-level markers; indexed
 messages outside the window take their native sequence position around them and
-derive their markers from the outline's `layout`. Markers are keyed
+derive their markers from the outline's `layout`. Each resident message
+publishes its marker structure independently: the merge and fold keep their
+inputs while streamed bodies and tool payloads leave that structure unchanged.
+Mounted markers get localized labels and bounded accessible excerpts from the
+current record; the open preview reads current content independently of geometry.
+Markers are keyed
 `messageId:type:ordinal`, with ordinals counted over all of a message's parts,
 displayed or omitted, so an indexed marker keeps its identity and target when its
 window loads. A run the omitted-parts placeholder splits keeps its id before it and
@@ -197,8 +215,13 @@ account for off-window messages as well as the local scroll offset.
 
 ### Transcript scroll ownership and trace
 
-`VirtualFollowList.writeScroll(reason, op)` opens the programmatic window and records synchronous targets. Every write
-is a DOM write: the list never issues Virtua's imperative operations
+`VirtualFollowList.writeScroll(reason, op)` opens the programmatic window and records synchronous targets. Write intents
+merge: intents issued in one task coalesce into a single DOM write per microtask (a navigation or correction keeps the
+slot over a pin re-issue in the same task), the follow writers (`content-grew`, `observe`, `explicit-pin`) apply at most
+once per frame through a next-frame marker, and reactive effect re-runs never write `scrollTop` synchronously. An
+observation applies a merged pending write before reading, a user gesture or positioning teardown drops it, and a state
+capture forces it. Every write is
+a DOM write: the list never issues Virtua's imperative operations
 (`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua 0.53 such an operation reapplies
 its fixed target on every item or viewport measurement until 150 ms after the last
 one; the rows a gesture mounts, or a streaming tail, keep re-arming it, and nothing
@@ -297,6 +320,12 @@ the claim. A tap arms nothing.
 List positions are read from the DOM, never from Virtua's `scrollOffset`, which lags a write
 until its scroll event; a following list is captured at the bottom (without an
 anchor) wherever its pin's latest write stands.
+Scroll metrics share one per-epoch measurement (`scrollElementMetrics`, advanced by
+each observation, scroll event, row resize and follow-scroll write): the offset is
+read live and the layout-forcing extents are measured once, shared by the list, the
+nested follow-scroll helpers, the scroll-edge tests and gesture routing;
+`findNestedScroller` caches its walk per event target and revalidates the ancestor
+chain and the consulted geometry instead of probing every ancestor per wheel event.
 
 A search navigation reveals its occurrence once, after placing its message. Inside
 nested code/tool scrollers the reveal writes them directly and emits
@@ -407,7 +436,8 @@ focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb drag
 and viewport anchor stability during streaming and distant jumps.
 
 Hover/focus previews escape raw HTML and do no syntax highlighting; moving
-elsewhere cancels obsolete excerpt work. An unloaded/empty excerpt shows no popup; resident
+elsewhere cancels obsolete excerpt work. A preview follows its mounted marker's
+live content and closes when that marker unmounts. An unloaded/empty excerpt shows no popup; resident
 selected content can supply it directly. A separate 512-excerpt cache survives
 view switches; entries older than 30 seconds revalidate on demand, without
 timers/polling. The opaque surface wraps text and stays inside the viewport;
@@ -441,8 +471,9 @@ A status transition during an incomplete scan cannot discard its progress.
   starting among or split by omitted parts) and a send after a jump.
   `session-outline-projection.test.ts` compares the plugin's layouts, projected,
   with the markers `buildTimelineSegments` builds for the same native steps;
-  `streaming-outline.test.ts` counts full-history projections and rail folds per
-  token, including after a hidden tool under Nothing.
+  `streaming-outline.test.ts` counts full-history projections and rail folds
+  during native text growth, including after a hidden tool under Nothing, and
+  checks that focus and live excerpts stay on the same marker.
 - `timeline-sync.qualification.ts` (opt-in, `npm run qualify:browser:timeline-sync`)
   measures marker agreement and click accuracy on replayed native session stores.
 - `test-session-navigation-native.mjs`, run by the isolated pruning fixture, checks

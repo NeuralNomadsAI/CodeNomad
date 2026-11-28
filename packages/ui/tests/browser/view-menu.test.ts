@@ -35,6 +35,7 @@ for (const host of ["electron", "tauri"]) test(`${host}: native view state follo
     } } }
   ` })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/api/panel-extensions", route => route.fulfill({ json: [] }))
   try {
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).fixture && (window as any).viewSnapshot?.state.leftPanel.checked))

@@ -144,7 +144,7 @@ test("assigns initially empty commands, persists, clears and resets them with li
     await page.reload()
     await page.waitForFunction(() => Boolean((window as any).fixture))
     assert.equal(await row(page, "new-temporary-instance").locator(".hotkeys-binding").innerText(), "Ctrl+Alt+U")
-    await page.evaluate(() => { (window as any).fixture.setHome(true); (window as any).fixture.setHasInstance(false) })
+    await page.evaluate(() => { (window as any).fixture.setHasInstance(false) })
     await trigger(page, "Control+Alt+u")
     assert.equal(await page.evaluate(() => (window as any).fixture.temporaryInstances()), 1, "application commands also work at home")
     await bind(page, "new-temporary-instance", "Control+n")
@@ -238,9 +238,9 @@ test("dispatches real palette actions with their disabled state, session context
       await page.evaluate(id => (window as any).fixture.setSessionId(id), session)
       await trigger(page, "Control+Alt+r")
     }
-    await page.evaluate(() => { (window as any).fixture.setSessionId("session"); (window as any).fixture.setHome(true) })
+    await page.evaluate(() => { (window as any).fixture.setSessionId("session"); (window as any).fixture.setHasInstance(false) })
     await trigger(page, "Control+Alt+r")
-    await page.evaluate(() => { (window as any).fixture.setHome(false); (window as any).fixture.setHasInstance(false) })
+    await page.evaluate(() => { (window as any).fixture.setHasInstance(false) })
     await trigger(page, "Control+Alt+r")
     assert.equal(await page.evaluate(() => (window as any).fixture.redos()), 1, "hidden or missing session cannot receive a command")
     await page.evaluate(() => {

@@ -1,7 +1,7 @@
 import { createMemo, createSignal } from "solid-js"
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { getLogger } from "../lib/logger"
 import type { SideCar } from "../../../server/src/api-types"
 import { getAbortReason, runAbortable } from "./app-session-restore-timeout"
@@ -101,12 +101,12 @@ function removeSidecar(sidecarId: string) {
   })
 }
 
-serverEvents.on("sidecar.updated", (event) => {
+serverEvents.forInstance(() => undefined).on("sidecar.updated", (event) => {
   if (event.type !== "sidecar.updated") return
   upsertSidecar(event.sidecar)
 })
 
-serverEvents.on("sidecar.removed", (event) => {
+serverEvents.forInstance(() => undefined).on("sidecar.removed", (event) => {
   if (event.type !== "sidecar.removed") return
   removeSidecar(event.sidecarId)
 })

@@ -104,31 +104,45 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
       setting.options.map((option) => ({ value: String(option.value), label: t(option.labelKey) })),
     )
     const selectedOption = createMemo(() => options().find((option) => option.value === String(readValue(setting) ?? "")))
+    const [open, setOpen] = createSignal(false)
+    const [saving, setSaving] = createSignal(false)
+    const [saveFailed, setSaveFailed] = createSignal(false)
 
     return (
       <div class={`settings-toggle-row ${disabled() ? "opacity-60" : ""}`}>
         <div>
           <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} help={setting.help} />}</Show></div>
           <Show when={setting.subtitleKey}>{(key) => <div class="settings-toggle-caption">{t(key())}</div>}</Show>
+          <Show when={saveFailed() && setting.saveErrorKey}>{key => <div role="alert" class="settings-toggle-caption">{t(key())}</div>}</Show>
         </div>
         <Select<SelectOption>
           value={selectedOption()}
-          onChange={(option) => {
-            if (!option) return
-            setOverride(setting.id, option.value)
-            setting.set(option.value)
+          onChange={async (option) => {
+            if (!option || saving()) return
+            const result = setting.set(option.value)
+            if (!result) {
+              setOverride(setting.id, option.value)
+              return
+            }
+            setSaving(true)
+            setSaveFailed(false)
+            try { setSaveFailed(!await result) }
+            catch { setSaveFailed(true) }
+            finally { setSaving(false) }
           }}
           options={options()}
           optionValue="value"
           optionTextValue="label"
           disabled={disabled()}
+          open={open()}
+          onOpenChange={next => { if (!next || !saving()) setOpen(next) }}
           itemComponent={(itemProps) => (
             <Select.Item item={itemProps.item} class="selector-option">
               <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
             </Select.Item>
           )}
         >
-          <Select.Trigger class="selector-trigger" aria-label={t(setting.titleKey)}>
+          <Select.Trigger class="selector-trigger" aria-label={t(setting.titleKey)} aria-disabled={saving() || undefined}>
             <div class="flex-1 min-w-0">
               <Select.Value<SelectOption>>
                 {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}

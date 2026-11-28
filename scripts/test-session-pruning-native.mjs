@@ -126,7 +126,7 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
   // Runtimes with optional blob storage externalize tool files; others ignore the key.
-  experimental: { media_blob: true, ...(splitParts ? { part_rows: true } : {}) },
+  experimental: { media_blob: true, part_rows: splitParts },
 })
 function start() {
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--log-level", "debug", "--print-logs"], { cwd: root, env, windowsHide: true })
@@ -217,12 +217,7 @@ try {
         const next = await proxy.shell.output({ id: shell.data.id, location: { directory: root }, cursor: output.data.cursor })
         assert((output.data.output + next.data.output).includes("background-contract-fixture"))
       } finally { await proxy.shell.remove({ id: shell.data.id, location: { directory: root } }) }
-      const { createOpencodePermissionReplier } = await tsImport("../packages/server/src/permissions/opencode-replier.ts", import.meta.url)
-      const yolo = createOpencodePermissionReplier({ workspaceManager: {
-        get: () => ({ path: root }), getSharedServiceClient: async () => client,
-        ownsLocation: async (_id, location) => path.resolve(location.directory) === path.resolve(root) && location.workspaceID === undefined,
-      } })
-      for (const mode of ["ui", "yolo", "reject"]) {
+      for (const mode of ["once", "reject"]) {
         primaryCount = 0
         probeName = "permission_probe"
         try {
@@ -237,14 +232,13 @@ try {
             console.error("Permission fixture", mode, primaryCount, JSON.stringify((await proxy.message.list({ sessionID, limit: 8 })).data))
             throw error
           }
-          if (mode === "yolo") await yolo({ instanceId: "native", sessionId: sessionID, permissionId: pending.id })
-          else await proxy.permission.reply({ sessionID, requestID: pending.id, decision: mode === "reject" ? "reject" : "once" })
+          await proxy.permission.reply({ sessionID, requestID: pending.id, decision: mode })
           await wait()
           assert(!(await proxy.permission.request.list({ location: { directory: root } })).data.some(item => item.id === pending.id))
         } finally { probeName = "prune_probe" }
       }
       console.log("PASS: real proxy voice-off/on prompt, command, session Shell, pending inbox delivery/cancel, interrupt/wait")
-      console.log("PASS: real native permissions through UI and server Yolo, including rejection")
+      console.log("PASS: real native permission replies through the UI proxy")
     },
   })
   primaryCount = 0

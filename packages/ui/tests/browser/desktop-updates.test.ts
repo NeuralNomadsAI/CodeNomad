@@ -39,6 +39,7 @@ async function fixture(scenario: string, host = "tauri", context = "local", meta
     let sequence = 0
     w.__TAURI__ = {}
     w.__TAURI_INTERNALS__ = {
+      metadata: { currentWindow: { label: context }, currentWebview: { label: context } },
       transformCallback: (callback: Function) => { callbacks.set(++sequence, callback); return sequence },
       invoke: async (command: string, args: any) => {
         w.calls.push({ command, args })

@@ -4,11 +4,13 @@ Usa la interfaz de navegador en un teléfono o tableta para continuar trabajando
 
 ## Conectarse desde un teléfono o tableta {#connect}
 
+Los servidores guardados están disponibles en **Explorar** en una pestaña vacía y en Configuración → Servidores. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
+
 1. En el anfitrión, abre **Configuración → Acceso remoto → Control remoto** y elige **Iniciar control remoto**.
 2. Escanea el QR de emparejamiento con tu dispositivo móvil y abre el enlace en el navegador que quieras seguir usando.
 3. Como alternativa, configura el [acceso directo](remote-access.md), abre la URL HTTPS accesible y de confianza del anfitrión e inicia sesión con su contraseña de servidor.
 
-Control remoto requiere emparejar el dispositivo; las conexiones directas requieren enrutamiento, un listener accesible y autenticación. No uses `localhost` en el teléfono para llegar a tu equipo de trabajo. Perder los datos del sitio o cambiar de perfil de navegador puede exigir iniciar sesión o emparejarse de nuevo; consulta [Control remoto](remote-control.md).
+Control remoto requiere emparejar el dispositivo; las conexiones directas requieren enrutamiento, un listener accesible y autenticación. No uses `localhost` en el teléfono para llegar a tu equipo de trabajo. Perder los datos del sitio o cambiar de perfil de navegador puede exigir iniciar sesión o emparejarse de nuevo; consulta [Control remoto](remote-control.md). Si el túnel está bloqueado, empareja en una dirección HTTPS de confianza; consulta [Emparejar por HTTPS directo](remote-control.md#direct-https).
 
 ## Instalar la PWA {#install-pwa}
 
@@ -28,7 +30,7 @@ No desactives la autenticación ni la verificación TLS para arreglar la instala
 
 Usa los controles **Panel izquierdo** y **Panel derecho** para abrir la navegación y las herramientas. En disposiciones estrechas, los paneles se superponen a la conversación en lugar de imponer un lienzo de anchura de escritorio; abrir un panel flotante cierra el otro. Elegir una sesión en el panel flotante de sesiones lo cierra para mostrar tu elección, incluso la sesión ya mostrada; **Atrás** y **Adelante** lo mantienen abierto. Las acciones de la cabecera de conversación pasan al menú de desbordamiento cuando falta espacio.
 
-El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El campo cambia de tamaño con la conversación visible, incluido el teclado en pantalla; los borradores largos siguen siendo desplazables. En dispositivos solo táctiles, enviar no vuelve a abrir el teclado en pantalla, para que puedas leer la respuesta; toca el editor para continuar. Mientras una sesión se ejecuta, el menú **Más acciones** del editor ofrece **Poner mensaje en cola** o **Intervenir ahora**, lo que no haga tu envío normal, sin necesitar un atajo de teclado físico. Abrir una interrupción compacta temporalmente el editor sin cambiar su altura guardada ni su borrador. Responde permisos/preguntas en el panel superior, manteniendo accesible su pie de acciones. Consulta [Conversaciones](conversations.md) y [Permisos](permissions.md).
+El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El tamaño del campo se calcula a partir de la altura de la conversación sin el teclado en pantalla. Al abrirse el teclado, el campo puede reducirse temporalmente para dejar espacio a los controles y mensajes, sin cambiar la proporción de altura guardada. Los borradores largos se pueden seguir desplazando. En dispositivos solo táctiles, enviar no vuelve a abrir el teclado en pantalla, para que puedas leer la respuesta; toca el editor para continuar. Mientras una sesión se ejecuta, el menú **Más acciones** del editor ofrece **Poner mensaje en cola** o **Intervenir ahora**, lo que no haga tu envío normal, sin necesitar un atajo de teclado físico. Abrir una interrupción compacta temporalmente el editor sin cambiar su altura guardada ni su borrador. Responde permisos/preguntas en el panel superior, manteniendo accesible su pie de acciones. Consulta [Conversaciones](conversations.md) y [Permisos](permissions.md).
 
 ## Límites de capacidades y conectividad {#limits}
 
@@ -43,4 +45,4 @@ El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El campo
 
 Mantén el backend accesible. Comprueba si una acción terminó antes de reintentar. Cerrar la PWA no detiene un backend independiente; salir de la aplicación de escritorio anfitriona y su backend deja Control remoto no disponible hasta el siguiente inicio.
 
-Cada pestaña del navegador, incluida la PWA instalada, conserva para esa pestaña sus proyectos abiertos, conversaciones seleccionadas, borradores sin enviar y posiciones de desplazamiento: vuelven cuando la página se recarga, o cuando el sistema móvil la recarga tras cambiar de aplicación o bloquear la pantalla. Una pestaña nueva, o una PWA que el sistema cerró por completo, se abre en la página de inicio. Desactívalo para la pestaña en **Configuración → General → Restaurar el estado anterior**.
+Cada pestaña del navegador, incluida la PWA instalada, conserva para esa pestaña sus proyectos abiertos, conversaciones seleccionadas, borradores sin enviar y posiciones de desplazamiento: vuelven cuando la página se recarga, o cuando el sistema móvil la recarga tras cambiar de aplicación o bloquear la pantalla. Una pestaña nueva, o una PWA que el sistema cerró por completo, muestra una pestaña vacía. Desactívalo para la pestaña en **Configuración → General → Restaurar el estado anterior**.

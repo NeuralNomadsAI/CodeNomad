@@ -6,28 +6,11 @@ dependency-aware tasks, human controls and results.
 Native integration boundaries, private Core service shapes and per-invocation
 lifetime requirements: [Missions native contracts](MISSIONS_NATIVE_CONTRACTS.md).
 
-Recurring passages run in the OpenCode service with CodeNomad closed; never run them
-through a persistent CodeNomad backend. Native qualification: §Validation and
-`MISSIONS_RECURRING_QUALIFICATION.md`.
-
-Unified native schedule controls and passage admission are described in
-[Recurring Missions](MISSIONS_RECURRING.md#unified-native-schedules). Their technical
-schedule RPC and business bridge stay registered independently of desktop presence.
-The calendar owner shares project document exclusion with admission and controls;
-the execution journal retains its task, report and lifecycle contracts.
-
-## Ownership
-
-| Concern | Owner |
-| --- | --- |
-| Root sessions, prompts, durable inbox, execution, Forms, permissions | OpenCode V2 |
-| Mission map and role context | Bundled `codenomad.missions` plugin; project-scoped native storage |
-| Workspace/location authorization and browser access | CodeNomad |
-| Checkout isolation and Git policy | Existing CodeNomad worktree/Git modules |
-| Developer feedback | Separate `codenomad.automation` plugin and its visible-session fence |
+Programmed Missions run in the OpenCode service with CodeNomad closed (§Mission calendar tool); never run them
+through a persistent CodeNomad backend.
 
 The plugin exposes `mission.inspect`, `mission.delegate`, `mission.revise`,
-`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.schedule`,
+`mission.report`, `mission.briefing`, `mission.interrupt`, `mission.prepare`, `mission.program`,
 `mission.control`, `mission.configure`, `mission.delete` and `mission.settings`.
 The coordinator is the topology writer.
 Native RPC schemas use the decoder's portable primitives; strict server codecs
@@ -100,10 +83,9 @@ identity and its reports' IDs and outcomes in place, with reads for its largest
 values, so every explicit page progresses. Tasks carry their reports (`report`,
 `lateReports`) and pages leave out `mission.reports`, which repeats them.
 `missions/tool-inspection.ts` builds this view inside the owning journal invocation.
-The scheduled business bridge calls `inspectTool`, so task/list pages, observed
-conversations, human-answer candidates, reports and exact content slices fit before
-crossing its bounded RPC response. Mutations share `missionMutationToolResult` with
-the ordinary tools and carry the already fitted result, including its exact omission
+`inspectTool` fits task/list pages, observed conversations, human-answer candidates,
+reports and exact content slices within its bounded result. Mutations share
+`missionMutationToolResult` and carry the already fitted result, including its exact omission
 reads and task pages, in `toolResult`. The 100,000 UTF-16-unit JSON bound costs at
 most 300,000 UTF-8 bytes plus fixed RPC envelopes, within the 1 MiB transport limit.
 `mission.inspect({ list: true })` pages every project Mission the same way (`listOffset`,
@@ -118,7 +100,7 @@ Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`, fixed error
 codes in `missions/recovery-error.ts`), so they work only with backend presence and
 refuse otherwise. Coordinators retain `mission.interrupt`; any owned project session
-can use `mission.prepare`, including descendants, task actors and scheduled passages.
+can use `mission.prepare`, including descendants and task actors.
 
 - `mission.inspect({ taskKey })` adds the task's observed native conversations
   (`server/routes/mission-task-native.ts`): the coordinator's direct children
@@ -133,7 +115,7 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   task along `reuseFromTaskKey`/`parentTaskKey` chains, or its actor. The coordinator, other tasks and the plan are
   untouched, under the worktree-deletion fence; `complete: false` is reported
   honestly, and an empty result notes that only canonical assignments are visible.
-- `mission.prepare` creates a separate one-time or scheduled hand-off through the same
+- `mission.prepare` creates a separate one-time Mission through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
   author's Location. `startOnCreation` defaults false; the user then starts it with
   Play. An explicitly requested `true` may continue only its fresh creation
@@ -141,16 +123,11 @@ can use `mission.prepare`, including descendants, task actors and scheduled pass
   (`{ coordinatorSessionId, missionId? }`) records its author for immutable replay
   (`inspect({ missionID })`, `inspect({ list: true })`). The stable
   `coordinatorSessionId` field names the actual author session, including a descendant;
-  `missionId` records the source from native membership, passage metadata or bounded
-  native ancestry when available. Stored provenance with both fields uses the same
-  journal, index and RPC readers. Ordinary roots, coordinators, current or historical
-  task actors, descendants and scheduled-passage sessions share the author admission.
-  Native control and the backend independently validate project and placement;
-  ambiguous ownership is refused. Passage preparation uses the ordinary project
-  journal, preserving its isolated source journal. Project target reads use that
-  same ordinary journal; passage lists combine it with isolated passage membership.
-  Scheduled documents retain the author and original inputs before their first journal
-  exists; project list and point reads use bounded native document pages without reconciliation.
+  `missionId` records the source from native membership or bounded native ancestry when
+  available. Ordinary roots, coordinators, current or historical task actors and
+  descendants share the author admission. Native control and the backend independently
+  validate project and placement; ambiguous ownership is refused. A launch that repeats
+  or names an event is refused with `use-mission-program`: `mission.program` saves it.
   The calling conversation stays unchanged. Follow
   the [creation and retry discipline](#mission-profile-selection-and-creation-recovery).
 
@@ -178,21 +155,18 @@ of them in `replacesTaskKey`.
 Explicit `missionID` reads any Mission in the owned project, including human-created
 Missions and another agent's preparation. `mission.inspect({ project })` exposes
 fixed pure native reads through the unique owning backend: `panel` for summaries,
-cleanups and mission fields; `current`, `current-page`, `current-content` for an
-admitted passage; `passage` for archived daily results; and `sources` for local
+cleanups and mission fields; and `sources` for local
 branches, native conversation pages, coordinator roots and the detected forge.
 `playbook` reads one template's exact steps, roles and prompts for the selected
 taskMode, sharing the UI recipe builder. These reuse the panel's codecs, native
 page bounds and physical-directory admission.
 Every backend read revalidates the actual native caller, project and Location.
 Source continuation is explicit; file criteria use relative paths discovered with
-the ordinary file tools. Schedule list/read retains counts, observations, control
-receipts and the bounded result history. Reads keep all execution identities intact.
+the ordinary file tools. Reads keep all execution identities intact.
 
 `mission.inspect({ start })` attaches the calling root conversation as the
 coordinator of a paused mission for human Play. `mission.prepare` creates a separate
-mission, preserving the calling conversation: a new coordinator for one-time work,
-or a fresh root per scheduled passage unless an eligible root is explicitly selected.
+mission with a new coordinator, preserving the calling conversation.
 Its `startOnCreation?: boolean` defaults false; true requires the user's explicit
 automatic first-Play request. `missionID` selects an existing mission;
 combining it with `start` is refused before routing, preference discovery or creation.
@@ -212,22 +186,18 @@ template and requested choices even after human edits.
 | Subagent depth | `settings` with scope `depth` reads the project snapshot and saves 1–10 or `null` (Inherit), with the exact document expectation. Never change it to bypass a delegation limit. |
 | Agents and models | Both accept `profiles.coordinator` and `profiles.roles`, with `agent`, `model.providerID`, `model.id` and optional `model.variant`. Omitted slots inherit preferences. |
 | Start automatically | `prepare.startOnCreation`, default false; true requires an explicit user request and continues only a fresh creation acknowledgement. `inspect.start` waits for human Play. |
-| Scheduling | `prepare.launch.when` accepts ordered `now`, cron and event criteria with the editor's grouping and validation. Hourly/daily/weekday/monthly shortcuts use cron expressions and their IANA zone. |
-| Coordinator session | `prepare.coordinatorSessionID` selects an eligible idle root for calendar-backed work; omission selects a fresh root per passage. |
-| Followed conversations | `prepare.watchedConversationIDs` carries followed context; a `conversation-message` criterion also supplies its selected conversation. |
+| Keep coordinator active with /goal | `prepare.coordinatorGoal` and `inspect.start.coordinatorGoal`, default false (one-time missions). Arms OpenCode `/goal` on the coordinator after Play using a short deterministic objective, pauses/resumes it with Mission Pause/Resume, clears it when the Mission ends, arms it again when a failed Mission is recovered, and auto-resumes restart pauses (`The server restarted while the goal was active`) at most once per dead boot (up to 3 times) both on plugin startup and unattended via a project-level Code Mode watchdog automation (`codenomad.mission_goal_reconcile` on `ses_cn_goal_<projectToken>`). Runtime state lives beside the journal (`codenomad-missions/coordinator-goal-v1/<projectToken>/<missionID>`) while the Mission runs, without advancing mission revision or consuming journal capacity; foreign goals, a goal the user cleared while the Mission runs, and manual/stall/round-limit pauses stay untouched. Every Mission change reaches the runtime through `MissionControl.coordinatorGoalMission`, answered by the control's own journal projection: never read a Mission's range again on that path. |
+| Scheduling | `program.save` carries `configuration.launch.when`: cron rules with their IANA zone, the Git and forge events that condition them, or events alone. `prepare.launch` is absent, empty or a sole `now`. |
+| Coordinator session | `program.save` `configuration.coordinatorSessionID` names the conversation every launch coordinates in; omitted, the first launch opens one. |
+| Followed conversations | `prepare.watchedConversationIDs` carries followed context for a one-time Mission. |
 
-Repository activity, GitHub account events, local branch commits, new conversation
-messages, file changes and another Mission's success use the shared
+Repository activity, GitHub account events, local branch commits and file changes use the shared
 [launch-criteria contract](MISSIONS_RECURRING.md#launch-criteria).
-`mission.schedule` lists, reads and controls every calendar-backed document in the
-caller's project, including documents created in the editor. Any owned project session
-may Play, Pause, Stop, Resume, Run now, Check, configure or delete.
 
 `mission.inspect({ configurations: true })` lists the owning backend's saved
 configuration IDs, names and templates. `configurations: "<id>"` reads one complete
 saved record plus the editor's suggested `title` (collapsed whitespace, bounded to
-60 characters). These read-only requests work from any owned conversation outside a mission
-and from a scheduled-passage coordinator. Lists, point reads and content slices
+60 characters). These read-only requests work from any owned conversation outside a mission. Lists, point reads and content slices
 use the ordinary owning backend, select no journal and use the same strict
 unique-backend discovery as profile preferences. The backend reads `ui.settings.missionModels` through
 `getRawConfigOwner("ui")`; the shared `missions/model-library.ts` codec validates
@@ -268,12 +238,10 @@ the original request, for replay; tool replies project that metadata only as
 even when its model is inherited; an absent judge slot inherits the coordinator's
 origin. These are saved requested selectors; catalog validation and native
 execution checks establish availability and actual execution separately.
-`inspect({ start })` uses the caller as coordinator and requires its existing
-native profile to match the resolved coordinator selection. A mismatch whose
-coordinator origin is `preference` advises passing `profiles.coordinator`
-(for example `{}`) to override that preference; the existing native-profile
-check still applies. An explicit-profile mismatch keeps the generic
-native-profile error.
+`inspect({ start })` uses the caller as coordinator. A conversation that coordinates,
+the caller's or one a creation names, is put on the resolved coordinator agent and
+model (`switchAgent`, `switchModel`); one that cannot be changed coordinates as it is.
+A chosen conversation is never refused for the agent or model it runs.
 
 `inspect({ start })` reads preferences before entering the project mutation
 lane. Admission rereads creation events and document defaults under that lane;
@@ -319,11 +287,9 @@ and `missionPreparationStart` capabilities. Preparation also requires the native
 document's positive `automaticStart` capability before creation dispatch.
 Missing backend support returns the update-required refusal before dispatch
 and releases only newly reserved choices; previous uncertain outcomes remain retained.
-Calendar-backed preparation additionally requires the native document's positive
-`agentSchedulePreparation` capability before reserving or dispatching creation.
 
 Preparation results separate `outcome: prepared | activated | refused | uncertain`
-and a `target: { kind: "one-time", mission } | { kind: "schedule", document }`, retained after a start refusal or
+and a `target: { kind: "one-time", mission }`, retained after a start refusal or
 uncertain start. Confirmed outcomes carry `acknowledgement: fresh | recovered`;
 `activated` confirms the original first Play. Refusals name their phase and code;
 uncertainty retains the original request and Mission identities. Tool targets expose
@@ -343,23 +309,11 @@ journal/document revision guards. An attempted slot stays consumed after any fai
 Recovered creation with an unattempted slot stays prepared; an attempted slot reports
 only the original first-Play acknowledgement or uncertainty. Never send another Play
 from prepare replay, receipt reads, inspection, listing, reconnect or restart.
-For scheduled preparation, `launch?: { when: [...] }` uses the editor's ordered
-criteria codec and its OR/IF/ELSE grouping, limits, event sources and cron zones.
-An absent or empty list and a sole `now` select one-time preparation.
-`watchedConversationIDs` freezes followed sources; `coordinatorSessionID` explicitly
-selects an eligible root for a schedule, with a fresh root per passage as the default.
-Calendar profiles resolve to complete explicit agent/model selections and pass the
-native catalog check. Launch policy, followed sources, coordinator choice, target kind
-and automatic start participate in the original immutable retry identity.
-Scheduled creation and its first automatic Play use an authenticated agent principal
-bound to that author, creation request and document. The first-Play intent CAS consumes
-the single automatic-start slot. Explicit OFF, missing capabilities and incompatible
-settings refuse activation while keeping the prepared target visible.
+`watchedConversationIDs` freezes followed sources; they and automatic start participate
+in the original immutable retry identity.
+The first-Play intent CAS consumes the single automatic-start slot.
 Document recovery reads the backend's exact retained receipt to release its physical
 permit; its internal observation-only path keeps absent or partial receipts uncertain.
-Before first scheduled dispatch, preparation reads document existence without a
-request selector; held and observation-only recovery reads the exact original receipt.
-Project controls use `mission.schedule` independently of preparation provenance.
 
 ### Agent one-time controls
 
@@ -373,10 +327,7 @@ the coordinator (including reopening a failed Mission) or one missing report by
 update uses the shared fixed briefing text and ordinary native prompt admission,
 with `delivery: "steer"` and the coordinator's existing native profile.
 
-`configure.save` accepts objective/notes for the journal's recorded text edit, or
-the editor's complete `configuration` for the shared schedule configuration and
-immediate/calendar conversion admission. Its document guards apply before
-admission and between passages. `delete.delete` freezes `deleteManagedSessions`
+`configure.save` accepts objective/notes for the journal's recorded text edit. `delete.delete` freezes `deleteManagedSessions`
 from the supplied option or the owning profile's `missionDeleteSessions` preference.
 Its ordinary cleanup preserves excluded native conversations.
 
@@ -390,7 +341,7 @@ an original native Start is returned as the canonical tool action `play`.
 Uncertain requests reserve their physical permit and block replacement agent
 identities. Exact completed replays return their saved receipt. Explicit
 `retry: true` requires a positively read partial original lifecycle/cleanup
-receipt; structural configuration uses its existing partial-receipt contract.
+receipt.
 Keep every original field unchanged, including Pause's graceful intent.
 Never resend from passive reads or replace an unknown request identity.
 Explicit Stop retains the panel's ability to supersede a positively saved partial
@@ -454,83 +405,33 @@ equivalent agent surfaces:
 | Load a configuration; save instructions; replace/rename, remove or repair a configuration | `inspect.configurations`; `settings` / `configurations` |
 | Global/playbook defaults, role inheritance, resets and deletion preference | `settings` / `preferences` |
 | Project depth, Inherit, empty experimental repair and refresh | `settings` / `depth` |
-| Add/remove/reorder schedule criteria, followed conversations, choose an eligible existing scheduled coordinator | `prepare.launch`; `schedule.configure` or `configure.configuration` |
+| Launch criteria, the coordinator conversation of a programmed Mission; followed conversations of a one-time Mission | `program`; `prepare` |
 | Discover branches, conversations, coordinator candidates and forge | `inspect.project` / `sources`; ordinary file tools for relative file criteria |
 | Read playbook steps, roles and complete instructions | `inspect.project` / `playbook`, with template and optional taskMode |
-| Read lists, tasks, reports, plan changes, passages, history and cleanup | `inspect`, its bounded project views and content/page continuations; `schedule.read` |
+| Read lists, tasks, reports, plan changes, history and cleanup | `inspect`, its bounded project views and content/page continuations |
 | One-time Start/Resume, graceful Pause, Interrupt now, Stop | `control` |
 | Recover coordination or a missing report; request an update | `control` |
-| Edit text or eligible structural configuration, convert immediate/calendar | `configure`; `schedule.configure` |
-| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure`/`schedule` exact receipt reads and `retry` |
-| Schedule Start/Pause/Resume/Stop, Run now, Check, activation/diagnostic and daily controls | `schedule` |
+| Edit text | `configure` |
+| Delete and explicitly continue partial controls, edits or cleanup | `delete`; `control`/`configure` exact receipt reads and `retry` |
+| Save, pause, resume or delete a programmed Mission | `program` |
 
 Presentation gestures (selection, copy, mark read, opening conversations) remain
-window-local. Authenticated human answers use the human question gate. Existing
-coordinator selection belongs to the scheduled editor; one-time preparation uses
-a fresh root, while `inspect.start` attaches the calling root.
+window-local. Authenticated human answers use the human question gate.
+Preparation uses a fresh root, while `inspect.start` attaches the calling root.
 
-### Agent schedule controls
-
-`mission.schedule({ action: "list", after?, limit? })` reads a bounded project page
-(at most eight entries); `read` takes `missionID` and optional `requestID` for its exact
-receipt. Every mutation takes `missionID`, `action`, a stable `requestID` and
-`expectedRevision` from the current read. `configure` supplies the editor's complete
-configuration, with `missionCriteriaLaunchPolicySchema`, explicit frozen profiles,
-task mode and followed conversations; the backend supplies execution roots and profile
-identity. Its persisted `coordinatorSelectionAuthor` applies the idle-root adoption
-guards at configuration and passage admission, including for human-created documents.
-
-The private bridge discovers exactly one owning backend and revalidates the native
-caller, project, Location, connection and physical checkout. Its signed project-agent
-principal carries the actual session; preparation continuations retain their separate
-creation/request/digest scope. Mutation dispatch requires the native document's positive
-`agentScheduleControl` capability. The shared `executeScheduledMission` admission owns the
-same physical holds, payload identity, native CAS, receipt settlement and single-passage
-Run now as public human controls. Play/Resume share settings preparation and preserve
-explicit OFF. Exact completed Play, Pause, Stop, Resume, Run now, configure and delete
-replays read their own retained receipt with no document write or revision change.
-Check always reconciles. Missing, evicted or partial calendar, actor or admission
-proofs retain their original reconciliation path and uncertainty. Changed inputs
-conflict. Lost acknowledgements retain the original hold: read that request's receipt
-without resending or choosing another identity. Deletion replays read the tombstone.
-Public HTTP mutations authenticate their human principal before admission.
-
-`capabilities` shares the panel's passive capability and activation-plan reader.
-`activate` prepares native settings under its stable request and document revision;
-`activation-read` observes that exact preparation without Play. Explicit OFF keeps
-its structured refusal. `configure` also admits eligible one-time documents and
-their editor conversion guard. `retry: true` resumes only an explicitly read partial
-original configure, retaining its request, payload and revision through the shared
-schedule hold.
-
-`owner: "daily"` selects daily storage: bounded list/read, paused `create` with
-`creation` instructions/clock/profiles/task mode/sources, and Play/Pause/Resume/Stop/
-Run now/Check. Creation takes `requestID` alone, with no mission ID or revision.
-An exact receipt read supplies `missionID`, `requestID`, `expectedRevision` and
-`receiptAction`. Partial Pause/Stop retries use their original fields and
-`retry: true`. The public human routes and private agent bridge share physical
-admission, signed-principal verification, dispatch and receipt settlement.
-A project-scoped discovery page returns at most eight schedule IDs and owning
-directories. Point reads resolve the saved directory; snapshots, exact receipts
-and controls then acquire and revalidate that owned Location, including from
-another checkout of the same project. Native snapshot and origin placement guards
-remain Location-exact.
-A daily creation's exact recovery uses `read` with its original `requestID` and
-`creation` fields, with no mission ID or revision; absence remains pending and
-the read dispatches no creation.
+### Preparation identity
 
 Preparation requestIDs are scoped to the actual author and native source mission
 when present; authors outside a mission use their stable `outside-mission` domain.
-The original author/source binding owns replay after source completion or release
-of a reused passage root. Before creation, the author/request lane searches the
+The original author/source binding owns replay after source completion. Before creation, the author/request lane searches the
 journal, paged documents and retained preparation bindings for existing identities;
 multiple existing identities refuse as a conflict. Documents with an extended creation
 binding compare its frozen inputs; historical one-time documents use their original
 journal inputs and available creation choices. Each author retains its original
 replay identity. Compaction keeps the original author/source, creation request and
 input digest in the existing bounded document tombstone. Preparation identity reads
-include these tombstones, so deletion refuses replay after source release and restart
-for both scheduled and one-time targets; display inventories omit them.
+include these tombstones, so deletion refuses replay after source release and restart;
+display inventories omit them.
 Preparations with the
 same requestID are serialized. Reuse that requestID and the original inputs:
 a retry first reads the saved creation event/document and returns the saved
@@ -570,7 +471,7 @@ Only the coordinator talks to the human. Every assignment prompt and helper poli
 (`NATIVE_WORK` in `missions/recipes.ts`) tells task actors and their helpers never to
 ask or answer for the human: they return each open question to their parent with
 options, evidence, consequences, reversibility and a recommendation, and continue
-the work that does not depend on it. Every coordinator, one-time or recurring, gets
+the work that does not depend on it. Every coordinator gets
 `HUMAN_QUESTIONS`: resolve first (inspect the repository, research, delegate an
 investigation, adopt a reversible default recorded as an assumption), ask only
 irreducible items (consent, credentials, choices expensive to reverse, product
@@ -643,8 +544,7 @@ task is complete; empty plan history is omitted. A one-time mission finishes onl
 completed (`completedFinalOnly` on the plugin's `MissionControl`, the
 `COMPLETED_FINAL_ONLY` instruction); lifecycle controls handle Stop. When
 nothing can proceed without the human, the coordinator asks through the native
-question tool and waits (§Human questions and decisions). Recurring passages, with
-their own control, finish completed or failed.
+question tool and waits (§Human questions and decisions).
 
 ### On-demand project briefing
 
@@ -680,9 +580,6 @@ revision, so the ordinary idempotency/conflict/stale-revision contract applies u
 Report and briefing summaries are written for the human (user's language, 3–5
 plain sentences, outcome first; IDs, tool/fixture names and commands only in
 `evidence`); the final report states delivered/remaining/decision in ≤6 sentences.
-Recurring passage coordinators receive the same milestone and summary
-instructions through their actor context; the frozen passage start text remains
-the verbatim instructions. “Request an update” exists for one-time missions only.
 
 Request admission is shown separately from receiving the matching request-ID
 briefing. Pending/uncertain requests survive navigation/remount in per-window memory
@@ -698,8 +595,7 @@ To steer a mission or ask the coordinator something, the user opens the coordina
 conversation ("Open conversation" in the selected mission's toolbar) and writes in
 the ordinary composer: an ordinary native prompt under native admission, permissions
 and the per-send profile environment. Plans and profiles change only through their
-own controls. For a recurring schedule, the same action opens the admitted passage's
-coordinator.
+own controls.
 
 Reader pages retain exact surrogate-safe source slices. `mission-markdown-pages.ts`
 adds bounded display-only continuation fences for standalone fenced code; interrupted
@@ -718,60 +614,40 @@ title within the Mission title bound; loading keeps the stored record intact.
 ### User-journey regression checks
 
 `components/mission-scheduling.tsx` supplies directly visible compact scheduling
-rows, defaulting to a once-now criterion. Its owner supplies the draft, a frozen prospective Play instant, native
-project source choices, capability state and the document's structural lock reason.
+rows, defaulting to a once-now criterion. Its owner supplies the draft, the service directory,
+project source choices and whether the Mission has started.
 Every draft change emits either a valid `MissionLaunchPolicy` or `undefined`;
-missing source coverage retains the draft and invalidates its policy. Calendar
-previews share `missions/mission-calendar-preview.ts` with native calendar planning.
-For persisted Every phases and live next-wake display, read the native schedule rows.
+missing source coverage retains the draft and invalidates its policy. A calendar with
+no future slot is refused through `missions/mission-calendar-preview.ts`.
 The owning editor retains revision/request fencing and performs authenticated writes.
 
-`mission-editor.tsx` shares its preparation form between Create and Edit. Calendar-owned
-documents open through `MissionEditorAction.scheduleID`, read their exact configuration
-and retain the loaded document revision in `MissionEditorDraft`. Title, instructions,
-notes, playbook, requested agent/model/variant profiles, task mode and
-scheduling use the same controls. Followed conversations have editable selector rows with
+`mission-editor.tsx` has two forms: the creation form, and the edit of a started Mission's
+objective and notes (the recorded text-edit contract). A Mission never started is edited
+whole in the creation form: saving deletes it, then creates its replacement, in the same
+coordinator conversation when the coordinator profile is unchanged; a refused deletion
+keeps the form and creates nothing. A programmed Mission is edited whole in the same form,
+which saves its programming. Followed conversations have editable selector rows with
 Add and Remove actions; drafts and retained creation requests keep their exact IDs.
-Immediate creation stores those IDs in its initial document and shares first-Play source
-reading with converted preparations.
-Structural/template guards and their explanations
-come from the document; incomplete native observation also fences editing. The
-execution-journal format exposes objective/notes edits. A unified immediate preparation
-also edits title, playbook, requested profiles and task mode before its first admission.
-Before first Play, that journal-bound preparation also converts between no launch
-criteria and schedule/event criteria under its original preparation intent.
-Its immutable creation binding stays attached; calendar ownership makes the empty
-journal dormant and hides its panel row. Returning to immediate restores that row.
-Calendar deletion retires the exact dormant journal revision before document compaction.
-Returning to immediate keeps followed conversations. First Play freezes their bounded
-stable prefix with the shared native source reader and launch envelope; unavailable,
-moved, excluded or over-capacity sources block with an explanation. The original
-first-Play intent retains this text across acknowledgement loss and exact retries.
-Stored execution roots outside the editor's single directory-only scope stay read-only.
-`mission-editor-schedule.ts` owns its passive capability and document reads by view
-identity, client and native generation, and fences their responses by that owner and
-visibility; only a changed owner returns Scheduling to its first-read state. Showing the
-editor and Retry read both. Config, plugin and reconnection events revalidate the visible
-editor's capability with one read in flight and at most one trailing read. Task revisions
-and transcript releases read nothing. During a successful revalidation the shown fields,
-values, focus and open picker stay unchanged, and the panel's existing update icon is the
-only indicator; a failed document read shows its error with Retry and locks the form.
-Save rereads the document before dispatch.
-Create stores a paused immediate Mission or a paused calendar-owned document.
+First Play freezes their bounded stable prefix with the shared native source reader and
+launch envelope; unavailable, moved, excluded or over-capacity sources block with an
+explanation. The original first-Play intent retains this text across acknowledgement loss
+and exact retries.
+The form keeps schedules above events (`orderMissionCriteria`, `mission-scheduling-data.ts`): a card that becomes
+a schedule joins the schedules, and a card added after an event is an event. The service directory its sources need
+is the native Location's, read once an event criterion, an existing coordinator conversation or a followed
+conversation needs it. Followed conversations show for a Mission launched once.
+Create stores a paused Mission, or a paused programmed Mission when its launch criteria repeat or name an event.
 **Start automatically** defaults off, outside Scheduling. When selected, only the direct positive creation
 acknowledgement may continue the captured user intention through guarded Play;
-receipt recovery leaves Play explicit. The editor supplies discovered project identity
-reactively; the continuation freezes project, physical directory, client and native
-generation at submission and retains schedule requests under that same control owner.
-Scheduled autostart requires a discovered project; an unidentified owner leaves the
-created schedule paused for explicit Play.
+receipt recovery leaves Play explicit. The continuation freezes project, physical directory,
+client and native generation at submission. A new programmed Mission is saved running when it is selected, paused otherwise.
 The saved-configuration picker is the form's
 first row. Separators distinguish instructions, Options, Agents and models and
 Scheduling. Agents and models uses the shared Settings disclosure with an inline
 requested-profile summary and Agent / Model / Thinking columns. Its fold state
 survives editor drafts; catalog demand follows its visibility. Options and Scheduling
 stay open. Notes begins at one line and grows with its content. Blocking profile
-errors remain beside the disclosure; scheduling activation is prepared at Play.
+errors remain beside the disclosure.
 Objective, Title and Notes share the instructions group. The footer names Save
 configuration with a text button; the Configuration picker uses the bookmark glyph.
 Catalog reads use the panel's existing read indicator and preserve form geometry.
@@ -779,20 +655,14 @@ Scheduling starts with its first criterion, with contextual help beside its titl
 Add a criterion uses the shared primary button. Public help follows this group order,
 with delegation and scheduling explained in their own sections.
 
-H9 editing uses the document projection and the mutator's fresh guards:
+What the form edits follows the Mission's state:
 
-| Document state | Editable configuration |
+| Mission | Editable |
 | --- | --- |
-| Before first launch, with complete observation and no unresolved intent | Title, objective, notes, profiles, task mode, sources, launch criteria and end; template while no task has ever been created. |
-| Between recurring passages, paused or running, with no pending passage/wake/control | Future-passage configuration under the same structural guard. An armed calendar reconciles its replacement before admission; a paused document stays paused. |
-| Admitted passage, or an already launched one-time preparation | Objective and notes through the recorded text-edit contract; admitted inputs, profiles, task briefs and identities stay frozen. |
-| Uncertain admission/control, incomplete integrity evidence, or terminal document | Read-only until its owning reconciliation/recovery permits editing. |
-
-The template lock survives completed and retired tasks. Structural edits preserve
-history, source checkpoints, launched count and first-Play origin. Configuration
-and temporal generations advance independently; unchanged timing/end groups retain
-their phase and absolute end. Editor reopen restores the loaded draft; conflict
-reload and original-receipt reconciliation keep their contracts below.
+| Never started | Everything, in the creation form; saving replaces it. |
+| Started | Objective and notes through the recorded text-edit contract; profiles, task briefs and identities stay frozen. |
+| Programmed | Everything, in the creation form, saved as its programming; the Mission of a launch under way keeps its inputs. |
+| Uncertain admission/control, incomplete integrity evidence, or terminal | Read-only until its owning reconciliation/recovery permits editing. |
 
 Editor drafts retain decoded stored-policy metadata and the loaded baseline through
 panel remounts; the editor shows no slot preview. An explicit conflict reload adopts the current configuration and keeps one
@@ -804,7 +674,9 @@ Immediate creation retains its original request and physical scope before dispat
 HTTP outcome. Unknown native transport outcomes use `creationReceipt` under project
 exclusion: the immutable creation event and document digest confirm the exact input.
 Positive proof releases the original physical hold and selects the Mission; a
-certified terminal refusal restores the form. Missing or unreadable evidence retains
+coordinator's Supervised block is recovered separately from a fresh, unique
+match without altering native rules. A certified terminal refusal restores the
+form. Missing or unreadable creation evidence retains
 the request with read-only Refresh, silently. Scope conflicts reconcile that retained
 request in its original Location. The backend retains at most 128 outcomes; terminal
 entries may be evicted, while unresolved entries stay reserved for its lifetime.
@@ -814,34 +686,30 @@ POSTs, which direct callers to receipt recovery. Receipt HTTP reads have one
 until a current owning view consumes them; client and native-generation fences
 separate concurrent reads and reject late responses from a replaced connection.
 
-`stores/mission-schedule-editor-holds.ts` retains serialized create/configure/journal-edit
-intent and its exact draft before dispatch. Transport loss and incomplete replies keep
-that identity across mountings. Explicit receipt refresh performs reads only; a matching
-complete original receipt releases the hold. A journal edit's retained history entry
-includes its `requestID`, revision and accepted text; unified text also requires a matching
-document read. Missing/evicted evidence keeps the hold. Never resend a held edit or
-creation automatically, and never use a negative read as permission for another identity.
+`stores/mission-schedule-editor-holds.ts` retains a serialized journal edit
+and its exact draft before dispatch. Transport loss and incomplete replies keep
+that identity across mountings. While the editor is active, automatic read-only rereads
+check the original receipt on mount and periodically until a matching complete original
+receipt releases the hold. A journal edit's retained history entry
+includes its `requestID`, revision and accepted text. Missing/evicted evidence keeps the hold. Never resend a held edit or
+creation automatically, and never use
+a negative read as permission for another identity.
 Journal editor reloads and retained edit receipts resolve objective/notes through
 content reads pinned to the display map's body descriptors. Plan-change reads name
-the original revision and compare its accepted text; unified receipt confirmation
-also compares the document with those exact journal bodies. Missing or changed
-content retains the hold. Calendar-owned editor prefill uses the schedule read.
+the original revision and compare its accepted text. Missing or changed
+content retains the hold.
 Editor reads and the body display cache share only the pure wire-slice validator
 (`lib/mission-content-slice.ts`); editor receipt checks fetch their own exact,
 descriptor-pinned content independently of the display cache.
-For a journal-bound preparation, an exact positive partial receipt exposes **Try again**.
-That explicit action rereads the original receipt and resumes only its retained
-configure request, payload and revision. Remounts retain uncertainty and require
-another positive read before offering that retry.
 
-Source choices use explicit project pages on demand, one reader per event kind listed
-in the criteria (`mission-editor-sources.ts`). Schedule documents page by eight;
-conversation choices use native session pages, and local branch choices use the owned
+Source choices use explicit project pages on demand, one reader per source kind in use
+(`mission-editor-sources.ts`): conversation choices (followed conversations, the coordinator
+conversation) use native session pages, and local branch choices use the owned
 directory's bounded local ref listing (`GET /api/workspaces/:id/git-branches`, at most
 200 refs under `refs/heads/`, including branches without a worktree). The read uses
 the Git worker, a ten-second/output bound and physical ownership/deletion fences;
 over-bound inventories expose source unavailability. Never fetch for source choices.
-Each event card owns its searchable, virtualized source popup (`mission-source-select.tsx`);
+Each source field owns its searchable, virtualized source popup (`mission-source-select.tsx`);
 opening it and approaching its list end requests continuation for that source kind.
 Conversation search uses a debounced native candidate query and matches the full query
 locally without letter-case distinctions. The native filter folds ASCII; the candidate
@@ -851,75 +719,26 @@ continuation cursors retain that candidate. Every search continuation requires t
 popup's explicit action, including when earlier matches remain, so sparse matches keep
 the same read bound. Browsing without a query uses ordinary end-of-list continuation.
 Pointer focus preserves scroll position; keyboard focus scrolls only to reveal its row.
+The source selector binds both inputs' active descendant to the focused collection key's
+mounted option ID. Each selector owns a reactive registry; options publish their actual
+ID after mount, revoke changed keys and remove only their own registration on cleanup.
+Closed popups and absent collection or mounted entries expose an undefined descendant.
 Selected off-page sources resolve through bounded owned point reads.
 Selected labels remain pinned across searches. Failed reads retain the loaded display
 and offer Retry inside the popup. Changing a card's type disposes its selector and clears
 its source; hiding or locking the editor closes open popups. Source reads follow semantic
 owner, native generation and visibility changes; transcript retirement and unrelated
-typing preserve the loaded display. A conversation-message criterion supplies its
-conversation to native passage context alongside stored `watchedConversationIDs`.
+typing preserve the loaded display.
 
-`stores/mission-schedules.ts` owns the visible panel's bounded document pages, with
-one read lane and coalesced trailing refreshes through the shared event scheduler.
-Approaching the directory's end adds one page; refresh revalidates the loaded page frontier.
-The selected object also receives a point read. Project, directory, client and
-native generation fence publication; hidden views retain their display and read
-again on activation. The mission tree merges calendar-owned documents by Mission ID,
-with journal-owned immediate Missions and daily entries keeping their owning controls.
-Selection retains the unified Mission ID across immediate/calendar conversions observed
-from another window. A positive document read selects its owning representation;
-the selected unified object retains point-read demand beyond the loaded document page.
-
-`components/mission-schedule-list.tsx` shows one summary per launch criterion
-(`mission-scheduling-summary.ts`, each after the first prefixed with its or / if / else connector), desired
-and observed calendar states, native next wake/check, a stored legacy end, tracked source checks, launched passages (with
-a legacy limit), successes and retained history. Civil times use the saved
-zone. Each history entry opens its retained native coordinator; the selected pending
-passage exposes its conversation. The overview toggle reveals saved instructions.
-
-`components/mission-schedule-controls.ts` retains every dispatched control or
-settings-activation request across panel remounts in per-window memory, bounded to
-128 held objects. An exact complete positive receipt retains its confirmed outcome
-and minimum publication revision R in that entry. New mutations and Edit stay
-disabled until a fully validated display document for the same object and owner
-publishes at revision >= R. Remounts, same-owner revalidation and failed, partial or
-older display reads retain this obligation and the confirmed feedback. During this
-wait, Refresh saved request requests only a display refresh; an unresolved request
-uses its exact receipt read. Confirmed deletion releases matching retention and
-clears the current selection without waiting for publication of a deleted document;
-pending deletion retains a visible
-row even after its inventory entry disappears. A held request, partial or not, admits no
-new control: only its exact receipt read settles it. The Missions UI never offers the
-native `check` control (schedule and daily lists alike), even when a document lists it.
-Never resend from reconnect, remount, display refresh or an unavailable/negative read.
-Revision preflight refuses a stale click before dispatch. Controls retain the
-last capability display during same-owner revalidation, so a passive
-refresh preserves an in-flight pointer click; control dispatch rereads capability.
 `MissionActionBar` retains its primary glyph for an unchanged action key, preserving
 the native pointer target while a fresh action object updates its other fields.
-Play and Resume automatically prepare project-only native activation when a ready
-receipt is missing. An already enabled Location receives a zero-target ready proof
-without configuration writes. Run now requires an enabled
-effective native setting, with an explicit disabled explanation and a fresh
-capability check before reservation. Its click preserves settings activation.
-Explicit OFF exposes a scheduling-settings action only for a server-openable configuration
-ID; the responsible layer/path or environment explanation stays behind a keyboard-focusable
-information tip. The existing configuration editor selects that exact catalogued file.
-The requested action alone shows a full-opacity 14px loading glyph and `aria-busy`
-during its bounded HTTP requests, with one persistent external status announcement;
-confirmation dialogs and uncertain or confirmed-publication waits keep their ordinary glyphs.
-Reduced motion uses the shared animation limit. An uncertain activation keeps Play
-unsent and exposes the original receipt read. A direct positive activation acknowledgement may continue the
-same user intention under its original view fences. Read-only recovery of activation
-retains the publication barrier and leaves the next Play explicit. Never replay an
-action or continue Play automatically from recovered activation or display publication.
 
 `mission-scheduling-decode.ts` reconstructs criteria rows from a validated stored
 policy, including legacy frequency/condition documents. Exact cron equivalence
 selects every-N-hours/daily/weekday/monthly shortcuts; other expressions stay
 advanced. An unchanged draft returns the stored policy byte-for-byte and each
-unedited row keeps its stored criterion, so adding an event or an end preserves
-the native temporal generation. Retired legacy options, mixed zones and precision
+unedited row keeps its stored criterion. Retired legacy options, the events of other
+Missions or of conversations, mixed zones and precision
 beyond the controls stay in an explicit retained-policy view, with a deliberate
 full-policy replacement action. A branch bound to another directory keeps its
 identity visible and blocks submission. Validation errors stay beside their fields.
@@ -1011,15 +830,86 @@ The authenticated owning backend reconciles saved actor locations and checks nat
 
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads its list after reconnect because native event subscriptions are live-only.
 
-**Panel reads** (`missions/mission-summary.ts`, `MissionControl.list`/`mission`, `server/routes/missions.ts`). The panel never loads every full map. The read-mostly `list({ include?, summariesVersion? })` RPC takes the open missions (`openIDs()`) plus at most four `include` IDs, re-reads each range with `missionView`, and returns their compact maps (§Compact maps) stamped with the project damage flags, one `MissionSummary` row per live map in snapshot order (id, title, objective label of 502 code points with whitespace runs collapsed and a newline kept, enough for the row title, status, runState, coordinator and actor session IDs, updatedAt, a finished map's `finishSequence`, revision, its plan's task count (a compact map's from its task page); rows of re-read ranges come from their fresh maps, and an included map the hints missed gets its row), the hints' cleanup history and discarded count, and `summariesVersion`, a content hash of the rows; `summaries` is omitted when the caller sent that version. The `mission({ missionID })` RPC returns one range's compact map (absent when it holds no live map), that range's own cleanups and the project flags. Both are hints-based reads (§Journal index): rows and cleanup history can miss a foreign write until the rebuild, while included and open maps are read from storage on every call; neither authorizes anything, and every write keeps its authoritative read in the plugin. `GET /api/workspaces/:id/missions?include=<id,…>&summaries=<version>` brokers `list` and projects activity over the returned maps only; `GET /api/workspaces/:id/missions/:missionID` brokers `mission` for display reconciliation (the editor's lost-acknowledgement checks, cleanup retries). `GET /api/workspaces/:id/missions/:missionID/admission` answers the same shape from the full `snapshot` RPC, its map full: the admission read of an application-authored native prompt (the coordinator message), which hints must never authorize. The list and single routes compact the maps they return too (`compactMissionReads`, `compactMissionMap`), since a reload can briefly pair this backend with an older plugin that returns full maps, with or without descriptors (§Compact maps); the admission route never does. A plugin build without `list` (`rpc.method_not_found`) answers `plugin-unavailable`: its only other read, the snapshot, carries every full map, which the panel never loads. A plugin without `mission` answers the single read from its snapshot, that one map compacted; any other RPC failure stays a failure. Bridge routes (assignment, report, lifecycle, prepare, root creation, task conversations) keep the full `snapshot`: they authorize native effects. The UI store (`stores/mission-store.ts`) keeps compact maps (`missions`) and rows (`summaries`; derived from the maps of a list without summaries, which carries every map). Consumers register the maps they need with `want(instanceId, owner, missionID)`: the selected Mission (MissionControl) and the central reader. Includes and the held version are sent only once the backend has answered with a `summariesVersion`, so the first read after a load sends none; a wanted row still without its map, or a newly wanted one, schedules one coalesced follow-up read. `want` and the reads it starts run untracked, and components register through a memo of the target ID only, so store publications never re-run a registration; a mission already asked for by the read in flight starts nothing, and a failed read stays parked until new demand, an invalidation or an explicit refresh. Publication keeps the generation fence and trailing coalescing: when the wanted set changed while a read ran, the maps (and their activity) of rows wanted now that the read neither asked for nor returned stay from the last good display, and one follow-up reads the current includes unless a deactivation (`setDemand(false)`) happened while the read ran, in which case activation reads them; a reader's want needs no panel demand; an omitted list repeats the version this read sent, else the read fails and keeps the last good display. Picker rows, marks, completion seeding, empty states and the reader's absence check use the rows; the selected detail, the task tree, its questions and the readers use the compact maps, and a selected row waits for its map with a loading line. A parked failed read leaves the refresh button available. Native queue requests count for a Mission's declared and observed actors, their observed family and its proven native task conversations (`nativeMissionQuestions`: exact task-session evidence survives unknown family coverage; unknown descendants and global requests never count). A closed row's questions are its declared actors' open native requests; observed-family members count only for open and wanted missions. The row's flag turns red only for the questions it carries (`components/mission-question-owners.ts`, pure; `components/mission-questions.ts` reads the queues and the known task conversations): the coordinator's own, one of the coordinator's family no known task conversation carries, and, once its map is read, one no loaded live task row carries; the rest are its tasks', carried by its chevron (`data-child-activity`, the session list's rule: once the map is read, the task rows' own states through `missionTaskRowState`, input before active before an unseen finished task; before, `working` while a task actor works). Observed activity states, the coordinator's included, cover whole families and never redden the flag: only a question it can open does. Questions and session membership read only current observation pages (`currentMissionObservations`): a Mission's own current activity windows, else its current marks-lane window (a closed row's, `markObservations`); superseded or failed windows read as `unknown` and never count, for the red, the schedule's request count or navigation.
+**Native journal ranges.** The one-time plugin qualifies the local SQLite range
+reader against the database service in the current native invocation. Background
+work uses the activation's qualified reader when available. Ordinary reads enumerate
+mission keys, then reconstruct each selected map in replay order. The source
+holds one transaction per range and reads batches of at most 128 rows and 1 MiB
+of event bodies, except that an oversized existing row is read alone. Receipt
+and report lookups stay inside the same observation. The activation retains up
+to 64 derived maps and folds, weighted by a total of 64 MiB of source bodies.
+This is a cache weight, not a heap limit. A disposable SQLite head table stores one stamp
+per changed range; triggers publish it in the transaction that changes the
+event, including same-size replacements by another connection. The head and
+the event rows are read in one SQLite snapshot. Installation uses one immediate
+transaction and checks the exact schema. A changed schema cookie requalifies the
+definitions and renews the incarnation before reuse. An unavailable index uses
+the exact byte-hash fallback; a failed installation can retry on later demand,
+at most once per read. Stamps are scoped to the range and index incarnation.
+
+An unchanged head transfers no event bodies. A single strictly ordered task
+declaration or briefing advances the fold from its own event if it cannot
+occupy a prior receipt slot. Other changes, eviction and restart replay in
+bounded batches; total cold bytes and scalar headers grow with history. Selected
+declaration and briefing still inspect every range for project damage and
+timestamps, and verify document bindings, but copy only the selected map. An
+evicted range needs replay even during warm project operations.
+The first reconstruction reads source bodies and retains live text in the fold.
+An explicit panel header read may persist a display-only record of at most
+48 KiB in the head table, including descriptors and original event identities
+for objective and notes. A qualified reopen reads that header without loading
+event bodies. Reading either recorded input point-reads its event in the same
+SQLite snapshot and verifies the body descriptor. Document bindings stay live
+reads. Misses, changed stamps and invalid records reconstruct from the journal;
+an event write updates its head and does not regenerate display projections.
+The first task window and the header's exact pinned selection each retain one
+compact record of at most 96 KiB. The records include only display rows,
+descriptors and event keys for their task briefs and unambiguous reports.
+Requests for those bodies verify their descriptors against the original event.
+The directory, later windows and bodies outside those selections retain the
+normal projection path. Compact panel and body reads copy only their projected result.
+While the fold is cached, an old
+objective pair is read by its two event keys, fenced by the range stamp.
+Other explicit old plan changes and cleanup/purge authority can materialize
+historical events. The head table and
+triggers are derived; the event format and keys stay unchanged. A range-capable
+build can read those same events on rollback; scanner-only builds retain their
+entry limit. On an offline copy, remove the three
+`codenomad_mission_head_v1_*` triggers and then the `codenomad_mission_head_v1`
+table in one transaction to remove the optimization while retaining `kv`.
+
+Briefing replay checks the exact ordered event position and preceding timestamp during
+reduction. Prefix run state is derived from creation and control events; the returned
+map still projects control receipts at their actual journal positions. Run
+`node --import tsx --expose-gc scripts/benchmark-mission-journal.mts --quick` from the
+repository root to measure synthetic journals only, with fresh processes and a warm read
+in each process. `--long` measures one 10,020-entry journal; `--bench` also includes
+large bodies. `npm run test:long-mission-journal` runs standalone write preflight, then cold
+open → declare → briefing → restart and exact replay → declare → Stop → deletion
+on the same synthetic database. Output includes counts and bytes by event type and read,
+latency and memory samples by operation. The warm read uses the same fixture copy as the
+measured operation; both modes use the system's current filesystem cache.
+`--read-budget` compares 128 and 10,148 events with the same live work and
+different superseded objectives. It asserts the warm historical byte budget,
+then verifies that a declaration whose write acknowledgement was lost is
+reconciled after reopening the database without issuing another write.
+`--compare 1` compares both builds on byte-identical synthetic databases and
+checks cold and warm resume from the same paused copy.
+`--panel-io` measures the registered HTTP header and body reads on a synthetic
+SQLite copy and verifies reopen, damage handling and index removal.
+`node scripts/test-mission-journal-head-native.mjs <absolute-isolated-opencode-cli>`
+qualifies the index on the daemon's transaction and storage adapters using
+synthetic rows in a private database.
+
+**Panel reads** (`missions/mission-summary.ts`, `MissionControl.list`/`mission`, `server/routes/missions.ts`). The panel never loads every full map. The read-mostly `list({ include?, summariesVersion? })` RPC takes the open missions (`openIDs()`) plus at most four `include` IDs, re-reads each range with `missionView`, and returns their compact maps (§Compact maps) stamped with the project damage flags, one `MissionSummary` row per live map in snapshot order (id, title, objective label of 502 code points with whitespace runs collapsed and a newline kept, enough for the row title, status, runState, coordinator and actor session IDs, updatedAt, a finished map's `finishSequence`, revision, its plan's task count (a compact map's from its task page); rows of re-read ranges come from their fresh maps, and an included map the hints missed gets its row), the hints' cleanup history and discarded count, and `summariesVersion`, a content hash of the rows; `summaries` is omitted when the caller sent that version. The `mission({ missionID })` RPC returns one range's compact map (absent when it holds no live map), that range's own cleanups and the project flags. Both are hints-based reads (§Journal index): rows and cleanup history can miss a foreign write until the rebuild, while included and open maps are read from storage on every call; neither authorizes anything, and every write keeps its authoritative read in the plugin. `GET /api/workspaces/:id/missions?include=<id,…>&summaries=<version>` brokers `list` and projects activity over the returned maps only; `GET /api/workspaces/:id/missions/:missionID` brokers `mission` for display reconciliation (the editor's lost-acknowledgement checks, cleanup retries). `GET /api/workspaces/:id/missions/:missionID/admission` answers the same shape from the full `snapshot` RPC, its map full: the admission read of an application-authored native prompt (the coordinator message), which hints must never authorize. The list and single routes compact the maps they return too (`compactMissionReads`, `compactMissionMap`), since a reload can briefly pair this backend with an older plugin that returns full maps, with or without descriptors (§Compact maps); the admission route never does. A plugin build without `list` (`rpc.method_not_found`) answers `plugin-unavailable`: its only other read, the snapshot, carries every full map, which the panel never loads. A plugin without `mission` answers the single read from its snapshot, that one map compacted; any other RPC failure stays a failure. Bridge routes (assignment, report, lifecycle, prepare, root creation, task conversations) keep the full `snapshot`: they authorize native effects. The UI store (`stores/mission-store.ts`) keeps the project's rows (`summaries`) and the compact maps (`missions`) of the wanted Missions. Consumers register the maps they need with `want(instanceId, owner, missionID)`: the selected Mission (MissionControl) and the central reader. The store reads only the rows; the panel inventory (`stores/mission-panel-inventory.ts`) reads each wanted map's header and hands it over with `adoptPanelMaps`. `want` runs untracked, and components register through a memo of the target ID only, so store publications never re-run a registration; a failed read stays parked until new demand, an invalidation or an explicit refresh. Publication keeps the generation fence and trailing coalescing, and a reader's want needs no panel demand. Picker rows, marks, completion seeding, empty states and the reader's absence check use the rows; the selected detail, the task tree, its questions and the readers use the compact maps, and a selected row waits for its map with a loading line. A parked failed read leaves the refresh button available. Native queue requests count for a Mission's declared and observed actors, their observed family and its proven native task conversations (`nativeMissionQuestions`: exact task-session evidence survives unknown family coverage; unknown descendants and global requests never count). A closed row's questions are its declared actors' open native requests; observed-family members count only for open and wanted missions. The row's flag turns red only for the questions it carries (`components/mission-question-owners.ts`, pure; `components/mission-questions.ts` reads the queues and the known task conversations): the coordinator's own, one of the coordinator's family no known task conversation carries, and, once its map is read, one no loaded live task row carries; the rest are its tasks', carried by its chevron (`data-child-activity`, the session list's rule: once the map is read, the task rows' own states through `missionTaskRowState`, input before active before an unseen finished task; before, `working` while a task actor works). Observed activity states, the coordinator's included, cover whole families and never redden the flag: only a question it can open does. Questions and session membership read only current observation pages (`currentMissionObservations`): a Mission's own current activity windows, else its current marks-lane window (a closed row's, `markObservations`); superseded or failed windows read as `unknown` and never count, for the red or navigation.
 
 **Body reads** (`missions/mission-content.ts`, `MissionControl.content`). The read-mostly `content({ missionID, kind, field, taskKey | reportId | change, digest?, offset })` RPC returns one mission body for display in slices, from one `missionView` read of that mission's range alone (never the index or another range). Its selector names a value in the live map: a map field (`kind: "mission"`), a task's own field or its `reports` (`task`, `taskKey`), any report by ID, current, earlier or late, never the task's current one in its place (`report`, `reportId`), or a plan change's field by revision (`change`), among every change the same observation's events record (`missionPlanChanges`, the reducer's own changes, of which the map's `history` keeps the last 50), never the nearest or a newer one. The answer carries the map's `revision` and a slice: the string itself or the value's JSON (`json`), `characters`, `digest` (the inspect digest: SHA-256 of the UTF-16 code units) and `next`, the following slice's offset; each answer, as two-space JSON, stays within the inspect bound of 100,000 characters (`sliceEnd`). A first read starts at offset 0 without a digest; every later slice repeats it and is refused (`content-changed`) once the value reads differently, while revisions that leave the value alone keep its slices valid. `mission-not-found` and `content-not-found` answer the rest; a later slice without its digest or a selector naming another kind's identity is invalid input. `GET /api/workspaces/:id/missions/:missionID/content?kind&field&taskKey|reportId|change&digest&offset` brokers it with the list's ownership, plugin and project checks; a plugin without the method answers `plugin-unavailable`, never another read in its place. It is a display read: never a write's or admission's authority. Its wire types live in `missions/mission-content-wire.ts`, which the UI imports.
 
-**Body display** (UI `stores/mission-content-store.ts`, `stores/mission-content.ts`, `lib/mission-body-pages.ts`, `components/mission-reader-body.tsx`, `components/mission-report-prose.tsx`). One-time and current daily/native-scheduled readers resolve exact body descriptors: overview summary/objective/notes/briefing, task briefs and results, reports, plan changes, Compare/decision artifacts, edit inputs and Save configuration. The display cache keys workspace, project, mission and selector, plus the exact source for a current passage. Instance connection, folder and native generation fence every publication. Daily archives use their receipt-bound pages.
+**Body display** (UI `stores/mission-content-store.ts`, `stores/mission-content.ts`, `lib/mission-body-pages.ts`, `components/mission-reader-body.tsx`, `components/mission-report-prose.tsx`). Readers resolve exact body descriptors: overview summary/objective/notes/briefing, task briefs and results, reports, plan changes, Compare/decision artifacts, edit inputs and Save configuration. The display cache keys workspace, project, mission and selector. Instance connection, folder and native generation fence every publication.
 
-Shown text reads only through the displayed page's end and final line (`missionBodyNeed` / `missionMarkdownPage`), or whole for Copy. Lists, artifacts, briefings and plan-change pairs read whole within their logical assembly budget. Ordinary task histories can read their aggregate report body; current passage history explicitly pages compact report rows. Current passage results always read immutable report IDs. Ordinary current/late task results retain their task-owned `report` / `lateReports` selectors; other reports use IDs. One body's readers share one active read, serving new demand on settlement.
+Shown text reads only through the displayed page's end and final line (`missionBodyNeed` / `missionMarkdownPage`), or whole for Copy. Lists, artifacts, briefings and plan-change pairs read whole within their logical assembly budget. Task histories can read their aggregate report body. Ordinary current/late task results retain their task-owned `report` / `lateReports` selectors; other reports use IDs. One body's readers share one active read, serving new demand on settlement.
 
-`missionBodySource` carries the map's descriptor and expected revision, or the later owning row's revision (`missionBodyRevision`). Descriptors provide presence (`missionBodyPresent`, `missionReportHas`); excerpts and `decidedBy` provide labels. A briefing's summary stays reading until its whole value settles. Rows without history descriptors use `missionHistoryMark` (report count/newest report) as a version fence. Unchanged descriptors retain their bodies through unrelated revisions. Current passage reads pin known digests on the first request and reject a differing newer digest before cache adoption. Structured current bodies enforce depth/token budgets before final concatenation and parsing.
+`missionBodySource` carries the map's descriptor and expected revision, or the later owning row's revision (`missionBodyRevision`). Descriptors provide presence (`missionBodyPresent`, `missionReportHas`); excerpts and `decidedBy` provide labels. A briefing's summary stays reading until its whole value settles. Rows without history descriptors use `missionHistoryMark` (report count/newest report) as a version fence. Unchanged descriptors retain their bodies through unrelated revisions. Structured current bodies enforce depth/token budgets before final concatenation and parsing.
 
 `plugin.updated`, reconnect and a new event stream invalidate shown bodies and fence earlier answers. Last-good text stays until a newer value covers the shown page. `content-changed` restarts at offset zero within four retries; failures park with explicit Retry until demand or invalidation. Copy retries its required failed read and stops on a new failure. Released/switched readers abort their transfers and reject late publications. Idle bodies are retained LRU within 4 MiB UTF-16 and 128 bodies; workspace stop clears them. Closed disclosures read nothing. Transfers share the secondary background budget, original deadlines and cancellation ownership.
 
@@ -1035,13 +925,13 @@ Display labels use bounded excerpts: objectives at 502 code points, report summa
 
 **Reading further** (UI `stores/mission-task-pages.ts`, `stores/mission-store.ts` `loadTasks`, `components/mission-task-tree.tsx`, `components/mission-graph.tsx`, `components/mission-task-open.ts`). The store keeps, per instance and listed paged map, the list read's own map (its base) and a page cache: the display order, rows and reports by ID each with the revision of the page that answered it, every read made (window and attention offsets, keys, IDs, report IDs) with the revision of its last answer, the reads parked by a failure, the failed reads no read has answered since, and the attention windows answered for the newest attention sequence (`taskAttention[missionId]`: windows answered under another sequence cover nothing of this one, whatever the order). A page vouches only for what it answered, and a row or report it answered carries its revision to the bodies it describes (`missionBodyRevision`, §Body display). `missionStore.loadTasks(instanceId, missionId, request)` reads one page in the order the shown map names and resolves to how it ended (`read`, `failed`, `reordered`, `skipped`); a mission's reads run in turn, an identical read still waiting is that read and a running one is followed by one more, each read is recorded before it is sent, reads share the secondary background budget, and `clear` fences reads in flight. An answer in the shown order merges into the base (`mergeTaskPages`: rows in display order; a row or report the base holds stays unless a page answered it at a later revision, one it does not hold shows as last read); a refusal or an answer in another order reads the list again. Each list publication takes its maps as bases, shows them with the cached rows of the same order, drops the bases and caches of maps it no longer lists and reads again each read last answered before the map's revision, except one parked by a failure at that revision or later; another order drops the rows and reads every recorded read from scratch. `taskReads[missionId]` says whether a read runs (`loading`) and holds the oldest failed read (`failure`, with its request) until a read answers every name or window of it; other reads succeeding keep it. The rows shown stay and the tree offers Try again.
 
-The tree's header counts every task (`taskPage.total`). Rows and pins form one continuous virtualized list in display order. A single end sentinel (`li.mission-tree-more`) observes the active scroller, loading the earliest unread position as it approaches view through pointer or keyboard scrolling. Collapsed trees and failed reads suspend automatic continuation; failures expose explicit Retry. The header's info tooltip states the supplied whole-mission attention counts by kind; ordinary windows reach every attention task and recovery action. Keep these counts scoped to the whole mission: window coverage alone cannot establish which attention members remain unread. A row's title and assistive text name its unread dependencies and dependents. The graph uses cached virtual offsets for offscreen rows and measures mounted anchors, with a dashed stub (`path.mission-graph-omitted[data-omitted]`) for unread endpoints. Reader links load their target task by key (`openMissionTask`), and restored task/report targets load by ID once per display order. Readers show Loading, a failure with Try again, or confirmed absence according to the actual read outcome. Show all reads a task's whole report history and stays open across refreshes, rereading when its descriptor changes. Questions come from actors and the observed family.
+The tree's header counts every task (`taskPage.total`). Rows and pins form one continuous virtualized list in display order. A single end sentinel (`li.mission-tree-more`) observes the active scroller, loading the earliest unread position as it approaches view through pointer or keyboard scrolling. The selected row's tree, with its task-session demand, mounts only while its chevron is open; its toolbar keeps the selection's map. Collapsed trees and failed reads suspend automatic continuation; failures expose explicit Retry. The header's info tooltip states the supplied whole-mission attention counts by kind; ordinary windows reach every attention task and recovery action. Keep these counts scoped to the whole mission: window coverage alone cannot establish which attention members remain unread. A row's title and assistive text name its unread dependencies and dependents. The graph uses cached virtual offsets for offscreen rows and measures mounted anchors, with a dashed stub (`path.mission-graph-omitted[data-omitted]`) for unread endpoints. Reader links load their target task by key (`openMissionTask`), and restored task/report targets load by ID once per display order. Readers show Loading, a failure with Try again, or confirmed absence according to the actual read outcome. Show all reads a task's whole report history and stays open across refreshes, rereading when its descriptor changes. Questions come from actors and the observed family.
 
-`MissionPanelPaging` keeps coverage/search explanations in info tooltips and stable continuation labels. A lane that has shown a continuation retains its info slot across refresh cycles. Loading alone never mounts a body block. `missionStore.reading` includes inventory lanes, selected headers and task reads; the existing top-right refresh indicator presents that background activity. `mission-panel-inventory.test.ts` holds real event-triggered reads and checks geometry, labels, DOM identity and screenshots before, during and after refresh.
+`MissionPanelPaging` keeps coverage/search explanations in info tooltips and stable continuation labels. A lane that has shown a continuation retains its info slot across refresh cycles. Loading alone never mounts a body block. `missionStore.reading` includes inventory lanes, selected headers and task reads. The top-right refresh icon spins, and is disabled, only during the panel's first journal read and an explicit refresh; passive revalidation shows no indicator. `mission-panel-inventory.test.ts` holds real event-triggered reads and checks geometry, labels, DOM identity and screenshots before, during and after refresh.
 
 Project mutation and journal-append exclusion is shared by all bundle incarnations in the native host. An in-flight mutation keeps its lock across registration disposal: a content-addressed replacement waits before reading its CAS revision. `missions-reload.test.ts` loads two independent compiled bundles and races updates across dispose/setup to verify that only one can succeed.
 
-Mission Control manages map metadata through the authenticated CodeNomad routes `POST /api/workspaces/:id/missions`, `PATCH /api/workspaces/:id/missions/:missionID`, and `DELETE /api/workspaces/:id/missions/:missionID`. These broker only the typed `create`, `update`, and `delete` methods of `codenomad.missions`. Create uses a stable request ID, may attach an owned root session or create a new root without prompting, and accepts an optional `title` (trimmed, single line, 1–60 characters, `missions/mission-title.ts`). The title is part of the exact creation request and `mission.created` event, is exposed as `MissionMap.title`, and names new coordinators `Mission · <title>` (otherwise a title derived from the objective's first sentence). Missions without a stored title stay untitled; the UI derives a label. Roots that Missions creates (new coordinators, recurring passage coordinators and independent task roots) take OpenCode's descending session identifier (`missions/session-identity.ts`): `ses_`, 12 lowercase hex encoding the real creation time, then 14 hex derived from the mission or task identity. OpenCode Zen's free models refuse a session whose identifier lacks a recent OpenCode creation time, and native children send their root's ID as session affinity, so one foreign-format root blocks its whole mission family on free models. Ownership checks (managed-root creation and cleanup, recurring passages, creation readback) match the derived suffix and also accept the `ses_` + 26-hex derivation held by existing journals. Reading time-prefixed roots requires a build that knows this format: an older build rejects a recurrence document whose passage holds one (the project's recurrence list then becomes unavailable on that build) and leaves such independent task roots out of managed cleanup and managed-root retries. Keep a compatible build available for rollback recovery and never rewrite stored session IDs. Update uses revision compare-and-swap for objective/notes. Delete appends a tombstone: the map disappears from snapshots and membership. By default every conversation is preserved. Late reports for a tombstoned mission cannot recreate its map. Settled tombstones are purged (below).
+Mission Control manages map metadata through the authenticated CodeNomad routes `POST /api/workspaces/:id/missions`, `PATCH /api/workspaces/:id/missions/:missionID`, and `DELETE /api/workspaces/:id/missions/:missionID`. These broker only the typed `create`, `update`, and `delete` methods of `codenomad.missions`. Create uses a stable request ID, may attach an owned root session or create a new root without prompting, and accepts an optional `title` (trimmed, single line, 1–60 characters, `missions/mission-title.ts`). The title is part of the exact creation request and `mission.created` event, is exposed as `MissionMap.title`, and names new coordinators `Mission · <title>` (otherwise a title derived from the objective's first sentence). Missions without a stored title stay untitled; the UI derives a label. Roots that Missions creates (new coordinators and independent task roots) take OpenCode's descending session identifier (`missions/session-identity.ts`): `ses_`, 12 lowercase hex encoding the real creation time, then 14 hex derived from the mission or task identity. OpenCode Zen's free models refuse a session whose identifier lacks a recent OpenCode creation time, and native children send their root's ID as session affinity, so one foreign-format root blocks its whole mission family on free models. Ownership checks (managed-root creation and cleanup, creation readback) match the derived suffix and also accept the `ses_` + 26-hex derivation held by existing journals. Reading time-prefixed roots requires a build that knows this format: an older build leaves such independent task roots out of managed cleanup and managed-root retries. Keep a compatible build available for rollback recovery and never rewrite stored session IDs. Update uses revision compare-and-swap for objective/notes. Delete appends a tombstone: the map disappears from snapshots and membership. By default every conversation is preserved. Late reports for a tombstoned mission cannot recreate its map. Settled tombstones are purged (below).
 
 Deletion optionally accepts `deleteManagedSessions: true`. The panel's trash button deletes at once, without a form or confirmation prose, taking that option from the `missionDeleteSessions` UI preference (Settings › Missions, a lone checkbox) fixed for its one request; the editor's delete form appears only when the deletion failed or is unconfirmed, with its error and Retry. Immutable targets are recorded in the tombstone, and per-session receipts reserve journal capacity before removal. Only deterministically created specialist roots with matching native creation metadata and exact project/location identity qualify. Coordinators, reused sessions, actors referenced by another mission (including finished/deleted maps), and roots with children are retained. Native removal is recursive, so descendants are outside this opt-in. The plugin delegates removal to the authenticated desktop bridge, because native plugin contexts lack `session.list/remove`. The bridge obtains authoritative intent through the narrow read-only `cleanupTarget` RPC, revalidates ownership/connection/worktree fences and calls the native HTTP client. It never modifies OpenCode storage directly. An incomplete cleanup returns `503 cleanup-pending` after the tombstone is committed; replay the exact original request ID, revision and option. The editor retains that request through live snapshot refreshes and locks the option after the first attempt. Only an explicit retry resumes cleanup.
 
@@ -1069,7 +959,7 @@ before deletion; never adopt a newer revision for an existing destructive intent
 
 Before the first removal the purge writes a deletion record at `codenomad-missions/v2/deleted/<projectToken>/<missionID>`, beside the scanned journal prefix: it costs no journal capacity, is only point-read (by every storage adapter, with or without removal support; the isolated recurrence-passage adapter, which never purges, has none) and is never removed. It holds the deletion request ID, revision and option plus the settled cleanup summary (240-character objective label, counts, reasons). The record refuses the mission's deterministic recreation (create, prepared hand-offs and inspect-start replays answer `mission-deleted` before any native effect) and answers an exact deletion replay with the original summary; another request ID answers `mission-not-found`, a changed revision or option `request-conflict`. Removal starts with `mission.created`, then tombstones, then intents before receipts. A group without its creation event whose mission has a valid record leaves the observation, so every intermediate state reads without discarded events, reopened cleanup or reservations; late writes to a purged mission are absorbed the same way and removed by the next purge, which also resumes an interrupted one. Without a readable record such a group stays damage evidence. Per-mission reads (`missionEvents()`/`missionView()`) scan only that mission's key range `<prefix>/<missionID>/` (the isolated recurrence-passage adapter accepts its own mission's range besides the whole virtual prefix) with the same parsing, read bound and record handling; their discarded count and damage flags are that range's own, and the snapshot's project values aggregate them plus entries outside every mission range. A paginated observation (`events()`/`snapshot()` or a per-mission read) takes the same `append:<projectToken>` exclusion as appends and purges, so it never assembles pages from both sides of a removal; code already holding it uses the private unlocked observer, and storage adapters never read the journal. Builds without purge support read a journal mid-purge as damaged and never consult deletion records.
 
-An ordinary journal's finish carries the project's finish number (`mission.finished.sequence`, the map's and summary's `finishSequence`). `MissionJournal.appendFinish` draws it from the counter at `codenomad-missions/v2/finishes/<projectToken>`, beside the deletion records and outside every mission range (no journal capacity), under the `append:<projectToken>` exclusion after the capacity check, writing the counter before the event: a refused or failed write leaves at most a gap, an exact replay returns the stored finish with its number, and a damaged counter refuses the finish. The counter is never removed, so a later finish always has a larger number whatever deletions, purges, reloads, new controls and clocks did; the seen-completion watermark relies on that order. Daily and unified calendar passages use isolated storage (`isolatedMissionPassageJournal`), whose finishes stay unnumbered. Immediate journal-owned Missions use the ordinary project's counter.
+An ordinary journal's finish carries the project's finish number (`mission.finished.sequence`, the map's and summary's `finishSequence`). `MissionJournal.appendFinish` draws it from the counter at `codenomad-missions/v2/finishes/<projectToken>`, beside the deletion records and outside every mission range (no journal capacity), under the `append:<projectToken>` exclusion after the capacity check, writing the counter before the event: a refused or failed write leaves at most a gap, an exact replay returns the stored finish with its number, and a damaged counter refuses the finish. The counter is never removed, so a later finish always has a larger number whatever deletions, purges, reloads, new controls and clocks did; the seen-completion watermark relies on that order. Calendar passages use isolated storage (`isolatedMissionPassageJournal`), whose finishes stay unnumbered. Immediate journal-owned Missions use the ordinary project's counter.
 
 **Journal index** (`missions/journal-index.ts`). Each `codenomad.missions` activation (`opencode/missions/desktop-plugin.ts`) owns one never-persisted `MissionJournalIndex`, shared by its ordinary journals (MissionControl through `setupMissionsPlugin`, presence retention) and disposed with it; never make it module-global, since a reloaded revision may reuse the module. `MissionJournal.readHints(read)` builds it on first use with one key-ordered streaming scan (same read bound as `observe()`), then runs `read` synchronously under the append exclusion on hints: `refs(sessionID)` (missions whose events name the session as coordinator, `preparedBy` author, dispatching or native-bound actor; live maps in snapshot order, ties by the first event then binary key order, then the rest in key order), `openIDs()` (per-range `missionWorkRemains`), `aggregate()` (the snapshot's discarded count, damage flags including entries outside every range, and latest live `updatedAt`), `cleanups()` (the snapshot's displayed cleanup history: pending, then the 20 newest settled) and `summaries()` (one panel row per live map, in snapshot order). The callback only extracts values: its type refuses a Promise or thenable result and a thenable is rejected at runtime before the exclusion could adopt it; range reads (`missionView`) happen after `readHints` resolves. Entries keep scalar ordering tokens and bounded labels, never events. Every ordinary journal write attempt (append, record write, purge removal), before it starts and whether it then fails, lands or goes unconfirmed, bumps a per-project write generation shared by all incarnations in the process and marks its mission dirty, so the next read re-reads that range; a range whose deletion record was unreadable stays dirty. A generation the index did not produce itself (another current-build activation, an unindexed journal) or any read failure makes it rebuild. Writers outside that generation stay unseen until the next rebuild: an older build activated in another native Location of the same project (native activation is per Location, its plugin storage per plugin ID, and native KV has no change counter), a failed-reload fallback, another process, bytes written without `MissionJournal`. A full rebuild at least every 60 seconds (`MISSION_INDEX_STALE_AFTER_MS`) heals such misses. The answers are therefore hints: anything that authorizes a write or native effect (cleanup authority and shared-session checks, membership admission or refusal, deletion, purge planning, recreation checks, damage gates before a write) keeps its authoritative full read; only read-mostly paths (the per-turn context hook, panel lists and summaries, outbox enumeration, and presence retention when the hints show open work; an empty answer is confirmed by a full read before presence is released) may use the hints. `MissionControl.hintedMissions` is that read: it takes candidate IDs from the hints, re-reads each range with `missionView`, keeps snapshot order (stable by `updatedAt`, ties in hint order) and stamps the hints' project damage flags on each map as a snapshot does; isolated passage journals use their snapshot instead. Its callers: the context hook (`contextFor`, one membership read per model turn returning the instruction and whether the session coordinates the mission; a conversation no mission names reads no range), `mission.inspect` without `start` (by `missionID` reads exactly that range), `inspect({ list })`, the task observation and decision-candidate reads behind `inspect({ taskKey })`, the notification outbox's enumeration over `openIDs()` (every running mission is open), and the panel's `list` and `mission` reads (§Snapshots, journal locking and map routes). Each notification then re-reads the whole journal before its native admission and before its receipt, and both the native message ID and the receipt ID are deterministic, so a mission the hints miss is only delayed until the rebuild and a stale candidate is skipped once the full read shows it admitted. The context of a mission written by such an unseen writer is withheld until the rebuild; its tools stay offered and every one re-selects authoritatively. `retainMissionWork` retains on `hintsShowWork` (an open mission or project damage) and otherwise decides on the full snapshot. Creation and `inspect({ start })`, declaration, delegation, revision, briefing, report, update, lifecycle, recovery, prepare, task interruption, deletion and cleanup keep their full reads; the change events after lifecycle and deletion carry the revision those operations already read. `journal-read-budget.test.ts` pins both sides over a finished history of 10,000 entries in 200 missions: the hinted paths make no full scan and read at most their own ranges (`GET /missions` through the plugin reads only the open and included ranges and observes only their actors), while membership refusals and damage gates see entries the hints have not. Isolated recurrence-passage storage (`MissionStorage.isolated`) writes its own physical namespace, never counts and has no index (`native-passage-business.test.ts` traps ordinary journal writes from passages).
 
@@ -1079,8 +969,13 @@ Directory task attention uses `task-marks` with one Mission ID and a 50-row wind
 The journal hint index retains only task IDs, keys, states, update versions, actor
 IDs and replacement keys for this projection. These windows share the 64-KiB wire
 transport and a 256-Ki-unit assembly bound, without native observation or map/body
-reads. The visible directory reads them independently of selection and expansion;
-failed windows keep explicit Retry. Keep these facts separate from volatile actor
+reads. Marks come in attention order (`missionTaskMarks`): the live tasks in plan
+order, then the others from the newest change to the oldest. The visible directory
+reads them independently of selection and expansion, and only while they can change
+the row: for an active or failed Mission, or one changed after this window's seen
+watermark. It reads no window past one ending on a finished task already seen
+(`missionTaskMarksCover`), nor past a loaded finished task still unseen; the windows
+left unread hold finished tasks alone. Failed windows keep explicit Retry. Keep these facts separate from volatile actor
 marks so slicing task metadata cannot repeat native family observations.
 Completion acknowledgement uses the exact task version and the existing per-window
 seen store. `taskMarksThrough` carries the indexed Mission's `updatedAt` as the
@@ -1238,7 +1133,7 @@ invalidates structured and raw part windows together, and Retry preserves the ex
 Pending first reads share that invalidation. Publication rechecks the owning descriptor;
 successful reads retire only failures unchanged since their admission.
 The selected mission reads its unified document projection. `document`, boolean cleanup
-`documentPending` and history `requestID` retain their exact shapes; scheduling editors
+`documentPending` and history `requestID` retain their exact shapes; editors
 keep their descriptor-pinned bodies/content reads. Snapshot/admission, internal and
 mutation contracts retain full authority.
 
@@ -1295,8 +1190,6 @@ each wanted mission's first actor window. Further windows are explicit, retain t
 provenance and remain partial/unknown as a whole-mission claim. Positive requests survive
 partial coverage and open the ordinary interruption dock; separate windows never combine
 into atomic absence or recovery authority.
-Current recurrence/scheduled passages reuse this transport under their exact isolated
-source identity; the daily archive reader retains its receipt-bound section contract.
 Consumers adopting this transport key pages by workspace,
 project and the complete source selector, retain each page's own revision, and keep a
 failed middle page's cursor for explicit Retry. An unrelated successful page never
@@ -1400,7 +1293,7 @@ One-time product creation, including the coordinator's inspect-start tool, store
 a paused unified Mission document and a prepared map. The form's **Create** button
 creates an unprompted coordinator and records its exact native identity; the
 explicit first Play admits the original lifecycle message. Creation, Play and Resume
-preserve native schedules and experimental settings. A changed connection or
+preserve experimental settings. A changed connection or
 workspace refuses the control before dispatch.
 A single Play button starts a prepared mission or resumes a paused one; Pause and
 terminal Stop are adjacent. `POST /api/workspaces/:id/missions/:missionID/control`
@@ -1411,8 +1304,7 @@ The product entry acquires the unified document's conditional storage from the
 current native RPC invocation. New document creation checks `documentCapabilities`.
 Journal-only missions retain their immediate Play/Pause/Stop, edits, declarations,
 continuations and final reports through the existing journal path. Reads and
-mutations preserve their stored representation; scheduling requires an explicitly
-configured unified document. Each map's optional `document`
+mutations preserve their stored representation. Each map's optional `document`
 projection exposes configuration/time generations, first-Play request and message,
 admitted launch count and settings-activation progress. First-Play intent is saved
 before lifecycle publication/native admission; incomplete publication keeps the
@@ -1443,7 +1335,7 @@ The `interrupt-observed` receipt carries an optional `descendants` summary: `obs
 
 On Play, the coordinator's resume message lists descendant conversations whose native `outcome` is `interrupted` (mapped to task keys when the conversation is a task actor, bounded to 32) and asks it to re-delegate or continue them; assignments are never replayed automatically.
 
-Display activity reads (the panel routes, `MissionActivityCache` in `missions/activity-cache.ts`) keep each actor's bounded family tree between reads, per daemon client: a structural session event (`session.created`, `forked`, `moved`, `deleted`, `updated`, `archived`, `renamed`), any event-stream status change, a kept root that reads differently, or 20 seconds read it again, and nothing is kept while an instance's event stream is down. Actor roots answered 404 are remembered as deleted and shown `missing` without another read. Actor roots, `session.active`, Shells, Forms and permissions are read on every observation; inboxes only for an actor that owes a report or has an open call and that no request, run or background work already describes, since queued input decides no other state. Recovery and recurrence observations take no cache.
+Display activity reads (the panel routes, `MissionActivityCache` in `missions/activity-cache.ts`) keep each actor's bounded family tree between reads, per daemon client: a structural session event (`session.created`, `forked`, `moved`, `deleted`, `updated`, `archived`, `renamed`), any event-stream status change, a kept root that reads differently, or 20 seconds read it again, and nothing is kept while an instance's event stream is down. Actor roots answered 404 are remembered as deleted and shown `missing` without another read. Actor roots, `session.active`, Shells, Forms and permissions are read on every observation; inboxes only for an actor that owes a report or has an open call and that no request, run or background work already describes, since queued input decides no other state. Recovery observations take no cache.
 
 Display activity and recovery keep the 32-descendant bounded read. When it fails (an oversized family), a bounded ancestry probe over `session.active` reports the actor `running`/`background`, and targeted recovery answers `recovery-busy` rather than `recovery-unknown`, on positive evidence only. The UI offers coordinator recovery only on observed `idle-without-report`, never on `unknown`. A running mission's coordinator owes its final report: observed idle, with an empty inbox and no saved report's notification still pending, it projects `idle-without-report`.
 
@@ -1480,17 +1372,12 @@ the next native `experimental` object (`opencode/experimental-layers.ts`) belong
 the Global write target and equals its fresh document, since native entries lag
 behind writes and normalize what they load; otherwise the object stays. The snapshot
 flags such an object (`emptyExperimental`) so Inherit can repair it.
-The shared experimental editor
-(`opencode/native-experimental-settings.ts`) materializes inherited
-`schedules:true` when setting a depth would hide that activation, preserves an
-explicit local false and depth zero. Creating a block for scheduling copies every
-effective experimental option from the target's lower-priority whole block;
-existing blocks retain their own options.
-A remaining schedules
-block selects the native depth default unless it also holds a depth. Native
-settings refuse simultaneous JSON/JSONC files in one layer. The schedule
-capability reader independently recognizes the consumed API shapes and reads the
-effective Location flag and its block origin through the acquired connection.
+The depth editor writes only `experimental.subagent_depth`, preserving depth zero
+and the block's other options; `opencode/native-experimental-settings.ts` refuses a
+block whose Missions settings are malformed or duplicated.
+A remaining block
+selects the native depth default unless it also holds a depth. Native
+settings refuse simultaneous JSON/JSONC files in one layer.
 The depth snapshot exposes that selected block's document path as `origin`,
 including when its missing depth selects the native default. The editor displays
 the effective block separately from its project write target.
@@ -1575,22 +1462,29 @@ Independent roots use only their own native agent/project permissions.
 ## Distribution and environment
 
 The content-addressed bundle is provisioned into the authenticated daemon's
-`config.get` discovery root; backend leases live outside that watched root. Tools,
-their context hook and the passage prompt hook register once at plugin load,
-independently of presence ([MISSIONS_RECURRING.md](MISSIONS_RECURRING.md)); the typed
-RPC and the ordinary one-time route register through backend presence. Without
+`config.get` discovery root; backend leases live outside that watched root. Tools
+and their context hook register once at plugin load,
+independently of presence; the typed
+RPC and the ordinary one-time route register through backend presence, for the
+steps of a calendar run that need them (§Mission calendar tool), and at activation
+when the project's `codenomad-missions/registered-v1/<project>` key exists and a
+Mission is running. The key is written with each registration and removed when the
+registration ends for lack of work, so only a project whose Missions were registered
+when the service stopped reads its journal at activation; prepared and paused Missions
+wait for a backend. Without
 either route, the context hook removes every `mission_*` tool from the model
 request and the executors refuse. `retainMissionWork` preserves
-the presence registration while active/unsettled work, receipts or uncertain storage
-remain, including after lease loss; subsequent protected sends still pass the
-owning backend's fresh admission checks. Never install project-local files; the
+the registration while active/unsettled work, receipts or uncertain storage
+remain, including after lease loss. Never install project-local files; the
 server typecheck covers the plugin contract. Qualify presence loss with
 `MISSIONS_LIFETIME_NATIVE_CLI=<absolute-isolated-opencode-cli> npx tsx --test src/opencode/missions/presence-native.test.ts`
 (in `packages/server`): it observes the presence registration through the native
 `codenomad.missions` RPC, and the tools through the native tool list and the model
 request.
 
-Assignment prompts and report synthetics use a narrow authenticated loopback bridge mode. The owning backend reconciles the persisted task/report via `codenomad.missions.snapshot`, validates complete native session ownership and selection, acquires the worktree mutation fence, and applies the current full profile environment before admission. Native environment errors are redacted and fail closed. Environment data never travels through the UI or plugin. Multiple owning backends are rejected rather than choosing a profile arbitrarily.
+Whenever a CodeNomad backend owns the coordinator, assignment prompts and report synthetics use a narrow authenticated loopback bridge mode. The owning backend reconciles the persisted task/report via `codenomad.missions.snapshot`, validates complete native session ownership and selection, acquires the worktree mutation fence, and applies the current full profile environment before admission. Native environment errors are redacted and fail closed. Environment data never travels through the UI or plugin. Multiple owning backends are rejected rather than choosing a profile arbitrarily.
+
+When no backend runs, or every running backend disowns the coordinator (`browser-claim` answers 404), `sendMissionInput`'s `unowned` effect runs instead and the plugin acts through its own session API: assignment prompts and report synthetics (`ctx.session.prompt`/`synthetic`), the lifecycle start synthetic (`missionActorResumeInput`, acknowledged as `start-admitted`) and managed root creation (`createManagedRoot` answers `undefined`, so `MissionControl` creates the root natively). These sends carry the session's existing environment and permissions, without profile environment, Git or memory context, permission-mode rules or worktree fence. A backend that neither claims nor disowns (timeout, any other status) keeps the send refused. Recovery synthetics, Pause/Stop effects, cleanup, task observation and interruption, preparation and preferences always need the owning backend.
 
 Before either kind of admission, the backend also refreshes its owned `codenomad.git-availability` instruction through `syncSessionGitContext`, removing stale context after recovery. This bounded Git advisory is separate from fail-closed environment synchronization: admission proceeds when it fails, while cancellation and connection retirement block admission.
 
@@ -1609,17 +1503,49 @@ The bridge accepts up to 250,000 assembled text characters within its 512 KiB JS
 
 This transport reuses only the automation bridge discovery; automation keeps its own execution-time session/window fences. Environment and model state are session-scoped: a queued inbox item runs with the session's state at execution time; see [SESSION_ENVIRONMENT.md](SESSION_ENVIRONMENT.md).
 
+## Mission calendar tool
+
+A programmed Mission (the "calendar" of this code) is, to its user, one Mission launched again and again. `codenomad.mission_calendar_run` (`opencode/missions/mission-calendar-tool.ts`, logic in `missions/calendar-run.ts`) lets a native OpenCode Automation launch an ordinary one-time Mission with CodeNomad closed. The Automation's program is the fixed `MISSION_CALENDAR_CODE`, which keeps the run's answer (`outcome` `launched`, `waiting` or `idle`, the current launch's `missionID` and `status`, the `coordinatorSessionID` every launch uses, the `history` of past launches and the count of all `launches`, as JSON text) in the Automation's `state.last` for any client to read, and its `args` are the Mission to create: `objective`, `template`, and optionally `title`, `notes`, `taskMode`, `profiles`, `coordinatorGoal`, a `coordinatorSessionID` every launch reuses and a new coordinator's `permissions`, plus the events to wait for in `when` and, for a calendar made of several Automations, the `calendar` identity they share. The Automation belongs to a carrier conversation whose metadata holds `codenomad.mission-calendar` and whose permissions are `MISSION_CALENDAR_PERMISSIONS`.
+
+- The tool accepts only a message named `msg_<automationID>_<run>` in a carrier conversation; the Automation ID is the calendar's identity and the run number makes a repeated run idempotent (`requestID` `calendar_<automationID>_<run>`).
+- `codenomad-missions/calendar-v1/<project>/<calendar>` (the Automation's own ID when it names no calendar) holds, for all the calendar's Automations: its current launch, the coordinator conversation, the dates and outcomes of its last twenty launches and its event checkpoints. While the current launch is `active` (including paused or waiting for its final report), a later run launches nothing and answers `waiting`; a launch whose start did not finish is started by the run that finds it.
+- Until its first launch a programmed Mission is an ordinary prepared Mission, created with the programming and named by `prepared` in the `args`: it has its line in the list and can be played by hand. The first launch starts it instead of creating one; if a person started, ended or removed it, it is treated as the previous launch.
+- A new launch replaces the previous one once it exists: the new Mission is created prepared in the same coordinator conversation and recorded, the previous one's date and outcome join the history and its Mission is deleted without deleting any conversation (a removal that fails is tried again by the next launch and never holds this one), then the new Mission is started. A launch nothing can create fails its run and leaves the programmed Mission as it was. That conversation is the one the `args` name, else the one the previous launches used, else a new one: the first that can coordinate.
+- `when` lists up to eight events (`missionCalendarEventsSchema`: local branch commits, changed files, remote branch commits, repository activity and the GitHub events), read by the source readers of `missions/` with this machine's own Git and forge access. Any one changed since its checkpoint is news; an event's first read only records where it stands. A run without news answers `idle` and asks nothing of Missions. An active Mission leaves the events unread, so their news launches again once it ends.
+- A Code Mode program's graph has no Mission storage, so each step goes through this service's own HTTP RPC (`create`, `lifecycle`, `mission`, `delete`), found by the default registration file of this very process, as CodeNomad's Create and Play do.
+- Each step that needs Missions keeps them registered while it runs; the Mission it starts then retains the registration. Failures surface as fixed `mission-calendar-*` codes in the Automation's last output. Events that cannot be read are no failure, since OpenCode pauses an Automation after three failed runs: the run answers `unread`, changes nothing, and the next run reads them.
+
+`missionCalendarAutomations` (`missions/calendar-automation.ts`) maps a Mission's launch criteria to those Automations: one per date rule, each with the events after the rules as its condition, or one that asks for events alone every fifteen minutes. The arguments also keep the criteria as entered (`launch`), for the form that edits them. A fallback date after events, an end date or count, followed conversations and the events of other Missions and conversations are named as unsupported. `node --import tsx scripts/inspect-mission-calendar-conversion.mjs [absolute-opencode-db]` applies it, read-only, to the schedules stored in an OpenCode database.
+
+`missionCalendars` (`opencode/mission-calendars.ts`) is the only code that speaks OpenCode's Automation API for calendars. Per Location it owns one carrier conversation, `ses_cn_schedule_calendar_<token>` (the reserved prefix keeps ordinary sends, favourites and permission modes off it), lists the Automations that run the calendar program there grouped by calendar identity (none while the carrier does not exist yet: OpenCode answers `SessionNotFoundError` for it), with what the latest run of any rule did, and saves, pauses, resumes or deletes a calendar. Saving again replaces the rules under the same identity, so the latest Mission and the checkpoints stay, and a paused calendar stays paused. `server/routes/mission-calendars.ts` exposes it under `/api/workspaces/:id/missions/calendars` (`GET`, `PUT /:calendar`, `POST /:calendar/pause|resume`, `DELETE /:calendar`; the caller names the programming, so `PUT` creates it or replaces it and a repeated save is the same one; `paused` creates a new one paused) behind the Mission map admission; a configuration whose criteria no Automation carries answers 422 `calendar-unsupported` with the reason, and one naming a conversation that does not run the coordinator's agent and model (`matchesExecution`) answers 422 `calendar-coordinator-profile`. A programmed Mission is listed as its Mission: every operation first prepares one again for a paused programmed Mission whose Mission is gone, in another conversation when the one it names cannot coordinate (a running one is left to its launch, which may be replacing it). Saving a new programming, or editing one whose Mission was never started, first prepares that Mission through the ordinary creation pipeline (in the same conversation on an edit); an edit after the first launch leaves the Mission of the current launch alone and keeps naming it. Each listed calendar names `missionID`, the Mission that is the programmed one right now, and its `launch` criteria once they parse as a launch policy.
+
+In the panel a programmed Mission is the ordinary row of that Mission. `stores/mission-calendars.ts` reads the directory's calendars beside a list that has Missions, again whenever one of them appears, goes or changes state; `components/mission-programming-model.ts` derives what is shown. The row has the recurring icon, adds the criteria and the next wake to its status and, between launches, is marked waiting for its next wake or paused; the selected detail shows the programming above the tasks (`components/mission-programming.tsx`: criteria, state, next wake or check, launches, past runs). A programmed Mission has one pause (`mission-selected-actions.tsx`): Pause on a launch under way pauses the programming, then the launch, and Play resumes the launch, then the programming; while no launch is under way they pause and resume the programming alone. Stop ends the launch under way; while none is, once confirmed, it deletes the programming and the Mission stays as an ordinary one. When a launch replaces the selected Mission the selection follows it, and deleting the Mission deletes its programming first. UI code imports `missions/launch-policy` as a type only: the module loads Node's crypto.
+
+The creation form (`components/mission-editor.tsx`) saves a Mission whose launch criteria repeat as a programming: one `PUT` under an identity drawn once per form (`calendarID`, kept in its draft), so submitting again after a lost answer saves the same one, created paused when **Start automatically** is off. **Edit** on a programmed Mission reopens that form filled from the calendar (`missionProgrammingDraft`) under its identity. A refused save leaves the form as it was; criteria no Automation carries show `missions.scheduling.error.unsupported`.
+
+Agents reach the same operation (`runMissionCalendarOperation`, `server/routes/mission-calendars.ts`) through `mission.program` (`missions/program-tool.ts`, `server/routes/mission-agent-program.ts`): `list`, `save` under a stable `id`, `pause`, `resume` and `delete` for the programmed Missions of the calling conversation's directory, a refusal being an answer with its code. `mission.prepare` refuses launch criteria that repeat with `use-mission-program`.
+
+The schedule documents stored in a directory are taken over by the calendar operations there, whoever asks (`runMissionCalendarOperation`), until none is left for the service connection. The plugin reads them from its storage without that engine (`legacySchedules`, `missions/legacy-schedules.ts`). Each becomes the programmed Mission of the same identity, saved paused; a named coordinator conversation that no longer exists is dropped, so the first launch opens another, and launch criteria no Automation carries make an ordinary prepared Mission instead. The schedule's own Automations are then deleted and its document replaced by the tombstone the engine writes for a deleted schedule (`retireLegacySchedule`, `legacyTombstone`), so a conversation one of its passages created coordinates ordinary Missions again. The programmed Mission is resumed last when the schedule ran with no failed passage holding it, so the two never launch together. A schedule already programmed is only deleted; one that fails is left as it is for the next operation. Past runs and counts start again.
+
+`node --import tsx scripts/test-mission-calendar-run-e2e.mjs <absolute-isolated-opencode-cli>` (after `npm run build:missions --workspace @neuralnomads/codenomad`) qualifies it on a private runtime with the bundled plugin and no backend: launch and start with the coordinator `/goal` armed, later runs waiting, an independent task whose root is created, prompted and reported, the next launch replacing the first Mission in the same conversation and finishing after an OpenCode restart, a calendar that launches only once a commit lands on a local branch, and a programming whose first launch starts the Mission prepared with it.
+
 ## Safety limits
 
 - One native project per mission.
 - Coordinator and independent actor admission require exact owned roots; native
   descendant observation/reporting uses its separate ancestry/provenance contract.
   Foreign projects are rejected; a graph edge never grants session authority.
-- A mission has no count limit on actors or tasks: its 2,000 stored journal entries
+- The qualified native ordinary journal has no fixed entry count, so writes and
+  terminal receipts do not compete for reserved capacity. A Stop or managed-session
+  cleanup intent holds at most 2,000 distinct targets. A new actor ID is refused
+  at 2,000 distinct recorded actors; reusing an existing ID does not add a target.
+  An already oversized target set is refused before any terminal side effect; deleting with conversations
+  retained requires no managed-session cleanup targets. With the generic
+  scanner, a mission's 2,000 stored journal entries
   (`MISSION_MAX_EVENTS`, counted over its key range, unreadable entries, receipts and
   tombstone included) bound it, and the number of missions, and so a project's
   journal, is unbounded. Entries plus pending reserved receipts never exceed that
-  count, on every storage. Ordinary writes keep the lifecycle reserve of the actors
+  count on that scanner. Ordinary writes keep the lifecycle reserve of the actors
   they leave the mission with (`missionLifecycleReserve`: twice one plus the actor
   count, plus one document-cleanup receipt for unified documents; every session an entry admits as original
   or replacement coordinator, dispatching or native-bound
@@ -1641,8 +1567,11 @@ This transport reuses only the automation bridge discovery; automation keeps its
   tasks; each of its dependency updates names a distinct live task (the journal
   refuses a repeated task key), so one revision rewrites at most as many dependency
   lists as the mission has tasks and can repoint every dependent of a retired task.
-  Capacity checks (`assertCanAppend`, `append`) read the target mission's range and its exact document key. A write's
-  safety decisions still read the full journal (§Journal index), so write cost grows
+  Standalone capacity checks (`assertCanAppend`, `append`) read the target mission's
+  range and its exact document key. Declaration and briefing count the target's
+  entries during the publication snapshot's scan and apply the new event to that
+  same observation under the append exclusion. A write's safety decisions still read
+  the full journal (§Journal index), so write cost grows
   with the project's history. Every read stops past 2,000 entries in one mission range
   (entries outside every range share one such bound); a full project read
   (`events()`/`snapshot()`, the index build) holds every mission's events, bounded only
@@ -1672,18 +1601,10 @@ This transport reuses only the automation bridge discovery; automation keeps its
   `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
   receipt-backed native `request-conflict`): the UI keeps the draft and re-enables
   Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
-  Recurring creation uses the same classification (`creation-unavailable`,
-  `creation-worktree-deleting`, the hold codes, `recurrence-capacity`, 400 and
-  codeless 401/403/404 are definitive; codeless 409/5xx and `creation-uncertain`
-  stay held), keyed on a flag set immediately before the paused-schedule RPC.
-  Known limit: that UI hold lives in window memory only and an uncertain create
-  cannot be looked up by request, so it keeps Create blocked for that project scope
-  until the window reloads (the backend permit and deletion block remain until
-  native settlement). After a reload, check the mission list before creating again.
 
 ## Included playbooks
 
-- **Debugging** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator chooses each transition.
+- **Debugging** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator chooses each transition. Before declaring any task, the coordinator may finish with the checks in `evidence` and a final `{kind: "no-change"}` when no change is needed or `{kind: "verified-completion"}` when the objective is met without debugging.
 - **Wayfinder Map** adapts destination, map, frontier, claims, and fog-of-war planning to visible sessions. It remains planning-first; decision workers, prototype scouts and decision guides return briefs, and the coordinator decides, defers or asks the human (§Human questions and decisions).
 - **Product delivery** (`delivery`) adapts the NomadWorks Collective method (`NeuralNomadsAI/NomadWorks`) without requiring that plugin. The coordinator acts as Product Manager: it classifies each request by complexity (tiny, standard, complex) and track (implementation, investigation, spec), has the business analyst and tech lead draft a Spec Change Request for any behavioral change (tiny included), standard or complex implementation and spec work, runs read-only pre-sync readiness reviews before implementation, decomposes complex work into slices with the technical architect, keeps one shared-checkout implementation task at a time, and closes only with QA/tech-lead evidence and resolved documentation impact. The six roles are business analyst, technical architect, tech lead, developer, QA engineer and UI/UX designer. The coordinator treats an objective that already states the behavior change precisely (what changes, for whom, how to verify it) as the approved request, and otherwise asks the human to approve it through the native question tool, batching pending approvals; the human owns commits unless the objective or notes explicitly ask for them. One playbook covers both NomadWorks team presets; the coordinator declares only the roles each complexity needs. Same-scope rework retires the task and adds a replacement (`replacesTaskKey`); continuing a native specialist's context uses a follow-up task whose `reuseFromTaskKey` names that specialist's finished, still-live task.
 
@@ -1693,7 +1614,7 @@ The scenario label's info action opens the localized `playbooks` help page at th
 
 `node scripts/test-missions-native-trajectory.mjs <absolute-isolated-opencode-cli>` also checks the one-time Wayfinder decision flow: an artifact-free readout and a forged answer refused without journal mutation, a decision worker that returns a brief, the coordinator's own question naming the task's `questionTag`, answered through the authenticated UI route, listed by `inspect({ taskKey })` and settling the task without an artifact, and a coordinator decision recorded as its own. The invocation unit tests cover graph isolation, missing/stale invocations, interruption joining and per-check deadlines.
 
-Each complete one-time human-gate call (acquisition plus its nested SQL/Form/storage reads) shares one 10-second deadline, matching `missions/native-human-evidence.ts`, combined with invocation cancellation. The check aborts and joins only its own runtimes and clears its timer on settlement; later checks get a fresh budget, excluding intervening session/authority work. The invocation joins all pending checks/reads before graph release. A raw Promise that ignores abort may remain pending, but cannot resume its cancelled Effect into the graph, and later reads through that expired check are refused. A stuck native finalizer or uninterruptible read is joined before its graph is released: never abandon such work with a Promise race, and keep reads interruptible and cleanup finite. Recurring gates use their own runners.
+Each complete one-time human-gate call (acquisition plus its nested SQL/Form/storage reads) shares one 10-second deadline (`NATIVE_HUMAN_ANSWER_TIMEOUT_MS`), combined with invocation cancellation. The check aborts and joins only its own runtimes and clears its timer on settlement; later checks get a fresh budget, excluding intervening session/authority work. The invocation joins all pending checks/reads before graph release. A raw Promise that ignores abort may remain pending, but cannot resume its cancelled Effect into the graph, and later reads through that expired check are refused. A stuck native finalizer or uninterruptible read is joined before its graph is released: never abandon such work with a Promise race, and keep reads interruptible and cleanup finite.
 
 `node scripts/test-missions-native-family-control.mjs <absolute-isolated-opencode-cli>` (latest-runtime CI) qualifies recursive Pause/Play and Stop with real background subagents in a private runtime: a five-session, three-level family interrupted deepest-first with complete receipts, Pause parking results without model turns, Play resuming only the coordinator with interrupted-child context, Stop emptying family inboxes.
 
@@ -1706,47 +1627,51 @@ answers mutations with 405 and writes `browser-report.json` to the absolute
 
 ## Agent conventions
 
-- Missions project tools admit every owned project conversation, including descendants and scheduled passages, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
+- The bounded panel inventory shares its display projection across readers of
+  the same occurrence snapshot. A loading-only lane update keeps that projection;
+  published rows, failures, and retired ownership invalidate it.
 
-- Mission reader and conversation gestures advance the tab occurrence generation at admission. Async navigation adopts only while that generation is current. Passage retargeting, inventory cleanup and Mission absence reconciliation apply immediately against their current source and reader; pending gestures retain their authority.
+- Model-facing tool schemas use a plain object at the root, with variants inside properties. Keep scope and action validation in the execution codec.
 
-- Restored task selections demand their exact bounded task ID even with the reader closed. Their toolbar stays task-owned and disabled until resolution; a successful absent answer clears that selection. Dependency links update the owning row, task selection and reader together. The open reader follows one-time, daily and calendar-owned selections, with view, connection and exact passage fences around delayed reads. Calendar-owned schedules without a current passage show their saved instructions centrally.
+- Missions project tools admit every owned project conversation, including descendants, and include human-created Missions. Keep coordinator-only topology and authenticated human-answer evidence at their existing domain boundaries.
+
+- Mission reader and conversation gestures advance the tab occurrence generation at admission. Async navigation adopts only while that generation is current. Inventory cleanup and Mission absence reconciliation apply immediately against their current source and reader; pending gestures retain their authority.
+
+- Restored task selections demand their exact bounded task ID even with the reader closed. Their toolbar stays task-owned and disabled until resolution; a successful absent answer clears that selection. Dependency links update the owning row, task selection and reader together. The open reader follows the selection, with view and connection fences around delayed reads.
 - Duplicate project occurrences can select different Missions/tasks and read different reports while sharing native Mission data and execution. Reader opening, following and closure arbitrate only with that occurrence's file/web view; switching occurrences preserves each target. Restore captures bounded presentation identities through `viewState.missions` and rebinds reader instance references before hydration (see [PROJECTS.md](PROJECTS.md)); body reads retain their existing cache, demand and authority scopes.
 - Task completion attention seeds once per observed project from initial server timestamps. Only completed task versions receive individual acknowledgements; memory retains the boundary when layout persistence is unavailable. Command announcements and recovery actions belong to the persistent header outside folded task content. A deletion's consumed automatic submission and error survive panel remounts independently of its original-request retry state.
-- Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. `stores/mission-view-state.ts` takes the occurrence's `instanceId` for selection, reader, expanded rows and disclosures; `tab-view-state.ts` captures them in each restorable tab envelope. The newest disclosure choices share the bounded Mission view value. Native reader `<details>` use `createMissionDisclosure` so their open state and lazy body demand survive remounts for that occurrence. Completion/task acknowledgements retain their project scope within the window; native actions retain their project, connection and passage authority fences. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles live under `styles/panels/mission-*.css`. Recurring setup/list geometry lives in `styles/panels/mission-recurrence.css`. Template and execution mode are orthogonal; recurring drafts record the chosen template, optional verbatim notes and exact coordinator/playbook-role profiles for future passages, under H9 editing guards. The shared configuration library retains its version-1 name, instructions, notes, playbook, profiles and task-mode storage contract. Daily CREATE and UI share `recurrenceReadBudget` / `recurrenceInputBudget`, with exact native Location room; never raise a ceiling automatically.
+- Mission sections use `components/mission-disclosure.tsx` and the shared `.disclosure-chevron`. `stores/mission-view-state.ts` takes the occurrence's `instanceId` for selection, reader, expanded rows and disclosures; `tab-view-state.ts` captures them in each restorable tab envelope. The newest disclosure choices share the bounded Mission view value. Native reader `<details>` use `createMissionDisclosure` so their open state and lazy body demand survive remounts for that occurrence. Completion/task acknowledgements retain their project scope within the window; native actions retain their project and connection authority fences. Long mission content uses `components/mission-reader.tsx` above the transcript; its chrome follows `.window-*`. Mission styles live under `styles/panels/mission-*.css`. Template and execution mode are orthogonal. The shared configuration library retains its version-1 name, instructions, notes, playbook, profiles and task-mode storage contract. The creation form bounds followed-conversation input with `recurrenceInputBudget`; never raise a ceiling automatically.
 - Creation is one compact screen (`components/mission-editor.tsx`, `styles/panels/mission-create.css`): the saved-configuration picker first, then instructions, an editable title prefilled from its first sentence or the loaded configuration name (≤60, `missions/mission-title.ts`), playbook, delegation, profile selectors, Notes and Launch when criteria. Objective and Notes start at one line and grow with `field-sizing: content`. Profile and scheduling rows are directly visible; criteria default to once now and show their or / if / else connectors, with the saved zone shown only when it differs from the system zone. Delegation includes the project's native subagent depth row (`mission-subagent-depth.tsx`, shared with Preferences). Secondary explanations and localized help links use focusable info actions: playbooks at their selected anchor, configuration at `missions#saved-briefs`, task sessions and depth at `missions#profiles`, scheduling at `missions#native-scheduling`.
 - The panel's Create button heads the form, which replaces the selection line and the tree with its selected detail; these stay mounted but hidden (`.mission-control[data-creating]` in `mission-control.css`, `MissionPanelHeader` `creating`) so pending controls and retries survive. The form fills the panel below its header as a column whose body is the only scroller, with the footer below that scrollport at the panel bottom: asynchronous content (depth reads, catalogs) never moves Create from under an aimed click, and focus scrolling never hides a field behind the footer. Unconfirmed cleanup banners are ordered above the form, so they shrink the body instead. When the header, banners and footer leave the body less than its minimum, the whole form scrolls in the panel with the footer after it (`mission-panel-scroll.ts`).
-- The footer's Save configuration is a bookmark icon (`.window-icon-button`) named by its tooltip; its name field's Save and Cancel take the footer's `button-secondary` template. Every command of the Missions panel and its readers (retry, check, copy, open a reader or conversation, the configuration name field's Save and Cancel) is a bordered `.window-action`; `.window-text-button` stays only on end-of-list "Load more" links (the panel's paging, the task tree's continuation, the schedule list and a task's whole report history). The footer has a single **Create** submit. **Start automatically** sits outside Scheduling, off by default and retained in the form draft. Creation stores a paused Mission; when selected, only its direct positive acknowledgement continues guarded Play under the same captured view and intention. Read-only receipt recovery leaves Play explicit. Validation stays inline beside its field.
-- One-time and current daily/native-scheduled readers show bodies through `useMissionBody`/`useReaderValue` (§Body display). Never feed cached display values into admission, mutations or lost-acknowledgement checks. Answer presence from descriptors (`missionBodyPresent`, `missionReportHas`) and labels from bounded excerpts and `decidedBy`. New bodies belong in `MISSION_BODY_FIELDS`; never add prose to compact rows. Restrict compacting and paging to display projections (`list`, `mission`, `panelPage`, exact current passage pages and their routes); keep authority maps full. Current passage body keys carry the exact source and report readers retain immutable report IDs. Browser fixtures serve actual bounded projections/content from their own full maps and retain every report in the mission's own `reports`, as the reducer does.
+- The footer's Save configuration is a bookmark icon (`.window-icon-button`) named by its tooltip; its name field's Save and Cancel take the footer's `button-secondary` template. Every command of the Missions panel and its readers (retry, check, copy, open a reader or conversation, the configuration name field's Save and Cancel) is a bordered `.window-action`; `.window-text-button` stays only on end-of-list "Load more" links (the panel's paging, the task tree's continuation and a task's whole report history). The footer has a single **Create** submit. **Start automatically** sits outside Scheduling, off by default and retained in the form draft. Creation stores a paused Mission; when selected, only its direct positive acknowledgement continues guarded Play under the same captured view and intention. Read-only receipt recovery leaves Play explicit. Validation stays inline beside its field.
+- Readers show bodies through `useMissionBody`/`useReaderValue` (§Body display). Never feed cached display values into admission, mutations or lost-acknowledgement checks. Answer presence from descriptors (`missionBodyPresent`, `missionReportHas`) and labels from bounded excerpts and `decidedBy`. New bodies belong in `MISSION_BODY_FIELDS`; never add prose to compact rows. Restrict compacting and paging to display projections (`list`, `mission`, `panelPage` and their routes); keep authority maps full. Browser fixtures serve actual bounded projections/content from their own full maps and retain every report in the mission's own `reports`, as the reducer does.
 - A compact map holds a page of its tasks and their reports (§Task pages). Never derive a whole-mission fact (task counts, open questions, activity, owed work, whether a task or report exists) from its `tasks` or `reports`: use `taskPage`, `actorEvidence`, `actors`, the activity projection and the summary rows. Navigation to a task the map does not hold reads it (`openMissionTask`, `missionStore.loadTasks`) instead of being disabled, and every row the server sends stays within its budget: a new unbounded task, report or change field is a body or a count, never a list in a row. Keep `missionTaskOrder` the only display order, shared by the server's pages and the tree.
-- Editor input copies and receipt checks use exact descriptor-pinned content with their original map revision and request identity (§User-journey regression checks). Unified-document projections stay whole in compact maps: `MissionDocumentSummary` carries bounded configuration metadata and input digests; editor text comes from the schedule or content route.
-- Journal editor reconciliation reads the original history request and exact text independently of the task window. Task pages preserve document and cleanup metadata; missing rows require the named display read their reader needs. Current daily/native-scheduled readers acquire their source before bounded task/report windows. The document RPC schema carries the dormant-journal marker and first-Play input digest with the projected summary.
-- The open create/edit/delete editor lives in window memory per panel scope (`stores/mission-editor-state.ts`), never in the native view layout. A hidden project keeps it mounted and usable on return; when the panel unmounts (another right-panel tab) an idle editor stashes its draft and reopens with it, while one with a request in flight or held closes and settles through its creation/recurrence hold. Editor activity follows the live view: `lib/mission-view-fence.ts` captures guard one operation from capture to completion, never a component's lifetime.
-- The Missions panel header (`components/mission-picker.tsx`, `styles/panels/mission-picker.css`) is two lines with one rule under the header, sticky at the top of the scrolling panel (`.mission-control-header`): a right-aligned toolbar ([+] create, then the panel's preferences gear and refresh), then the selection line. The selected item's icon toolbar mounts there through `MissionActionBar` and `MissionActionSlot`, followed by the always-shown **Filter missions** field; a narrow panel wraps the filter above the toolbar (`flex-wrap: wrap-reverse`). `MissionRows` uses the session list's row classes (`session-list-item`, `session-item-base`, `session-item-expander`, `session-item-select`, `session-item-title--clamp`): chevron, a flag (repeat icon for a schedule) coloured by its mark, then the title (`lib/mission-display.ts`); full state lives in the tooltip and screen-reader text. The filter always keeps the selected row. Selection uses `--list-item-highlight-*`; never use the input-field surface (`--surface-base`) as a panel or popup background.
-- Flags and task icons share the session status palette (`mission-picker-model.ts`, `missionMark`/`scheduleMark`). A requested answer uses permission red; only a question the Mission can open reddens its flag. Observed work uses working yellow with pulse; interrupted and paused use warning orange. A completed Mission this window has not shown uses idle green (`markMissionsFinishedSeen` in `stores/mission-view-state.ts`), seeded from initial completion observations and marked seen only when shown in a focused window. Its per-project watermark on `finishSequence` retains unseen completions and individual acknowledgements within the layout bound; advancing that bound counts older completions as seen. A prepared Mission uses the palette's `--accent-primary`. Seen completed, failed, blocked and retired tasks stay neutral; active tasks pulse yellow, requested answers are red, unseen finished tasks are green, and tasks not started (assigned, ready, waiting on dependencies) use the accent. Never apply the accent to the chevron or reuse red for anything but a requested answer. Status words and icon shapes keep outcomes accessible independently of colour.
-- Daily and unified scheduled documents adapt to one pure schedule-mark projection. A confirmed future native wake uses the ordinary icon in opaque `--accent-primary` with a static 8×1px `--text-secondary` underline, three pixels below its 16px SVG in a shared 16×20px HTML cell. Prepared uses the accent icon alone; Pause uses `Pause`, interruption uses `AlertTriangle`, both warning orange. Native uncertainty, stale display evidence and unresolved controls use neutral **State unconfirmed**. Requests, interruption and uncertainty take priority over successful-history attention; Pause takes priority over a pending passage. The first loaded historical success starts seen. Later successful passages stay green until an explicit row selection in the active attentive window or **Mark as read** acknowledges the captured daily `passageID` or unified history `id`. Per-window/project/document-format/schedule layout state retains exact positive passage identities within the layout-value bound. Restored selection and newly arriving results preserve unread attention. Acknowledged success returns to confirmed waiting while armed, otherwise neutral; terminal Stop is neutral. Hover, focus, selection and reduced motion preserve the waiting underline.
-- Row actions live in the header's selection line (`components/mission-action-bar.tsx`, `mission-selected-actions.tsx`): Play/Pause (coordinator recovery for an interrupted Mission and resumption of a failed one), Stop, a schedule's Run now, the reader eye, Open conversation, delete and `ActionOverflowMenu`. Every action stays in place, disabled when inapplicable under its owner and H9 guards. Overflow order is request an update, interrupt now, Save configuration and edit; the trigger is disabled when all entries are disabled. Secondary actions, including schedule checks and the configuration name field, stay at the top of the selected detail only while present. Command announcements and recovery actions belong to the persistent header; progress and errors join the primary button's tooltip instead of adding a line under the row. Retrying an unconfirmed control from the header ⟳ first reads its exact status, then resends only its still-unconfirmed original request/revision from that explicit click. Stop confirms first. Delete automatically submits once using the shared `missionDeleteSessions` preference frozen into that request; a failed or unconfirmed deletion retains its consumed automatic-submit state, original retry identity, option and error in the editor draft across remounts. Only explicit Retry continues that deletion. Shared contextual-help actions retain the shared help glyph, keyboard access and localized destination; opening help preserves selection, reader and editor state.
-- The panel follows the session list. Its single selection is a Mission/schedule row or one task of that row's Mission/passage (`selectedTask` in `stores/mission-view-state.ts`); only the selected row or task is highlighted (`.session-item-active`, `aria-current`), and selecting a row clears the task. Only the chevron (`SessionExpander`) expands or collapses. A Mission with known `MissionSummary.taskCount` zero, or a read map without tasks, uses the session list's spacer; an absent count retains the chevron. Its context menu Mark as read acknowledges the row's unseen finished tasks and own unseen completion. `MissionRows` renders the selected detail once between its surrounding rows, preserving controls and retries through selection changes. Collapse hides that mounted detail; a selected Mission without tasks keeps its action-only detail visible. Expanded rows persist per occurrence in `expanded`, bounded by `MAX_EXPANDED`; an unselected schedule's chevron selects and expands it, while an unselected one-time Mission's chevron expands its task preview without selecting it. Nothing is selected by default. Opening a conversation preserves the selected Mission/task.
+- Editor input copies and receipt checks use exact descriptor-pinned content with their original map revision and request identity (§User-journey regression checks). Unified-document projections stay whole in compact maps: `MissionDocumentSummary` carries bounded configuration metadata and input digests; editor text comes from the content route.
+- Journal editor reconciliation reads the original history request and exact text independently of the task window. Task pages preserve document and cleanup metadata; missing rows require the named display read their reader needs. The document RPC schema carries the dormant-journal marker and first-Play input digest with the projected summary.
+- The open create/edit/delete editor lives in window memory per panel scope (`stores/mission-editor-state.ts`), never in the native view layout. A hidden project keeps it mounted and usable on return; when the panel unmounts (another right-panel tab) an idle editor stashes its draft and reopens with it, while one with a request in flight or held closes and settles through its creation hold. Editor activity follows the live view: `lib/mission-view-fence.ts` captures guard one operation from capture to completion, never a component's lifetime.
+- The Missions panel header (`components/mission-picker.tsx`, `styles/panels/mission-picker.css`) is two lines with one rule under the header, sticky at the top of the scrolling panel (`.mission-control-header`): a right-aligned toolbar ([+] create, then the panel's preferences gear and refresh), then the selection line. The selected item's icon toolbar mounts there through `MissionActionBar` and `MissionActionSlot`, followed by the always-shown **Filter missions** field; a narrow panel wraps the filter above the toolbar (`flex-wrap: wrap-reverse`). `MissionRows` uses the session list's row classes (`session-list-item`, `session-item-base`, `session-item-expander`, `session-item-select`, `session-item-title--clamp`): chevron, a flag coloured by its mark, then the title (`lib/mission-display.ts`); full state lives in the tooltip and screen-reader text. The filter always keeps the selected row. Selection uses `--list-item-highlight-*`; never use the input-field surface (`--surface-base`) as a panel or popup background.
+- Flags and task icons share the session status palette (`mission-picker-model.ts`, `missionMark`). A requested answer uses permission red; only a question the Mission can open reddens its flag. Observed work uses working yellow; interrupted and paused use warning orange. A programmed Mission waiting for its next launch takes the hourglass in the accent blue. A completed Mission this window has not shown uses idle green (`markMissionsFinishedSeen` in `stores/mission-view-state.ts`), seeded from initial completion observations and marked seen only when shown in a focused window. Its per-project watermark on `finishSequence` retains unseen completions and individual acknowledgements within the layout bound; advancing that bound counts older completions as seen. A prepared Mission uses the palette's `--accent-primary`. Seen completed, failed, blocked and retired tasks stay neutral; active tasks pulse yellow, requested answers are red, unseen finished tasks are green, and tasks not started (assigned, ready, waiting on dependencies) use the accent. Never apply the accent to the chevron or reuse red for anything but a requested answer. Status words and icon shapes keep outcomes accessible independently of colour.
+- A programmed Mission's row shows its launch's mark while a launch is under way. Between launches it shows `Hourglass` in opaque `--accent-primary` while its programming waits for the next wake, and `Pause` in warning orange while it is paused (`mission-programming-model.ts`).
+- Row actions live in the header's selection line (`components/mission-action-bar.tsx`, `mission-selected-actions.tsx`): Play/Pause (coordinator recovery for an interrupted Mission and resumption of a failed one), Stop, the reader eye, Open conversation, delete and `ActionOverflowMenu`. Every action stays in place, disabled when inapplicable under its owner and H9 guards. Overflow order is request an update, interrupt now, Save configuration and edit; the trigger is disabled when all entries are disabled. Secondary actions such as the configuration name field stay at the top of the selected detail only while present. Command announcements and recovery actions belong to the persistent header; progress and errors join the primary button's tooltip instead of adding a line under the row. Retrying an unconfirmed control from the header ⟳ first reads its exact status, then resends only its still-unconfirmed original request/revision from that explicit click. Stop confirms first. Delete automatically submits once using the shared `missionDeleteSessions` preference frozen into that request; a failed or unconfirmed deletion retains its consumed automatic-submit state, original retry identity, option and error in the editor draft across remounts. Only explicit Retry continues that deletion. Shared contextual-help actions retain the shared help glyph, keyboard access and localized destination; opening help preserves selection, reader and editor state.
+- The panel follows the session list. Its single selection is a Mission row or one task of that Mission (`selectedTask` in `stores/mission-view-state.ts`); only the selected row or task is highlighted (`.session-item-active`, `aria-current`), and selecting a row clears the task. Only the chevron (`SessionExpander`) expands or collapses. A Mission with known `MissionSummary.taskCount` zero, or a read map without tasks, uses the session list's spacer; an absent count retains the chevron. A programmed Mission always has its chevron, which selects it: its programming is in its detail before any task. Its context menu Mark as read acknowledges the row's unseen finished tasks and own unseen completion. `MissionRows` renders the selected detail once between its surrounding rows, preserving controls and retries through selection changes. Collapse hides that mounted detail; a selected Mission without tasks keeps its action-only detail visible. Expanded rows persist per occurrence in `expanded`, bounded by `MAX_EXPANDED`; a programmed Mission's chevron selects and expands it, while another unselected Mission's chevron expands its task preview without selecting it. Nothing is selected by default. Opening a conversation preserves the selected Mission/task.
 - The detail (`components/mission-tracking.tsx`, `styles/panels/mission-detail.css`) holds secondary actions such as the configuration name field and the task tree; prose belongs in the central reader or info tips. `components/mission-task-tree.tsx` is THE task view: one session-list row per task (`.session-list-item`, `.session-item-base.session-item-nested`, one level deep), a status icon then title. `mission-graph.tsx` draws only declared `blockedBy` dependencies, completed and retired included, from measured status icons; never infer native ancestry. Lanes start under the Mission row's chevron at a fixed step; `--mission-graph-extra` increases row indentation when necessary. Clicking a task selects it; a correlated red request also opens its question. `missionTaskRowState` supplies both task-row state and the Mission chevron's `data-child-activity` priority: input, active, unseen finished task. A finished task stays green until selection, its icon button (`lib/toggle-sweep.ts` supports sweeping), or Mark as read acknowledges it. `stores/mission-task-seen.ts` retains the per-project first-use boundary, per-Mission Mark as read watermark and individually seen task versions.
-- The header eye controls central-reader visibility independently of task selection and conversation navigation. Pressing it opens the selected row's overview or selected task's reader; while pressed, selecting another Mission or task follows that target, and releasing it closes the reader. Selecting a task with the eye off leaves the reader closed; Open conversation reaches its exact owned actor. A selected task owns the header toolbar (`components/mission-task-actions.tsx`), even with its reader closed: its primary action recovers its report when eligible, its eye toggles its reader and its conversation action keeps that task's target. The Mission's lifecycle/delete/overflow actions stay in place, disabled, with lifecycle state mounted. Current-passage tasks yield the schedule's toolbar through `MissionTaskToolbarActive` and remain read-only. An unselected one-time Mission's task preview (`components/mission-task-preview.tsx`) reads its bounded map, pages and native task conversations only while expanded. `useMissionTaskSessionDemand` owns all task-conversation demand (selected tree, previews, open reader); collapse, hiding, owner changes and unmount release it. Remaining owners share a coalesced rerun; no owners fence the in-flight response and drop its queued rerun. Selecting a preview task selects it with its owning Mission.
+- The header eye controls central-reader visibility independently of task selection and conversation navigation. Pressing it opens the selected row's overview or selected task's reader; while pressed, selecting another Mission or task follows that target, and releasing it closes the reader. Selecting a task with the eye off leaves the reader closed; Open conversation reaches its exact owned actor. A selected task owns the header toolbar (`components/mission-task-actions.tsx`), even with its reader closed: its primary action recovers its report when eligible, its eye toggles its reader and its conversation action keeps that task's target. The Mission's lifecycle/delete/overflow actions stay in place, disabled, with lifecycle state mounted. An unselected one-time Mission's task preview (`components/mission-task-preview.tsx`) reads its bounded map, pages and native task conversations only while expanded. `useMissionTaskSessionDemand` owns all task-conversation demand (selected tree, previews, open reader); collapse, hiding, owner changes and unmount release it. Remaining owners share a coalesced rerun; no owners fence the in-flight response and drop its queued rerun. Selecting a preview task selects it with its owning Mission.
 - The tree follows §Task pages. Graph rows, activity and edges use keyed maps and remeasure rendered status icons when rows arrive, keeping large maps linear (`mission-panel-geometry.test.ts`). Graph styles live in `styles/panels/mission-graph.css`; shared cleanup-receipt row chrome lives in `components/mission-list-item.tsx` and `styles/panels/mission-list-item.css`.
-- The overview reader (`components/mission-reader.tsx`) keeps the result/briefing/objective first and folds secondary material at its bottom through `components/mission-overview-details.tsx`: Plan changes, Reports (each opening its exact reader), conversation cleanup history and Technical details (mission/coordinator/schedule/passage IDs and requested profiles), plus the pending coordinator-notification note. Task and schedule readers also keep identifiers in a collapsed Technical details. Only cleanup that needs an explicit retry stays in the panel. Task readers consolidate bounded brief/report/evidence pages with dependency navigation and existing truthful execution/profile/notification surfaces. Useful recursive delegation guidance propagates through canonical assignment prompts; native runtime permissions and configured depth remain authoritative, never an imposed target or a root-fallback trigger.
-- A selected daily document uses the same detail (`styles/panels/mission-schedule.css`): the same action toolbar, whose Summary eye opens the admitted passage's overview, else the daily schedule reader; one interrupted/uncertain sentence pointing at the toolbar's primary Resume action and any last daily-check failure; the current passage's tree when a passage is admitted; then a compact list of past runs (date · outcome), each toggling its exact run reader centrally. Running daily rows show their next run. Daily times use the schedule zone (`components/mission-schedule-text.ts`), labelled only when it differs from the viewer's zone. The central daily reader (`components/mission-recurrence-reader.tsx`) follows the same plain grammar: rule, the selected run's result (or one plain failure sentence with Retry), every run, and identifiers only in a collapsed Technical details. Unified native schedules use `mission-schedule-list.tsx` and its controls: saved policy, desired/observed states, next wake/check, source-check and launch/success counts, retained history and conversation links. Its Technical details disclose principal/reconciliation carriers, calendars and pending cleanup from the same document read (§User-journey regression checks).
-- Task readers put results before collapsed brief/technical details. Questions are only open native Forms/permissions: selecting a red Mission or schedule row (a schedule's as soon as its passage's questions are discovered, while the click's view, intent, conversation, connection and closed-editor fences hold; otherwise dropped, never replayed; a discovery that settles without a question, a failed read before any passage is shown, no current passage or a replaced passage retires it) or clicking a red task opens the exact asking conversation and focuses that request in its interruption dock (`onOpenActor`), like a session row; a task opens its question only for a correlated request (an actor's aggregate input activity alone, possibly an uncorrelated global request, only selects it); the panel never lists or answers questions itself; reported obstacles stay in the readers, and retired/replaced attempts never become current blockers. Tree statuses stay truthful: admission is only "Assigned", observed native activity alone is "Active", an observed native Form/permission is "Awaiting your input", unmet dependencies are "Waiting" and a reported blockage is "Blocked". Task navigation uses only exact owned non-coordinator actors, never a generic coordinator fallback or inferred bindings; the Mission's toolbar supplies the single coordinator link, and a selected task's toolbar its exact actor link. Uncertain sends are never replayed automatically.
-- One-shot Missions and exact admitted daily/native-scheduled passages share `components/mission-tracking.tsx` and bounded stores through `MissionPanelScope`. `recurrenceCurrent` acquires source identity; `recurrenceCurrentPage` projects one accepted isolated range. `recurrencePassageRead` reads receipt-bound daily archives while CREATE retains its separate `recurrenceRead({ id })` lookup. Reader targets preserve exact instance/project/owner/schedule/passage and semantic identity; never substitute arbitrary session selectors or transcripts. Calendar CAS emits `rpc.codenomad.missions.scheduleChanged` only after commit through the fresh native graph's Bus; a wake warning changing emits the same invalidation at the current revision, best-effort, without a calendar write. A lost invalidation never replays a mutation.
-- `stores/mission-recurrence.ts` owns daily-document visible list/current/reader demand, connection fencing and coalesced trailing reads without polling, and preserves unknown holds across remounts. Shared demand starts once the requested directory/project matches the instance's current Location metadata, including when list and reader rebind together. `stores/mission-schedules.ts` owns unified native document pages and selected reads. Their separate control and snapshot contracts are in `MISSIONS_RECURRING.md`.
-- Archived and current remote reader numeric drafts use `components/mission-reader-number.tsx` and commit on Enter/blur, not the first digit. Keep existing toolbar DOM mounted during same-source reads; local in-memory reader pagination stays immediate. A selected schedule's past-run list lives in `styles/panels/mission-detail.css`.
+- The overview reader (`components/mission-reader.tsx`) keeps the result/briefing/objective first and folds secondary material at its bottom through `components/mission-overview-details.tsx`: Plan changes, Reports (each opening its exact reader), conversation cleanup history and Technical details (mission/coordinator IDs and requested profiles), plus the pending coordinator-notification note. Task readers also keep identifiers in a collapsed Technical details. Only cleanup that needs an explicit retry stays in the panel. Task readers consolidate bounded brief/report/evidence pages with dependency navigation and existing truthful execution/profile/notification surfaces. Useful recursive delegation guidance propagates through canonical assignment prompts; native runtime permissions and configured depth remain authoritative, never an imposed target or a root-fallback trigger.
+- Task readers put results before collapsed brief/technical details. Questions are only open native Forms/permissions: selecting a red Mission row or clicking a red task opens the exact asking conversation and focuses that request in its interruption dock (`onOpenActor`), like a session row; a task opens its question only for a correlated request (an actor's aggregate input activity alone, possibly an uncorrelated global request, only selects it); the panel never lists or answers questions itself; reported obstacles stay in the readers, and retired/replaced attempts never become current blockers. Tree statuses stay truthful: admission is only "Assigned", observed native activity alone is "Active", an observed native Form/permission is "Awaiting your input", unmet dependencies are "Waiting" and a reported blockage is "Blocked". Task navigation uses only exact owned non-coordinator actors, never a generic coordinator fallback or inferred bindings; the Mission's toolbar supplies the single coordinator link, and a selected task's toolbar its exact actor link. Uncertain sends are never replayed automatically.
+- Archived and current remote reader numeric drafts use `components/mission-reader-number.tsx` and commit on Enter/blur, not the first digit. Keep existing toolbar DOM mounted during same-source reads; local in-memory reader pagination stays immediate. A programmed Mission's past-run list lives in `styles/panels/mission-detail.css`.
 - Coordinators publish project briefings automatically at business milestones (initial plan, each task settlement, waiting on a human, before the final report) with requestID `auto:<revision>` and plain user-facing summaries (`missions/recipes.ts`); briefings come only from these milestones and explicit requests. An explicit update request is `createMissionBriefingRequest` in `components/mission-briefing.tsx` ("Request an update" in the selected toolbar's overflow menu; its pending/uncertain feedback joins the primary button's tooltip, with announcements and recovery actions in the persistent header). Full briefing/final prose and task sources belong in the central `MissionReader`, opened/hidden with the toolbar's eye. The fixed request follows `lib/mission-coordinator-message.ts` through ordinary native admission. Match its exact request ID before acknowledging a received briefing, retain pending/uncertain state by identity, and never replay it automatically. The coordinator-only `missions/briefing.ts` contract records a bounded narrative with assessed revision and exact task sources, separate from observed activity/task settlement/final outcome. Show stale-map/new-result notices and source readers in the reader without inventing semantic updates or human requests. For existing missions without a briefing, expose bounded exact current results/obstacles in the overview reader and use the tree for the remaining plan. Mission rows say "In progress" for an open mission (its lifecycle state); never show declared task counts as progress. Terminal missions omit settled lifecycle actions but retain unresolved control receipts. Project cleanup uses one disclosure for pending and settled receipts.
 - Mission display demand follows the actual right-panel visibility and selected tab. Preserve cached snapshots while hidden, cancel queued trailing display reads, and revalidate on activation. A component that shows a one-time Mission's full map registers it with `missionStore.want` and releases it on cleanup; never read `state().missions` for a row, which holds only open and wanted maps. Only native lifecycle events (`session.execution.*`, compaction, inbox, Shell, Form and permission events) invalidate activity; text/tool-progress deltas never do. Activity reads start at least 5 seconds after the previous read settled, journal changes (`rpc.codenomad.missions.changed`) at least `MISSION_URGENT_REFRESH_INTERVAL_MS` (1.5 seconds) after it (`stores/missions.ts`); activation and explicit refreshes read at once. Store publications share every part equal to the previous state (`lib/structural-share.ts`), so keyed lists and memos update only the missions, rows and activity entries that changed. Explicit recovery reuses the selected Mission's primary toolbar action and, while a task's reader is open, that task's report recovery as the toolbar's primary action, both through `createMissionRecoveryAction`; never add a separate administration surface or an automatic mutation retry. A value the panel learns from a read, such as the list's reported project, enters a view-fence identity through `createReportedChanges` (`lib/mission-view-fence.ts`), per instance and Location. A first report that matches the project the instance metadata names, or arrives while none is known, is the view already shown, so an operation captured before the first list read (a creation submitted right after the panel opens) still completes. A first report naming another project, and any later different report, is another view.
 - Missions preferences live in the Settings/Preferences window's Missions section (`components/settings/missions-settings-section.tsx`); the Missions panel header gear deep-links there via `openSettings("missions")`. `stores/settings-screen.ts` is the single Settings route for every entry point: local Electron/Tauri windows always reuse/focus the one native Preferences window with the active instance/Location; only browser and remote windows use the embedded screen. A native rejection (e.g. an installed host lacking the section, which needs a native rebuild) shows an error notification and never opens a second, embedded Settings surface. Keep the section allowlist identical across renderer, Electron and Tauri (`native-mission-preferences.test.ts`). Project-scoped parts (catalog, Location depth) use the opener's instance/Location and stay disabled without one. `components/mission-preferences.tsx` writes each choice at once, compare-and-swapped against the value stored at its turn. Edits made during a write stay enabled (disabling a control drops its keyboard focus) and queue behind it, shown immediately, across window/section remounts. Each edit touches one role or the task-session policy of one scope and is refused when that stored value is no longer the one it was made from, so a queued edit never overwrites another window's change to that value or resends a rejected edit of it. (Customizing an inherited role copies the global values shown at edit time.) A rejected or unconfirmed write is never resent: a read-only reload shows the stored values, with Reload offered only when that read fails or the document is unreadable. The fold's Reset (confirmed) clears only the shown scope's agents/models; resetting an unreadable document is a separate confirmed repair. Catalog/depth demand stays fenced by that section's visibility.
 - Agent/model choices use one `MissionProfileControls` row per role everywhere (coordinator, then the type's roles, Debugging included). In a mission-type scope, rows show the inherited global values with a muted Global mark; editing a field customizes the role starting from those values, its revert icon inherits again, and an all-native choice remains an explicit override (inherit, native default and a selected profile stay distinct). Creation waits for loaded preferences and shows requested choices in directly visible compact rows. Profiles use compact square native selectors in `components/mission-profile-controls.tsx`; preference/profile/library layout lives in `styles/panels/mission-preferences.css`. Model selects list exactly what the conversation's model selector lists: the shared catalog build and display names (`lib/model-catalog.ts` `buildProviderCatalog`, also behind the composer's providers store) and its hidden-model/favorites-only list (`stores/model-picker.ts` `preferredModelList`), restricted to tool-capable models and grouped by provider; never filter or label models separately. A saved model outside that list stays selected (by name when known, marked Unavailable when the selector's usable catalog lacks it: missing, deprecated or without tool support) so a default never changes silently; stored values remain `providerID`/`id`. Summaries with an `instanceId` and catalog `directory` name models through `knownModelName`, never a catalog read: the newer of the conversation catalog and that Location's latest Missions read in the same native generation (an omitted directory is the workspace root, compared with `normalizeSessionDirectory`); technical details keep exact IDs.
 - Saved configurations are bounded version-1 records under existing owned UI preferences (`lib/mission-model-library.ts`), with their stored schema keys retained. Creation shows one configuration select first, loading on selection and prefilling a sensible title from its existing `name` (Remove/Reload in its small `…` overflow), and a footer Save configuration bookmark icon that asks for a name inline (`components/mission-model-library.tsx`, styles in `styles/panels/mission-create.css`); only Preferences keeps the full library manager and invalid-library repair. A selected one-time Mission, including a finished one, offers "Save configuration" in its toolbar's overflow menu (`MissionActionBar` `saveBrief`, opening `MissionBriefSave`'s name field through its `trigger` in the detail's secondary row, after unfolding a folded selection through `MissionRows` `revealDetail`; closing the field by Escape, Cancel or a save returns focus to the menu's trigger): `missionRecordedBrief` copies only its recorded objective, verbatim notes, template, frozen profiles and taskMode (the title prefills the name). Loading copies into ordinary manual creation; delete preserves all executions, and arrays retain config merge-patch replacement semantics. Preserve exact choices in uncertain creation drafts. Defaults never silently reconfigure existing/busy actors.
-- Delegation defaults apply per new Mission (`taskMode`, omitted means native); changing defaults or saved configurations preserves existing Missions. `mission-task-mode-controls.tsx` shares its compact native selector between preferences and the editor. Task agents use subagent/all in native mode and primary/all in independent mode; coordinators always use primary/all. Retain the policy with the creation/defaults snapshot and uncertain request identity, and preserve it in explicitly selected saved configurations. Explicit document edits may change task mode before admission or between eligible recurring passages under H9; admitted work keeps its frozen policy. Never change OpenCode configuration through task-mode selection. Ordinary internal helper calls remain governed by native permissions/depth.
+- Delegation defaults apply per new Mission (`taskMode`, omitted means native); changing defaults or saved configurations preserves existing Missions. `mission-task-mode-controls.tsx` shares its compact native selector between preferences and the editor. Task agents use subagent/all in native mode and primary/all in independent mode; coordinators always use primary/all. Retain the policy with the creation/defaults snapshot and uncertain request identity, and preserve it in explicitly selected saved configurations. Explicit document edits may change task mode before admission; admitted work keeps its frozen policy. Never change OpenCode configuration through task-mode selection. Ordinary internal helper calls remain governed by native permissions/depth.
+- Saving a configuration under an existing name confirms replacement by ID against the library snapshot captured before confirmation. When saving under the name of a configuration loaded into or saved from the current draft, the write stays bound to that entry's ID and baseline record: if that entry changed, was renamed or was deleted since then, saving reports a conflict instead of selecting another entry or overwriting. Confirmed saves record their baseline on the originating draft identity even while the editor is hidden or awaiting remount, without stealing focus or retargeting a replaced draft. With duplicate names, only a configuration loaded into or saved from the current draft may be replaced. Replacement is available at the library limit; a new name adds a separate record when space is available.
 - Delegation's native depth editor (`mission-subagent-depth.tsx`) is separately Location/project scoped and affects all OpenCode conversations there, unlike global new-mission defaults. It is one row, a label and a menu, like Task sessions (in the creation form, a row of the Delegation group): Inherit, naming the inherited depth while no project override is set, then 1 to 10 within the capability's maximum (a saved value outside that range stays listed); while an empty project `experimental` block hides the inherited depth, the menu shows OpenCode's default, which Inherit repairs. Everything else lives in the row's single info tip, one part per line, paths isolated left-to-right: the scope; the rule that an override also lets subagents launch their own subagents in the project, taking precedence over General's restrictions from other config files; the effective depth; whether General subagents can nest per the snapshot (no subagent at all when the tool is hidden; no other General subagent when only General is denied, other agents following their permissions) or that OpenCode's depth limit stops nesting below 2, never claiming nesting OpenCode would not allow; the project write target and the effective block's origin. Never add prose under the row: only actionable alerts (the depth-only save warning, read and write errors with the refresh icon) and the unsupported-contract status show there, and the saving and saved states are announced to assistive technology only. Demand only while the Preferences window's Missions section or the creation form shows it, retain unconfirmed choices and exact file expectations by instance/directory, and never invent an unknown effective depth or label zero as disabled. Choosing a value writes it at once without reload/restart. A write acknowledged after the view was left or hidden is accepted and reread on the next activation. Reads and writes lock the menu with `aria-disabled` rather than `disabled`, preserving focus; the latest choice made meanwhile (a native closed select's arrow keys change it step by step) stays shown with the depth it was chosen against (the value being written, during a save) and is written against the next settled read's expectation only when that read shows the same depth, never an intermediate one; another writer's depth, an error or an unconfirmed write drops it. In Preferences the row stays one line at every width. The refresh icon appears only after an error or an unconfirmed write; uncertain writes remain fenced until that explicit refresh and are never replayed automatically.
 - The Missions panel is the only scroller (`styles/panels/mission-task-tree.css`) and containing block (`position: relative`) of its absolute descendants (screen-reader labels, the dependency overlay); the creation form's scrolling body is likewise positioned (`styles/panels/mission-create.css`). Never remove either containing block. The sticky header's measured height (`--mission-header-height`) gives content its scroll margin; while creating and below 400px height the header scrolls away. Keep the stable scrollbar gutter and IME composition keys in the filter.
 - Task rows use the session list's `virtua/solid` Virtualizer with the panel as their external scroll owner. `mission-virtual-viewport.ts` measures the start margin through preceding layout changes and zoom. Keep the selected/focused task mounted; other offscreen DOM rows are disposable, while their data pages remain in `mission-task-pages.ts`. Graph endpoints use the virtualizer's cached offsets/sizes for offscreen tasks and measured icon edges for the rail axis; unchanged coordinates and existing edge keys preserve rail nodes. Task continuation is automatic near its sentinel, with explicit Retry only after failure. Exclude that moving sentinel from browser scroll anchoring. Never repair task-tree scrolling to an old focused row after an asynchronous page or graph update. Viewport resize repair requires previously visible, connected focus in an active focused document, with CSS visibility, opacity, inert and ARIA-hidden guards; wheel input cancels its pending scroll adjustment. Keyed row moves share `lib/preserve-list-focus.ts` with SessionList and MissionRows: connected controls regain focus with `preventScroll`, respecting later user focus intent and hidden/inert surfaces. Creation alone uses `mission-panel-scroll.ts` to keep a form control clear of its footer. Validate native wheel scrolling, loaded-page reuse, rail identity, RTL/zoom and keyboard focus with the real components.
-- Directory continuation (`components/mission-list-paging.tsx`) is one automatic sentinel outside all task trees, shared by mission summaries and native schedules; it has no normal paging button or information icon. Read marks one bounded 16-mission window at a time only far enough to cover the loaded summary rows, under visible-panel demand. Hidden/covered trees stop that demand; a failed window parks until the directory's single Retry invokes its exact recovery. Actor-detail and persisted-field windows retain their separate explicit controls. Directory extension adds rows without dropping its earlier pages or changing the task selection.
-- One-time Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Every backend that publishes its loopback bridge provisions it, desktop or standalone. Bridge registrations name only `http://127.0.0.1`: the bridge reuses the HTTP listener only when bound to 127.0.0.1/0.0.0.0 (`acceptsIpv4Loopback`), otherwise (HTTP not requested, IPv6/`localhost`/LAN HTTP-only) it gets an unannounced private listener on a random 127.0.0.1 port. All listeners of one backend share a single `WorktreeDeletionFence` (with its mission holds), so a deletion through HTTPS drains bridge admissions. Window/browser automation stays desktop-only; without a desktop host the bridge's `browser-claim` answers only `purpose: "mission"`. The Missions snapshot distinguishes `host-unavailable` (no bridge, answered without reading OpenCode), `plugin-unavailable` (OpenCode has not loaded it) and `plugin-failed`; never tell users to reconnect CodeNomad for a plugin OpenCode must load. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Preserve authenticated admission, ownership/connection/worktree fences and per-send profile environment. One-time map update/control/delete/recovery routes share `server/routes/mission-map-mutation.ts`: creation's fenced connection and worktree-deletion admission, a fresh workspace/connection/location recheck after all preparation, and the permit held through the single unretried RPC. Validate one-time behavior with the isolated `scripts/test-missions-native.mjs` fixture.
-- One-time Missions use the journal `codenomad-missions/v2` with wire/schema version 1 and its one-time receipts. Never read, import, mutate, delete or initialize the `codenomad-missions/authority-*` namespaces, register a managed-owner observer, add `migrateLegacy` or add migration UI (`desktop-plugin.test.ts` traps that namespace access; `managed-owner-plugin.test.ts` keeps the managed-owner observer and authority modules out of the bundle). Rollout requires the daily acceptance journeys in `MISSIONS_RECURRING.md` (`MISSIONS_RECURRING_QUALIFICATION.md`), the unified native protocols in `MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md` and §User-journey regression checks above.
+- Directory continuation (`components/mission-list-paging.tsx`) is one automatic sentinel outside all task trees, for the mission summaries; it has no normal paging button or information icon. Read marks one bounded 16-mission window at a time only far enough to cover the loaded summary rows, under visible-panel demand. Hidden/covered trees stop that demand; a failed window parks until the directory's single Retry invokes its exact recovery. Actor-detail and persisted-field windows retain their separate explicit controls. Directory extension adds rows without dropping its earlier pages or changing the task selection.
+- One-time Missions ships through `DesktopPluginLifecycle("missions")` and backend presence, with project-scoped native storage. Every backend that publishes its loopback bridge provisions it, desktop or standalone. Bridge registrations name only `http://127.0.0.1`: the bridge reuses the HTTP listener only when bound to 127.0.0.1/0.0.0.0 (`acceptsIpv4Loopback`), otherwise (HTTP not requested, IPv6/`localhost`/LAN HTTP-only) it gets an unannounced private listener on a random 127.0.0.1 port. All listeners of one backend share a single `WorktreeDeletionFence` (with its mission holds), so a deletion through HTTPS drains bridge admissions. Window/browser automation stays desktop-only; without a desktop host the bridge's `browser-claim` answers only `purpose: "mission"`. The Missions snapshot distinguishes `host-unavailable` (no bridge, answered without reading OpenCode), `plugin-unavailable` (OpenCode has not loaded it) and `plugin-failed`; never tell users to reconnect CodeNomad for a plugin OpenCode must load. Keep roles independent of native execution IDs. Persist explicit agent/model/variant selections and never switch a busy actor for a queued task. Preserve authenticated admission, ownership/connection/worktree fences and per-send profile environment whenever a backend owns the coordinator; pass an `unowned` effect to `sendMissionInput` only for effects the plugin's public session API performs completely. One-time map update/control/delete/recovery routes share `server/routes/mission-map-mutation.ts`: creation's fenced connection and worktree-deletion admission, a fresh workspace/connection/location recheck after all preparation, and the permit held through the single unretried RPC. Validate one-time behavior with the isolated `scripts/test-missions-native.mjs` fixture.
+- One-time Missions use the journal `codenomad-missions/v2` with wire/schema version 1 and its one-time receipts. Never read, import, mutate, delete or initialize the `codenomad-missions/authority-*` namespaces, register a managed-owner observer, add `migrateLegacy` or add migration UI (`desktop-plugin.test.ts` traps that namespace access; `managed-owner-plugin.test.ts` keeps the managed-owner observer and authority modules out of the bundle).
 - `packages/server/src/host-lifetime/` holds the private-storage, process-identity and profile-scope primitives Missions uses (`storage`, `private-storage-sync`, `windows-storage`, `process-identity`, `protocol`); never add a persistent CodeNomad backend host to it. Never replace a native ownership gate with a no-op or environment flag, steal a live/unknown owner, log secrets, or include the shared OpenCode daemon in backend cleanup.
 - One-time lifecycle state and actions live in `createMissionLifecycle` (`components/mission-lifecycle-controls.tsx`), surfaced only as the toolbar's primary action and Stop, with Check status for an unresolved request; a read showing that exact request saved with nothing pending settles it without a resend, while its absence never does; family interruption lives in `missions/native-family-interrupt.ts` and follows Explicit execution controls above (`readNativeControlFamily`, never the 32-session display read; never claim a full stop without a complete `descendants` receipt). Do not turn notification recovery into a control-action runner.

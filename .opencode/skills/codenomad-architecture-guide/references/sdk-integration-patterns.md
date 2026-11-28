@@ -35,7 +35,7 @@ Use `getRootClient(instanceId)` from `packages/ui/src/stores/opencode-client.ts`
 
 1. The server subscribes once with `client.event.subscribe()`.
 2. `InstanceEventBridge` maps location-scoped OpenCode events to CodeNomad `instance.event` records.
-3. `EventBus` also carries CodeNomad events such as workspace and Yolo changes.
+3. `EventBus` also carries CodeNomad events such as workspace and storage changes.
 4. `/api/events` multiplexes those records to the UI; `packages/ui/src/lib/sse-manager.ts` reconnects and dispatches them.
 
 The native stream is volatile. Reconnect must refetch authoritative sessions and pending requests; file/config consumers must also refresh after gaps. Invalidations are `filesystem.changed` and `config.updated`, alongside native `session.*` lifecycle/output events.
@@ -43,5 +43,5 @@ The native stream is volatile. Reconnect must refetch authoritative sessions and
 ## CodeNomad Policy Boundaries
 
 - Git mutations run validated `git` commands in `packages/server/src/workspaces/git-mutations.ts` through `/api/workspaces/:id/worktrees/:slug/git-*`.
-- Yolo is server-owned. `AutoAcceptManager` persists CodeNomad metadata and replies through the shared native client, then emits `yolo.stateChanged`/`yolo.autoAccepted`.
+- `SessionPermissionModes` owns its exact native rule block and confirms changes by a fresh read. Native `session.permissions` invalidates displayed mode.
 - Never move these operations into a browser-only client or an OpenCode plugin.

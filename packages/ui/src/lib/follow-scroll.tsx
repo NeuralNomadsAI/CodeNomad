@@ -1,5 +1,5 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, markScrollMetricsStale, scrollElementMetrics, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
 import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 interface FollowScrollOptions {
@@ -43,6 +43,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     } else {
       container.scrollTop = lastKnownScrollTop
     }
+    markScrollMetricsStale()
     scrollController.recordProgrammaticOffset(lastKnownScrollTop)
   }
 
@@ -55,6 +56,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   function markUserScrollIntent(direction: "up" | "down" | null, distance = 0) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const container = scrollContainerRef
+    // A gesture observes live geometry: content may have grown since the last
+    // cached measurement without a scroll event announcing it.
+    markScrollMetricsStale()
     // Upward intent takes ownership immediately, even if native middle-button
     // autoscroll waits longer than the intent deadline before its first scroll
     // event; a downward gesture reaching the bottom resumes follow (shared rule).
@@ -139,12 +143,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     })
   }
 
+  /** Through the scroll pipeline's shared per-frame measurement (see ScrollObservationGate). */
   function getMetrics(container: HTMLDivElement): ScrollControllerMetrics {
-    return {
-      offset: container.scrollTop,
-      scrollHeight: container.scrollHeight,
-      clientHeight: container.clientHeight,
-    }
+    return scrollElementMetrics(container)
   }
 
   function updateFollowModeFromScroll(containerOverride?: HTMLDivElement) {
@@ -159,6 +160,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
   }
 
   const handleScroll = (event: Event & { currentTarget: HTMLDivElement }) => {
+    markScrollMetricsStale()
     updateFollowModeFromScroll(event.currentTarget)
     persistScrollSnapshot(event.currentTarget)
   }
@@ -185,6 +187,9 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     const container = scrollContainerRef
     if (!container) return
 
+    // Content changed since the last render: the shared cached extents may be
+    // stale (no scroll event announced the growth).
+    markScrollMetricsStale()
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
     const result = scrollController.observeViewport(getMetrics(container), now, false)
     setAutoScroll(isAutoFollowing(result.state.mode))

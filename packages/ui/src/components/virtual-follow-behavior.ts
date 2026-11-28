@@ -113,13 +113,19 @@ export function advanceBottomPinSettlement(
 // (zoom 1.1) and 1.33px (zoom 0.75) above the reported bottom.
 export const SCROLL_EDGE_TOLERANCE_PX = 2
 
-/** The single scroll-edge test; a viewport within the tolerance is at its true bottom. */
+/** The single scroll-edge test; a viewport within the tolerance is at its true bottom.
+ * Elements measure through the shared per-frame point (`scrollElementMetrics`). */
 export function canScrollInDirection(
-  metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
+  metrics: ScrollControllerMetrics | { scrollTop: number; scrollHeight: number; clientHeight: number } | HTMLElement,
   direction: "up" | "down",
 ): boolean {
-  if (direction === "up") return metrics.scrollTop > 0
-  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - SCROLL_EDGE_TOLERANCE_PX
+  const measured = typeof HTMLElement !== "undefined" && metrics instanceof HTMLElement
+    ? scrollElementMetrics(metrics)
+    : "offset" in metrics
+      ? metrics
+      : { offset: metrics.scrollTop, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight }
+  if (direction === "up") return measured.offset > 0
+  return measured.offset + measured.clientHeight < measured.scrollHeight - SCROLL_EDGE_TOLERANCE_PX
 }
 
 export function shouldNavigateAtBoundary(input: {
@@ -538,6 +544,34 @@ export interface ScrollObservationScheduler {
 }
 
 /**
+ * The scroll pipeline's single per-frame measurement point. `scrollTop` is
+ * read live; the layout-forcing extents (`scrollHeight`, `clientHeight`) are
+ * measured once per epoch and shared by every reader that goes through
+ * `scrollElementMetrics` (list metrics, `canScrollInDirection` probes, gesture
+ * routing). Any point that may change scroll geometry — a gate observation, a
+ * scroll event, row resizes — starts a new epoch through
+ * `markScrollMetricsStale`, so a frame's steady state forces layout once, not
+ * once per interleaved read.
+ */
+let scrollMetricsEpoch = 0
+const scrollMetricsExtents = new WeakMap<HTMLElement, { epoch: number; scrollHeight: number; clientHeight: number }>()
+
+/** Starts a new measurement epoch: cached extents may have changed. */
+export function markScrollMetricsStale() {
+  scrollMetricsEpoch += 1
+}
+
+export function scrollElementMetrics(element: HTMLElement): ScrollControllerMetrics {
+  const cached = scrollMetricsExtents.get(element)
+  if (cached && cached.epoch === scrollMetricsEpoch) {
+    return { offset: element.scrollTop, scrollHeight: cached.scrollHeight, clientHeight: cached.clientHeight }
+  }
+  const metrics = { offset: element.scrollTop, scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }
+  scrollMetricsExtents.set(element, { epoch: scrollMetricsEpoch, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight })
+  return metrics
+}
+
+/**
  * Bounds DOM scroll-state observations to one per animation frame. Scroll
  * events arrive per rendering update while a virtualized list settles (every
  * programmatic write, Virtua's measurement compensation, the follow pin each
@@ -547,7 +581,8 @@ export interface ScrollObservationScheduler {
  * observations into the frame's end; `observeNow` keeps synchronous
  * observation semantics for direct entries (gestures at a clamped edge,
  * content-rendered flushes) while consuming the frame slot so a frame never
- * observes twice.
+ * observes twice. Every observation also starts a new measurement epoch, so
+ * it measures live geometry.
  */
 export class ScrollObservationGate {
   private handle: number | null = null
@@ -562,6 +597,7 @@ export class ScrollObservationGate {
     if (this.handle !== null) return
     this.handle = this.scheduler.schedule(() => {
       this.handle = null
+      markScrollMetricsStale()
       this.flush()
     })
   }
@@ -569,6 +605,7 @@ export class ScrollObservationGate {
   /** Observes now, consuming any pending frame observation. */
   observeNow(): void {
     this.cancelPending()
+    markScrollMetricsStale()
     this.flush()
   }
 

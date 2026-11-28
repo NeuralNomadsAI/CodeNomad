@@ -54,13 +54,15 @@ Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils so
 
 Un administrateur peut fixer l’adresse d’écoute : définissez `CODENOMAD_LOCKED_HOST` pour tout le système avec l’adresse que le serveur doit utiliser, puis redémarrez CodeNomad. Elle l’emporte sur `--host`, `CLI_HOST` et **Autoriser les connexions depuis d'autres IP**, qui affiche le résultat sans pouvoir le changer. Utilisez une adresse intranet pour que vos collègues joignent le serveur par le réseau de l’entreprise, ou `127.0.0.1` pour le garder sur cet ordinateur. Pour que tout accès reste dans le réseau de l’entreprise, définissez aussi `CODENOMAD_REMOTE_CONTROL=disabled` ([contrôle à distance](remote-control.md#administrator-policy)).
 
-## Mise à niveau {#upgrading}
+## Origines autorisées {#upgrading}
 
-Reconnectez-vous après la mise à niveau. Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification.
+Pour un alias de nom d’hôte, un proxy inverse ou une interface hébergée séparément, définissez `CODENOMAD_ALLOWED_ORIGINS` sur le backend avec les origines de confiance de l’interface (protocole, nom d’hôte et port). Les clients natifs du LAN doivent fournir un en-tête `Origin` autorisé pour les requêtes de modification. Ses origines HTTPS permettent aussi à l’hôte d’appairer des appareils sans le tunnel ; voir [Appairer en HTTPS direct](remote-control.md#direct-https).
 
-Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), gestion des serveurs enregistrés (`/api/remote-servers/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+Si l’interface est hébergée séparément, déployez-la et rechargez les onglets et fenêtres ouverts avant de mettre à jour le serveur. Si le serveur fournit l’interface, rechargez-les après la mise à jour.
 
-Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte.
+Utilisez une connexion en boucle locale pour les opérations réservées à l’hôte : contenu SideCar (`/sidecars/`) et WebSockets, gestion du Contrôle à distance (`/api/remote-control/`), pont des plugins (`/api/opencode-plugin/`), proxys distants (`/api/remote-proxy/`), changement de mot de passe et initialisation par jeton. Ces opérations exigent la boucle locale, même avec une connexion authentifiée directe depuis le LAN. Seuls les SideCars font exception : le réglage **Ouvrir les SideCars en HTTPS** de l’hôte ouvre leur contenu et leurs WebSockets aux navigateurs connectés via une origine HTTPS de confiance ([SideCars](browser-sidecars.md#register-sidecar)). Le contenu des aperçus actifs (`/previews/`) est accessible directement depuis le LAN avec un jeton de capacité valide.
+
+Les API d’enregistrement `/api/sidecars` restent accessibles aux clients LAN directs authentifiés et aux appareils appairés. Les aperçus web du Contrôle à distance restent accessibles avec leur jeton de capacité lorsqu’ils sont activés sur l’hôte. Pour gérer les serveurs et saisir des identifiants en toute sécurité, voir [Enregistrer un serveur distant](remote-access.md#saved-servers).
 
 ## Configurer un TLS de confiance {#tls}
 
@@ -93,14 +95,32 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-1. Sur l’accueil de bureau, choisissez **Se connecter au serveur CodeNomad**. Le même bouton apparaît dans un onglet **Serveurs** vide et dans **Paramètres → Accès distant → Serveurs**.
+Les clients distants authentifiés peuvent utiliser et gérer les mêmes serveurs enregistrés que les clients locaux. Saisir un nouveau mot de passe de serveur ou un lien d’appairage exige HTTPS ou le Contrôle à distance.
+
+Dans **Paramètres → Serveurs**, collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur**, ou saisissez-le et validez par Entrée. Cela enregistre le serveur sans ouvrir de projet. **Modifier le serveur** change son **URL** ou son **Nom** facultatif ; renommer à URL et politique TLS identiques fonctionne hors ligne. Après confirmation, **Supprimer** ferme les onglets de ce serveur dans cette fenêtre et retire ses raccourcis récents. Pour les projets temporaires, choisissez **Garder** ou **Jeter** ; **Jeter** supprime leurs fichiers et conversations. Les autres projets et conversations restent sur le serveur.
+
+OpenSSH doit être installé sur l’hôte CodeNomad, et CodeNomad doit déjà être en cours d’exécution à destination. Dans **Paramètres → Serveurs**, choisissez **Ajouter un serveur SSH**. Saisissez l’**URL** de CodeNomad telle que l’hôte SSH y accède, puis l’**Hôte SSH (facultatif)** ou son alias et choisissez **Enregistrer**. Le profil peut être enregistré hors ligne. OpenSSH exige une authentification par clé et une clé d’hôte vérifiée dans `known_hosts`. Connectez-vous à CodeNomad sur ce serveur ; les certificats HTTPS sont toujours vérifiés.
+
+L’éditeur de serveur comporte la case **Ignorer la vérification TLS**. Le champ **Adresse ou lien du serveur** ne propose cette option qu’après un échec de certificat pour cette adresse ; changer d’adresse efface ce choix. L’appairage vérifie toujours TLS.
+
+Uniquement si `multiBackend` est réglé sur `false`, utilisez les fenêtres de bureau séparées ci-dessous :
+
+1. **Paramètres → Accès distant → Serveurs** → **Se connecter au serveur CodeNomad**.
 2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
-
-Sélectionnez un serveur enregistré dans l’onglet **Serveurs** de l’accueil pour l’ouvrir de nouveau. Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
-
-Pour ouvrir un serveur enregistré directement depuis la ligne de commande, lancez l’application de bureau avec `--connect-server <nom>` (ou `--connect-server=<nom>`), en indiquant le nom enregistré du serveur ou son URL `https://`. CodeNomad n’ouvre que la fenêtre distante, avec les mêmes vérifications et la même connexion que **Se connecter** ; si CodeNomad est déjà lancé, sa fenêtre actuelle l’ouvre au lieu d’une nouvelle fenêtre. Une URL qui ne correspond à aucun serveur enregistré est enregistrée sous son nom d’hôte. Les valeurs de lancement ne portent jamais d’identifiants : une URL avec un nom d’utilisateur, un mot de passe ou un code d’appairage est refusée. Sous Windows, la version Tauri refuse de démarrer quand un argument de lancement contient `|` ; utilisez plutôt l’URL du serveur, ou renommez le serveur.
 
 Fermer la dernière fenêtre locale alors que des fenêtres distantes restent ouvertes conserve ses onglets : **Fenêtre → Nouvelle fenêtre** dans une fenêtre distante, ou un nouveau lancement de CodeNomad, la rouvre.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.
+
+## Ouvrir un projet distant dans un onglet {#remote-project-tabs}
+
+Dans un onglet vide, choisissez **Parcourir**, puis un serveur. Collez une adresse ou un lien d’appairage dans **Adresse ou lien du serveur** pour l’enregistrer. Connectez-vous si nécessaire. Cliquez sur un dossier pour y entrer ; utilisez Entrée dans le champ de chemin ou **Ouvrir** (la flèche) pour l’ouvrir. **Retour à Parcourir** revient à la liste des serveurs.
+
+Les projets locaux et distants partagent la même fenêtre. **Onglets récents** affiche les raccourcis du serveur parcouru ; les récents mixtes indiquent l’icône et le nom du serveur pour les projets ouverts ici. [Restaurer les onglets distants](projects.md#restore-remote-tabs).
+
+Dans **Paramètres → Serveurs**, **Ouvrir** sélectionne le serveur dans **Parcourir** et réutilise un onglet vide s’il y en a un.
+
+### `--connect-server` {#connect-server}
+
+`--connect-server <name-or-url>` ouvre une fenêtre distante séparée, quelle que soit la valeur de `multiBackend`. Utilisez un nom ou un identifiant enregistré, ou une URL HTTP(S). Une nouvelle URL est enregistrée sous son nom d’hôte. L’URL de lancement ne peut contenir ni nom d’utilisateur, ni mot de passe, ni code d’appairage. Voir le [tableau des arguments de lancement](desktop.md#desktop-cli) pour la syntaxe et le démarrage en fenêtre distante seule.

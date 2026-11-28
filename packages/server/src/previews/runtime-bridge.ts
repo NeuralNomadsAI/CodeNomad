@@ -101,8 +101,9 @@ addEventListener("submit",function(event){const form=event.target;if(!(form inst
 })(${JSON.stringify(publicBase)},${JSON.stringify(targetOrigin)});</script>`
 }
 
-export function rewritePreviewJavaScriptImports(source: string, publicBase: string): string {
-  const replacements: Array<{ start: number; end: number }> = []
+export function rewritePreviewJavaScriptImports(source: string, publicBase: string, grow?: (units: number) => void): string {
+  const parts: string[] = []
+  let copied = 0
   let index = 0
   while (index < source.length) {
     if (source[index] === "/" && source[index + 1] === "/") {
@@ -134,29 +135,32 @@ export function rewritePreviewJavaScriptImports(source: string, publicBase: stri
     if (quote !== "`" && source[start + 1] === "/" && source[start + 2] !== "/") {
       const prefix = source.slice(Math.max(0, start - 160), start)
       if (/(?:^|[^\w$.])(?:import\s*(?:\(\s*)?|from\s*)$/.test(prefix)) {
-        replacements.push({ start: start + 1, end: start + 1 })
+        grow?.(publicBase.length)
+        parts.push(source.slice(copied, start + 1), publicBase)
+        copied = start + 1
       }
     }
     index += 1
   }
 
-  let rewritten = source
-  for (const replacement of replacements.reverse()) {
-    rewritten = `${rewritten.slice(0, replacement.start)}${publicBase}${rewritten.slice(replacement.end)}`
-  }
-  return rewritten
+  return copied ? [...parts, source.slice(copied)].join("") : source
 }
 
-export function rewritePreviewImportMap(source: string, publicBase: string): string {
+export function rewritePreviewImportMap(source: string, publicBase: string, grow?: (units: number) => void): string {
+  let parsed: unknown
   try {
-    const rewrite = (value: unknown): unknown => {
-      if (typeof value === "string") return value.startsWith("/") && !value.startsWith("//") ? `${publicBase}${value}` : value
-      if (Array.isArray(value)) return value.map(rewrite)
-      if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rewrite(item)]))
-      return value
-    }
-    return JSON.stringify(rewrite(JSON.parse(source)))
+    parsed = JSON.parse(source)
   } catch {
     return source
   }
+  const rewrite = (value: unknown): unknown => {
+    if (typeof value === "string" && value.startsWith("/") && !value.startsWith("//")) {
+      grow?.(publicBase.length)
+      return `${publicBase}${value}`
+    }
+    if (Array.isArray(value)) return value.map(rewrite)
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rewrite(item)]))
+    return value
+  }
+  return JSON.stringify(rewrite(parsed))
 }

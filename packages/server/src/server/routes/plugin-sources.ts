@@ -16,13 +16,11 @@ const Scope = z.enum(["global", "project"])
 
 // Specs are validated as exact strings (no trimming): the stored entry is exactly what was sent.
 const AddSchema = z.object({ location: Location, scope: Scope, spec: z.string().min(1).max(PLUGIN_SOURCE_MAX_SPEC_LENGTH) }).strict()
-const RemoveSchema = z.object({
-  location: Location,
-  scope: Scope,
-  target: z.string().min(1).max(32_768),
-  entryIndex: z.number().int().min(0).max(100_000),
-  expectedRevision: z.string().regex(/^[a-f0-9]{64}$/),
-}).strict()
+const Removal = { location: Location, scope: Scope, expectedRevision: z.string().regex(/^[a-f0-9]{64}$/) }
+const RemoveSchema = z.union([
+  z.object({ ...Removal, target: z.string().min(1).max(32_768), entryIndex: z.number().int().min(0).max(100_000) }).strict(),
+  z.object({ ...Removal, pluginId: z.string().min(1).max(256) }).strict(),
+])
 
 export function registerPluginSourceRoutes(app: FastifyInstance, deps: RouteDeps): void {
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/plugin-sources", async (request, reply) => {

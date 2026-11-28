@@ -168,7 +168,11 @@ try {
   const located = route => async directory => (await api("GET", `${route}?location[directory]=${encodeURIComponent(directory)}`)).json?.data ?? []
   const agents = located("/api/agent"), skills = located("/api/skill"), plugins = located("/api/plugin")
   // Discovery sees only the fixture's loopback providers, whatever the caller's environment holds.
-  results.models = (await located("/api/model")(project("p1"))).map(model => `${model.providerID}/${model.id}`)
+  const models = located("/api/model")
+  results.models = await until("fixture chat catalog", async () => {
+    const names = (await models(project("p1"))).map(model => `${model.providerID}/${model.id}`)
+    return names.includes("fixture/vision") && names
+  })
   assert(results.models.every(ref => /^(fixture|fiximg)\//.test(ref)), `only fixture models are discovered: ${results.models}`)
   const designSkills = async directory => (await skills(directory)).filter(skill => skill.id.startsWith("design-"))
   const hasDesign = async directory => (await agents(directory)).some(agent => agent.id === "design")
@@ -234,8 +238,8 @@ try {
         await api("POST", `/api/session/${sessionID}/permission/${request.id}/reply`, { decision: "reject" })
       }
     }
-    // A rejected call ends the turn with the native declined error.
-    await turn(sessionID, prompt, "declined this tool call", reject)
+    // A rejected call ends with either the direct declined text or Code Mode's Permission.DeclinedError.
+    await turn(sessionID, prompt, "declined this tool call|Permission\\.DeclinedError", reject)
     await delay(2_000)
     await reject()
     return asked.length
@@ -304,10 +308,17 @@ try {
     "design-core loads by identifier")
 
   // AC-4: the user's ask rule on the image tool applies to Design exactly as to Build.
-  for (const entry of [...designRequests, ...buildRequests])
-    assert(entry.tools.includes("experimental_image_generate"), `The image tool is offered by default: ${entry.tools}`)
-  const generate = JSON.stringify([{ tool: "experimental_image_generate",
-    args: { prompt: "Flat blue app icon", path: ".codenomad/design/icon/app-icon-minimal-a.png" } }])
+  const directImageTool = designRequests[0].tools.find(name => name === "generate_image" || name === "experimental_image_generate")
+  const imageTool = directImageTool ?? (designRequests[0].tools.includes("execute") && designRequests[0].all.includes("generate_image") ? "generate_image" : undefined)
+  assert(imageTool, "Design offers the native image tool by default")
+  for (const entry of [...designRequests, ...buildRequests]) {
+    if (directImageTool) assert(entry.tools.includes(directImageTool), `The image tool is offered by default: ${entry.tools}`)
+    else assert(entry.tools.includes("execute") && entry.all.includes("generate_image"), `The Code Mode image tool is offered by default: ${entry.tools}`)
+  }
+  const imageArgs = { prompt: "Flat blue app icon", path: ".codenomad/design/icon/app-icon-minimal-a.png" }
+  const generate = JSON.stringify(directImageTool
+    ? [{ tool: directImageTool, args: imageArgs }]
+    : [{ tool: "execute", args: { code: `return await tools.generate_image(${JSON.stringify(imageArgs)})` } }])
   const askedFor = async () => ({
     design: await permissionRequests(await imagesSession(project("p2-ask")), `RUN ${generate}`),
     build: await permissionRequests(await session(project("p2-ask")), `RUN ${generate}`),

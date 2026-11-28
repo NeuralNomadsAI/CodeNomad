@@ -17,6 +17,7 @@ declare module "solid-js" {
       webview: HTMLAttributes<ElectronBrowserWebviewElement> & {
         src?: string
         partition?: string
+        webpreferences?: string
         allowpopups?: boolean
       }
     }

@@ -133,7 +133,6 @@ describe("built-in color schemes", () => {
       userAccent: "#2196F3",
       agentAccent: "#D97706",
       compactionAccent: "#C084FC",
-      yoloAccent: "#0080FF",
     })
   })
 })
@@ -202,12 +201,11 @@ describe("applyColorScheme", () => {
 
   it("applies customizable semantic roles", () => {
     const root = target()
-    const colors = { ...DEFAULT_CUSTOM_COLORS, userAccent: "#52B5F5", agentAccent: "#E7A74A", compactionAccent: "#C99AF4", yoloAccent: "#92B8FF" }
+    const colors = { ...DEFAULT_CUSTOM_COLORS, userAccent: "#52B5F5", agentAccent: "#E7A74A", compactionAccent: "#C99AF4" }
     applyColorScheme(normalizeColorScheme({ id: "custom", colors }), { target: root.value })
     assert.equal(root.properties.get("--message-user-border"), colors.userAccent)
     assert.equal(root.properties.get("--message-assistant-border"), colors.agentAccent)
     assert.equal(root.properties.get("--session-status-compacting-fg"), colors.compactionAccent)
-    assert.equal(root.properties.get("--session-yolo-accent"), colors.accentPrimary)
   })
 
   it("derives tabs and message surfaces from each palette", () => {
@@ -228,8 +226,9 @@ describe("applyColorScheme", () => {
 
 describe("custom color validation", () => {
   it("fills semantic roles when loading a persisted legacy custom scheme", () => {
-    const { userAccent: _user, agentAccent: _agent, compactionAccent: _compaction, yoloAccent: _yolo, ...legacyColors } = DEFAULT_CUSTOM_COLORS
+    const { userAccent: _user, agentAccent: _agent, compactionAccent: _compaction, ...legacyColors } = DEFAULT_CUSTOM_COLORS
     assert.deepEqual(normalizeColorScheme({ id: "custom", colors: legacyColors }).colors, DEFAULT_CUSTOM_COLORS)
+    assert.deepEqual(normalizeColorScheme({ id: "custom", colors: { ...DEFAULT_CUSTOM_COLORS, yoloAccent: "#92B8FF" } }).colors, DEFAULT_CUSTOM_COLORS)
   })
 
   it("rejects weak text and emphasis contrast", () => {

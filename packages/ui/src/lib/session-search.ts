@@ -9,6 +9,8 @@ export interface SessionSearchMatch {
   id: string
   messageId: string
   partId?: string
+  /** Native part ordinal within the message, when the hit came from native history search. */
+  partIndex?: number
   partType?: string
   role: MessageRole
   start: number

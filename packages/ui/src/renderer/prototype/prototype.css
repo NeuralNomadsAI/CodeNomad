@@ -39,13 +39,13 @@ small { color: var(--text-muted); font-size: var(--font-size-xs); }
 }
 :where(.brand, .workspace-tabs, .workspace-actions, .workspace-tab,
   .sidebar-heading, .conversation-header, .trace-header, .message-heading,
-  .section-title-row, .composer-actions, .yolo-section, .conversation-meta,
-  .live-state, .composer-submit, .usage-list div, .switch-control) {
+  .section-title-row, .composer-actions, .conversation-meta,
+  .live-state, .composer-submit, .usage-list div) {
   display: flex;
   align-items: center;
 }
 :where(.sidebar-heading, .conversation-header, .trace-header, .section-title-row,
-  .composer-actions, .yolo-section, .usage-list div) {
+  .composer-actions, .usage-list div) {
   justify-content: space-between;
 }
 .brand {
@@ -89,7 +89,7 @@ small { color: var(--text-muted); font-size: var(--font-size-xs); }
 }
 :is(.eyebrow, .session-group, .branch-label, .message-heading time, .trace-count,
   .trace-line code, .trace-line time, .trace-error strong, .section-title-row > span,
-  .usage-list dd, .switch-control, .shell-list strong, .plan-list li::before) {
+  .usage-list dd, .shell-list strong, .plan-list li::before) {
   font-family: var(--font-family-mono);
 }
 .branch-label {
@@ -306,10 +306,6 @@ progress::-moz-progress-bar { background: var(--accent-primary); }
 .usage-list :is(dt, dd) { margin: 0; font-size: var(--font-size-xs); }
 .usage-list dt { color: var(--text-muted); }
 .usage-list dd { color: var(--text-secondary); }
-.yolo-section { gap: var(--space-md); }
-.yolo-section p { margin: var(--space-xs) 0 0; color: var(--text-muted); font-size: var(--font-size-xs); }
-.switch-control { gap: var(--space-xs); color: var(--text-secondary); font-size: var(--font-size-xs); }
-.switch-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent-primary); }
 .shell-list { display: grid; gap: var(--space-xs); margin-top: var(--space-md); }
 .shell-list li {
   display: grid; grid-template-columns: 8px minmax(0, 1fr) auto;

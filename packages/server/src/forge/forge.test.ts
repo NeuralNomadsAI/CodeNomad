@@ -81,10 +81,19 @@ describe("forge remotes", () => {
 
   it("prefers the upstream of a fork, then origin, then any forge remote", async () => {
     assert.deepEqual(await readForgeRemote(checkout({ origin: "https://github.com/me/app.git", upstream: "https://github.com/team/app.git" })),
-      { host: "github.com", path: "team/app" })
-    assert.deepEqual(await readForgeRemote(checkout({ backup: "/srv/app.git", origin: "git@gitlab.com:team/app.git" })), { host: "gitlab.com", path: "team/app" })
-    assert.deepEqual(await readForgeRemote(checkout({ mirror: "https://codeberg.org/team/app" })), { host: "codeberg.org", path: "team/app" })
+      { host: "github.com", path: "team/app", name: "upstream" })
+    assert.deepEqual(await readForgeRemote(checkout({ backup: "/srv/app.git", origin: "git@gitlab.com:team/app.git" })),
+      { host: "gitlab.com", path: "team/app", name: "origin" })
+    assert.deepEqual(await readForgeRemote(checkout({ mirror: "https://codeberg.org/team/app" })), { host: "codeberg.org", path: "team/app", name: "mirror" })
     assert.equal(await readForgeRemote(checkout({})), undefined)
+  })
+
+  it("finds a partial clone's remote, listed with its filter", async () => {
+    const root = checkout({ origin: "https://github.com/team/app.git" })
+    // What `git clone --filter=blob:none` records: `git remote -v` then ends the line with "[blob:none]".
+    execFileSync("git", ["-C", root, "config", "remote.origin.promisor", "true"])
+    execFileSync("git", ["-C", root, "config", "remote.origin.partialclonefilter", "blob:none"])
+    assert.deepEqual(await readForgeRemote(root), { host: "github.com", path: "team/app", name: "origin" })
   })
 
   it("builds each forge's web page for an item", () => {
@@ -98,7 +107,7 @@ describe("forge remotes", () => {
     const previous = process.env.GIT_DIR
     try {
       process.env.GIT_DIR = path.join(foreign, ".git")
-      assert.deepEqual(await readForgeRemote(root), { host: "gitlab.com", path: "group/project" })
+      assert.deepEqual(await readForgeRemote(root), { host: "gitlab.com", path: "group/project", name: "origin" })
       const controller = new AbortController(); controller.abort(new Error("cancelled"))
       await assert.rejects(readForgeRemote(root, controller.signal), /cancelled/)
     } finally { if (previous === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = previous }

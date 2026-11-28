@@ -10,7 +10,7 @@ import {
   applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, invalidateOpenCodeSessionContent,
   type OpenCodeDataEventAdmission,
 } from "./opencode-data.ts"
-import { setActiveSession, setSessions } from "./session-state.ts"
+import { beginSessionGenerationAdmission, sessions, setActiveSession, setSessions } from "./session-state.ts"
 
 // Streaming continuity across a shared-stream reconnect (server.connected):
 // the resident live page keeps serving deltas while one quiet, revision-stable
@@ -175,9 +175,10 @@ test("a message.list read completes while stream events keep arriving, without r
     ctx.mock.timers.tick(0)
     await microtasks()
 
-    // Rotation has drained: fast-path deltas apply synchronously now.
+    // Rotation has drained: fast-path deltas reach the reducer on the frame lane.
     f.delta("probe ")
-    assert.equal(f.sdkText(), "seed probe ", "deltas emit synchronously on the fast path")
+    await converge(ctx, () => f.sdkText() === "seed probe ")
+    assert.equal(f.sdkText(), "seed probe ", "deltas reach the reducer on the fast path")
 
     const control = f.controlledList(f.authoritativePage)
     f.data().session.message.invalidate(sessionId)
@@ -415,6 +416,11 @@ test("a quiet reconnect snapshot publishes without any further event", async ctx
     f.dispatch("session.reasoning.delta", { ...live, delta: "before " })
     await converge(ctx, () => f.storeText() === "before ")
 
+    beginSessionGenerationAdmission(f.instanceId, sessionId).complete()
+    const session = () => sessions().get(f.instanceId)?.get(sessionId)
+    const epoch = session()?.generationAdmissionEpoch
+    assert.notEqual(epoch, undefined)
+    assert.equal(session()?.idleReadAdmissionEpoch, undefined)
     f.dispatch("server.connected", { daemon: "daemon-a" })
     await microtasks()
     const control = f.controlledList(f.authoritativePage)
@@ -426,6 +432,7 @@ test("a quiet reconnect snapshot publishes without any further event", async ctx
       control.settle()
     }
     assert.equal(f.storeText(), f.authoritativeText(), "the resync publishes without a subsequent event")
+    assert.equal(session()?.idleReadAdmissionEpoch, epoch)
   } finally { f.cleanup() }
 })
 

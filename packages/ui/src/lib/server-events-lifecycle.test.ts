@@ -2,7 +2,10 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { createEffect, createRoot, createSignal } from "solid-js"
 import { stopWindowsProcessTree } from "../../../server/src/process-tree"
+import { ServerEvents } from "./server-events"
+import type { WorkspaceEventPayload } from "../../../server/src/api-types"
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url))
 const deadlineMs = 30_000
@@ -11,13 +14,8 @@ const deadlineMs = 30_000
 // successful cleanup: the imported application must release its own resources.
 function run(args: string[]): Promise<{ code: number | null; signal: string | null; timedOut: boolean; output: string }> {
   return new Promise((resolve, reject) => {
-    // Node's parent test-child marker otherwise suppresses a nested --test
-    // runner. This child owns its own runner; require its complete test count.
-    const env = { ...process.env }
-    delete env.NODE_TEST_CONTEXT
     const child = spawn(process.execPath, args, {
       cwd: root,
-      env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     })
@@ -57,14 +55,78 @@ test("importing the actual serverEvents singleton without a browser exits natura
   assertNaturalExit(result)
 })
 
-test("the actual eleven compaction store tests pass and exit naturally without force-exit", async () => {
-  const result = await run(["--conditions=browser", "--import", "tsx", "--test", "--test-reporter=tap",
-    "packages/ui/src/stores/opencode-compaction.test.ts",
-  ])
-  assertNaturalExit(result)
-  assert.match(result.output, /^# tests 11$/m)
-  assert.match(result.output, /^# pass 11$/m)
-  assert.match(result.output, /^# fail 0$/m)
-  assert.match(result.output, /^# cancelled 0$/m)
-  assert.match(result.output, /^# skipped 0$/m)
+test("applies messages in one frame in stream order and flushes before a disconnect", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const setTimer = t.mock.method(globalThis, "setTimeout")
+  const clearTimer = t.mock.method(globalThis, "clearTimeout")
+  const fallback = () => setTimer.mock.calls.filter(call => call.arguments[1] === 32).at(-1)?.result
+  const assertCancelled = (timer: unknown) => {
+    assert.notEqual(timer, undefined)
+    assert.ok(clearTimer.mock.calls.some(call => call.arguments[0] === timer))
+    assert.equal(scheduled, undefined)
+  }
+  let scheduled: FrameRequestCallback | undefined
+  Object.assign(globalThis, {
+    requestAnimationFrame: (callback: FrameRequestCallback) => { scheduled = callback; return 1 },
+    cancelAnimationFrame: () => { scheduled = undefined },
+    window: {},
+  })
+  let emit!: (event: WorkspaceEventPayload) => void
+  let disconnect!: () => void
+  const events = new ServerEvents({
+    api: {
+      connectEvents: (onEvent, onError) => {
+        emit = onEvent
+        disconnect = onError!
+        return { close() {} } as EventSource
+      },
+      sendClientConnectionPong: async () => {},
+    },
+    auth: { onRestored: () => () => true, check: async () => {} },
+  })
+  t.after(() => {
+    events.dispose()
+    Reflect.deleteProperty(globalThis, "requestAnimationFrame")
+    Reflect.deleteProperty(globalThis, "cancelAnimationFrame")
+    Reflect.deleteProperty(globalThis, "window")
+  })
+  const [received, record] = createSignal("")
+  const publications: string[] = []
+  createRoot(dispose => {
+    t.after(dispose)
+    createEffect(() => { publications.push(received()) })
+  })
+  events.on("*", event => record(previous => previous + (event as { fixture?: string }).fixture))
+  const transport: string[] = []
+  events.onTransportStatus(status => transport.push(`${received()}:${status}`))
+  await events.start()
+  const event = (fixture: string) => ({ type: "workspace.started", fixture }) as unknown as WorkspaceEventPayload
+  emit(event("A"))
+  const firstFrame = scheduled
+  const firstTimer = fallback()
+  emit(event("B"))
+  assert.equal(scheduled, firstFrame)
+  assert.deepEqual(publications, [""])
+  firstFrame!(0)
+  assert.deepEqual(publications, ["", "AB"])
+  assertCancelled(firstTimer)
+  emit(event("C"))
+  t.mock.timers.tick(31)
+  assert.equal(received(), "AB")
+  t.mock.timers.tick(1)
+  assert.equal(received(), "ABC")
+  assert.equal(scheduled, undefined)
+  emit(event("D"))
+  const disconnectTimer = fallback()
+  disconnect()
+  assert.equal(transport.at(-1), "ABCD:disconnected")
+  assertCancelled(disconnectTimer)
+  events.restart("fixture reconnect")
+  emit(event("E"))
+  const disposeTimer = fallback()
+  assert.notEqual(disposeTimer, disconnectTimer)
+  events.dispose()
+  assertCancelled(disposeTimer)
+  t.mock.timers.tick(32)
+  assert.equal(received(), "ABCD")
 })

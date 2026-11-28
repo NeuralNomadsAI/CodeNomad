@@ -30,7 +30,8 @@ function prepare() {
   let attach: ((event: unknown, contents: unknown) => void) | undefined
   class BrowserWindow {
     static getFocusedWindow = () => focusedWindow
-    webContents = { on: (_event: string, handler: typeof attach) => { attach = handler }, isFocused: () => false }
+    webContents = { on: (event: string, handler: typeof attach) => { if (event === "did-attach-webview") attach = handler },
+      send: () => {}, isFocused: () => false }
     isVisible = () => owner.visible
     isFocused = () => owner.focused
     isDestroyed = () => false

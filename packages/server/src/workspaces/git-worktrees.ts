@@ -1,8 +1,9 @@
 import path from "node:path"
-import { readFile, realpath, stat } from "node:fs/promises"
-import { discoverCheckoutCommonDirectory, gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
+import { lstat, realpath, stat } from "node:fs/promises"
+import { gitDiscoveryOverridden, validateCheckoutLayout } from "../opencode/session-pruning/checkout-identity"
+import { discoverCheckoutCommonDirectory, readGitCommonDirectory } from "./git-common-directory"
 export { readCheckoutIdentity } from "./git-common-directory"
-import { runWorktreeGit as git } from "./git-process"
+import { runGitProcess, runWorktreeGit as git } from "./git-process"
 import { GitRequiredError } from "./git-requirement"
 
 export interface LogLike {
@@ -68,25 +69,71 @@ export async function readWorktreeAnnotations(directory: string) {
   })
 }
 
-export async function createCheckoutRootVerifier(directory: string) {
-  // Read shared/system/global configuration once, letting Git expand includes.
-  // Conditional includes and config.worktree can differ for each checkout, so
-  // their presence requires Git's own resolution even if this checkout is plain.
-  const config = await git(directory, ["config", "--null", "--list", "--includes"])
-  const configuredRoot = config.split("\0").some(entry => {
-    const [key, value] = entry.split("\n", 2)
-    return key === "core.worktree" || key === "extensions.worktreeconfig" || key.startsWith("includeif.")
-      || (key === "core.bare" && value !== "false")
-  }) || gitLocationOverridden()
+// Follow each config symlink as Git does, but distinguish it from an absent entry.
+async function configStamp(file: string): Promise<string | null> {
+  const entry = await lstat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null
+    throw error
+  })
+  if (!entry) return null
+  const stamp = ({ dev, ino, size, mtimeNs, ctimeNs }: typeof entry) => `${dev}:${ino}:${size}:${mtimeNs}:${ctimeNs}`
+  if (!entry.isSymbolicLink()) return stamp(entry)
+  const target = await stat(file, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null
+    throw error
+  })
+  return `${stamp(entry)}:${target && stamp(target)}`
+}
 
-  return async (checkout: string) => {
-    if (!configuredRoot) return
+export class WorktreeConfigChangedError extends Error {
+  constructor() { super("Git configuration changed during worktree validation") }
+}
+
+export async function createCheckoutRootVerifier(directory: string, local: Parameters<typeof validateCheckoutLayout>[0]) {
+  const files = new Map<string, Promise<string | null>>()
+  const remember = (file: string) => {
+    let stamp = files.get(file)
+    if (!stamp) {
+      stamp = configStamp(file)
+      files.set(file, stamp)
+    }
+    return stamp
+  }
+  await remember(path.join(local.common, "config"))
+  await remember(path.join(local.gitDirectory, "config.worktree"))
+  const readConfig = () => git(directory, ["config", "--null", "--list", "--includes"])
+  const effective = await readConfig()
+  const config = effective.split("\0").map(entry => entry.split("\n", 2))
+  const worktreeConfig = config.some(([key]) => key === "extensions.worktreeconfig")
+  const configuredRoot = gitDiscoveryOverridden() || process.env.GIT_CONFIG !== undefined || config.some(([key, value]) =>
+    key === "core.worktree" || key.startsWith("includeif.") || (key === "core.bare" && value !== "false"))
+  const includes = config.some(([key]) => key === "include.path")
+
+  let usedShortcut = false
+  const verify = async (checkout: string, identity: Parameters<typeof validateCheckoutLayout>[0]) => {
+    const perCheckout = worktreeConfig ? await remember(path.join(identity.gitDirectory, "config.worktree")) : null
+    if (!configuredRoot && perCheckout === null) {
+      // Enabling the extension does not create per-checkout config files.
+      if (!worktreeConfig || await validateCheckoutLayout(identity).then(() => true, () => false)) {
+        usedShortcut = true
+        return
+      }
+    }
     // Administrative gitdir backlinks describe registration, not necessarily
-    // the effective worktree. Keep annotations batched; only exceptional config
-    // needs this single extra process (which also rejects bare checkouts).
-    const root = await git(checkout, ["rev-parse", "--show-toplevel"])
+    // the effective worktree. Bulk verification yields to queued authority reads.
+    const output = await runGitProcess(checkout, ["rev-parse", "--show-toplevel"], { priority: "background" })
+    const root = output.replace(/\r?\n$/, "")
     if (await realpath(root) !== await realpath(checkout)) throw new Error("Native worktree entry is not a checkout root")
   }
+  const assertCurrent = async () => {
+    // Let Git resolve unrestricted include paths; the ordinary scan uses only stats.
+    if (usedShortcut && includes && await readConfig() !== effective) throw new WorktreeConfigChangedError()
+    // Shared config was recorded first; check it last, closest to publication.
+    for (const [file, expected] of [...files].reverse()) {
+      if (await configStamp(file) !== await expected) throw new WorktreeConfigChangedError()
+    }
+  }
+  return { verify, assertCurrent }
 }
 
 export function isValidWorktreeSlug(slug: string): boolean {
@@ -109,7 +156,8 @@ export async function revisionContainsFolder(directory: string, revision: string
 
 export async function attachWorktreeBranch(directory: string, branch: string, existing: boolean): Promise<void> {
   // Never -B/--force: preserve branch refs and Git's already-checked-out guard.
-  await git(directory, ["switch", ...(existing ? [] : ["-c"]), branch])
+  // An existing branch only: never let Git guess one from a same-named remote-tracking branch.
+  await git(directory, ["switch", ...(existing ? ["--no-guess"] : ["-c"]), branch])
 }
 
 export async function gitExcludePath(directory: string): Promise<string> {

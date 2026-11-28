@@ -37,8 +37,6 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
       ? { [entries]: { get: {} }, [`${entries}/{key}`]: { put: {}, delete: {} } } : {} }
       : reply.code(control.openapiStatus).send({ error: "PRIVATE MEMORY" })
   })
-  upstream.post("/api/rpc/codenomad.missions/scheduleCarrierRead", async (_request, reply) =>
-    reply.code(400).send({ _tag: "RpcError", type: "rpc.method_not_found", message: "Unknown RPC method" }))
   upstream.get("/api/session/:id", async request => {
     const { id } = request.params as { id: string }
     return { data: { id, location: { directory: id === "foreign" ? "/other" : "/repo" } } }
@@ -73,8 +71,9 @@ async function harness(memory?: Pick<MemoryService, "sessionTitles"> & Partial<P
   const assertCurrent = () => { if (!control.current) throw new Error("Stale connection") }
   const fetcher: typeof fetch = (input, init) => { assertCurrent(); return fetch(input, init) }
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: fetcher })
+  const workspace = { id: "w", path: "/repo" } as never
   const manager: InstanceProxyWorkspaceManager = {
-    get: () => ({ id: "w", path: "/repo" }) as never,
+    get: () => workspace,
     getSharedServiceEndpoint: async () => endpoint,
     getSharedServiceClient: async () => { throw new Error("Must use the pinned client") },
     getSharedServiceConnection: async () => ({ endpoint, client, fetch: fetcher, assertCurrent, invalidate() {}, profile: async () => "modern" }),

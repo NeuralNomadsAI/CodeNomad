@@ -6,7 +6,8 @@ import { render } from "solid-js/web"
 import { Markdown } from "../../../src/components/markdown"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, tGlobal } from "../../../src/lib/i18n"
-import { addInstance } from "../../../src/stores/instances"
+import { activeInstanceId, addInstance, setActiveInstanceId } from "../../../src/stores/instances"
+import { activeSessionId, setActiveSessionId } from "../../../src/stores/session-selection-state"
 import { setSessions } from "../../../src/stores/session-state"
 import type { Session } from "../../../src/types/session"
 import { getFilePreview } from "../../../src/stores/files-preview"
@@ -15,6 +16,12 @@ import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { getServerMeta } from "../../../src/lib/server-meta"
 import { ensureWorktreesLoaded } from "../../../src/stores/worktrees"
+import { createBackendClient, registerBackendClient } from "../../../src/lib/backend-client"
+import { backendEvents } from "../../../src/lib/backend-events"
+import { getSessionPreview } from "../../../src/stores/session-previews"
+import { alertDialogState } from "../../../src/stores/alerts"
+import { getToastHistory } from "../../../src/lib/notifications"
+import { localLinkPath, worktreeLinkPath, type SessionLinkBase } from "../../../src/components/markdown-session-links"
 
 const id = "markdown-session-links", scope = "/fixture-root"
 const client = sdkManager.createClient(id, `/workspaces/${id}/instance`, () => true)
@@ -46,6 +53,28 @@ if (new URLSearchParams(location.search).has("inventory")) {
 }
 await getServerMeta()
 
+const remoteCalls: string[] = []
+const remoteDetach = new Map<string, () => void>()
+let rejectPending: (() => void) | undefined
+let holdPreview = false
+for (const owner of ["A", "B"]) {
+  const backend = createBackendClient({ id: owner, baseUrl: `http://${owner.toLowerCase()}.invalid`,
+    fetcher: async () => Response.json({}) })
+  registerBackendClient(backend)
+  remoteDetach.set(owner, backendEvents.attach(owner, backend.events))
+  backend.api.fetchServerMeta = async () => ({ previewsUnavailable: owner === "B" }) as never
+  backend.api.createPreviewCapability = async input => {
+    remoteCalls.push(owner)
+    if (holdPreview) await new Promise<void>((_, reject) => { rejectPending = () => reject(new Error("stale preview")) })
+    return { token: `token-${owner}`, sessionId: input.sessionId, targetUrl: input.url,
+      proxyUrl: `/previews/token-${owner}/`, createdAt: "", capability: `cap-${owner.toLowerCase()}`,
+      contentUrl: `http://cap-${owner.toLowerCase()}.preview.localhost:1234/previews/token-${owner}/` }
+  }
+  const remoteId = `${owner}~${id}`
+  addInstance({ id: remoteId, backendId: owner, folder: scope, port: 0, pid: 0, proxyPath: "", status: "ready", client })
+  setSessions(previous => new Map(previous).set(remoteId, new Map([[session.id, { ...session, instanceId: remoteId }]])))
+}
+
 let renderCount = 0
 const clicks: Array<{ href: string; prevented: boolean }> = []
 // Registered before render so it sits above the component's own listener:
@@ -60,17 +89,21 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   <div>
     <div id="main-root">
       <Markdown part={{ id: "part", type: "text", version: 0,
-          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x)." }}
+          text: "See [readme](./README.md), the [guide](docs/guide.md#intro), [app](/fixture-root/src/app.ts), [escape](../outside.md), [web](https://example.com/x) and [local](http://localhost:3000/x). Local: [docs](./docs), [clip](./media/clip.mp4), [shot](./shot.png), [album](./album.png), [photo](file:///C:/Users/me/bato.jpg), [notes](file:///fixture-root/notes.md), [locked](./locked), [gone](./gone.md)." }}
         instanceId={id} sessionId="ses_link" onRendered={() => { renderCount++ }} />
     </div>
     <div id="sub-root">
-      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
+      <Markdown part={{ id: "sub-part", type: "text", version: 0, text: "See [readme](./README.md) and [docs](./docs)." }}
         instanceId={id} sessionId="ses_sub" />
     </div>
     <div id="child-root">
       <Markdown part={{ id: "child-part", type: "text", version: 0, text: "See [readme](./README.md)." }}
         instanceId={id} sessionId="ses_child" />
     </div>
+    {["A", "B"].map(owner => <div id={`remote-${owner}`}>
+      <Markdown part={{ id: `remote-${owner}`, type: "text", text: "[readme](./README.md), [local](http://localhost:3000/x) and [next](http://localhost:3000/next)." }}
+        instanceId={`${owner}~${id}`} sessionId="ses_link" />
+    </div>)}
   </div>
 </I18nProvider></ConfigProvider>, document.getElementById("root")!)
 
@@ -84,4 +117,24 @@ const dispose = render(() => <ConfigProvider><I18nProvider>
   label: (key: string) => tGlobal(key),
   title: (selector: string) => document.querySelector(selector)?.getAttribute("title") ?? null,
   dispose,
+  remoteCalls: () => [...remoteCalls],
+  remoteTarget: (owner: string) => getFilePreview(`${owner}~${id}`)?.path ?? null,
+  previewMode: (owner: string) => getSessionPreview("ses_link", owner === "local" ? id : `${owner}~${id}`)?.mode ?? null,
+  selectRemoteSession: (owner: string) => {
+    const instanceId = `${owner}~${id}`
+    setActiveInstanceId(instanceId)
+    setActiveSessionId(previous => new Map(previous).set(instanceId, session.id))
+  },
+  isRemoteSessionSelected: (owner: string) => {
+    const instanceId = `${owner}~${id}`
+    return activeInstanceId() === instanceId && activeSessionId().get(instanceId) === session.id
+  },
+  detach: (owner: string) => remoteDetach.get(owner)?.(),
+  holdPreview: () => { holdPreview = true },
+  pending: () => Boolean(rejectPending),
+  rejectPending: () => rejectPending?.(),
+  alert: () => alertDialogState(),
+  localLinkPath: (href: string, base: SessionLinkBase) => localLinkPath(href, base),
+  worktreeLinkPath: (href: string, base: SessionLinkBase) => worktreeLinkPath(href, base),
+  errorToasts: () => getToastHistory().filter(item => item.variant === "error").map(item => item.message),
 }

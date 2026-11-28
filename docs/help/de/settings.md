@@ -1,16 +1,19 @@
 # Einstellungen und Layout
 
+Das Einstellungsfenster verwendet den Server des ausgewählten Projekts für Projekteinstellungen, Anbieter, Statistiken und Gedächtnis, einschließlich der Bereinigung. Bei einem nicht erreichbaren Server bleiben die Projektaktionen inaktiv. Geräteeinstellungen und SideCars bleiben lokal. Die Einstellungen für Bilder und Websuche gelten für den Server des Projekts, einschließlich seiner globalen Vorgaben.
+
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
-1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
+1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 
-Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Sprache, eigene Palettenfarben und Konfigurationsdateien behalten ein explizites **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
+Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Einstellungen für Sprach-APIs, eigene Palettenfarben und Konfigurationsdateien erfordern **Speichern**. Zeigen Sie auf das **i** neben dem Einstellungstitel oder fokussieren Sie es für eine kurze Erklärung. Bei einem Hilfelink öffnen Klicken, Eingabe oder Antippen den passenden Abschnitt in der Oberflächensprache im Systembrowser oder in einem separaten Tab. Reine Tooltip-Symbole zeigen ihre Erklärung beim Antippen. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
 
 | Zustand | Was er steuert |
 | --- | --- |
-| CodeNomad-Konfiguration | UI-Einstellungen, Sprache, SideCars und Servereinstellungen für Clients dieser Konfiguration. Einstellungen ohne Abzeichen werden ebenfalls nicht pro Gerät gespeichert; **Server-Einstellung** kennzeichnet serverseitige Konfiguration wie Sprache, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| CodeNomad-Konfiguration | Gemeinsame UI-Einstellungen und als **Server-Einstellung** gekennzeichnete Optionen, darunter die Sprach-API, SideCars, Fernsteuerung und Umgebungsvariablen. |
+| Sprach-Engines | Die [Diktier-Engine der Desktop-App](voice.md#desktop-dictation) gilt für alle Projekte auf diesem Gerät. Die [Gesprächs-Engine](voice.md#conversation) gilt für das Desktop-Profil bzw. das Browserprofil und den verbundenen Server. |
 | Fenster-/Projekt-Tab-Layout | Offene Panels, ausgewählte Tabs, Lesezustand und wiederherstellbare Entwürfe/Layout. Dies ist keine OpenCode-Konfiguration. |
 | Globale/projektbezogene OpenCode-Einstellungen | Native Plugin-/Konfigurationsänderungen im angezeigten Umfang. Projektsteuerung benötigt ein aktives Projekt/eine Location. |
 | Desktop-Datenprofil | Native Fenster, Wiederherstellungszustand und Browserspeicher, unabhängig von Konfigurationsdatei und gemeinsamem OpenCode-Dienst. Siehe [Desktop-Fenster und Daten](desktop.md). |
@@ -37,7 +40,13 @@ Werden Farben schwer lesbar, wählen Sie **Kontrast → Ein**. Sie können auch 
 
 Unter **Einstellungen → Allgemein** ist **Computer wach halten, solange CodeNomad läuft** standardmäßig deaktiviert. Aktivieren Sie die Option, um den Ruhezustand zu verhindern, solange ein lokales CodeNomad-Fenster geöffnet ist (auch minimiert), auch wenn keine Sitzung arbeitet; der Bildschirm kann sich weiterhin ausschalten. Wenn deaktiviert, hält CodeNomad den Computer nur wach, während eine Sitzung arbeitet. Die Option erscheint nur in lokalen Desktop-App-Fenstern und im nativen Einstellungsfenster; in Browser-/Remote-Ansichten ist sie ausgeblendet.
 
+## Berechtigungen für neue Unterhaltungen {#new-conversation-permissions}
+
+Wählen Sie unter **Einstellungen → Allgemein → Berechtigungen für neue Unterhaltungen** den Modus **Autonom** (Standard) oder **Beaufsichtigt** für neue Hauptunterhaltungen, die Sie in CodeNomad erstellen. Bestehende Unterhaltungen bleiben unverändert. Zum Ändern öffnen Sie in der jeweiligen Unterhaltung [Status → Berechtigungen](permissions.md#conversation-mode).
+
 ## Dauerhaftes Agentengedächtnis {#agent-memory}
+
+Authentifizierte Nutzer können über Fernsteuerung, verifiziertes HTTPS, LAN oder eine installierte PWA das Gedächtnis des ausgewählten lokalen oder entfernten Projekts prüfen, bearbeiten und **Aufräumen** verwenden.
 
 CodeNomad versucht, veraltete Speicheranweisungen der Sitzung zu entfernen; schlägt auch dies fehl, können die bisherigen Anweisungen bis zur nächsten erfolgreichen Aktualisierung erhalten bleiben.
 
@@ -67,26 +76,30 @@ Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern
 2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar. Ziehen Sie über diese Kontrollkästchen, um mehrere auf einmal einzustellen.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.
 
-Ordnen Sie jeden Statusabschnitt per Ziehen oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben beim Neuladen erhalten.
+Ordnen Sie jeden Statusabschnitt per Ziehen an seinem Griff oder mit den Tasten Auf/Ab um. Sichtbarkeit und Reihenfolge bleiben beim Neuladen erhalten.
 
-Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
+Status enthält Tokeninformationen, Berechtigungen, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Solange die Unterhaltung ein [Ziel](conversations.md#goal) hat, zeigt eine Zielzeile über diesen Abschnitten es an; diese Zeile ist kein Abschnitt und lässt sich weder ausblenden noch verschieben. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
-Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
+Das integrierte Layout gilt für das Fenster. Das [Kästchen Missionen](missions.md#activation) ändert auch die globale Plugin-Aktivierung und wird beim Ziehen über Kästchen übersprungen. Erweiterungskästchen aktivieren Code in allen Projekten dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
-2. Legen Sie für Denken, Diagnosen, Werkzeugeingaben, Tokens, Systemnachrichten und jeden Werkzeugtyp den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung, das diese Auswahl teilt.
+2. Legen Sie den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung mit denselben Einstellungen. Bei **Werkzeuggruppen** zeigt **Deaktiviert** jeden Aufruf auf einer eigenen Karte; **Eingeklappt** und **Erweitert** legen den Anfangszustand der Gruppen fest.
 3. Aktivieren Sie unter **Allgemein** nach Bedarf **Nachrichten-Zeitleiste anzeigen**, **Pfeile für erste/neueste Nachricht unter der Zeitleiste anzeigen**, **Diffs von Tool-Aufrufen geteilt anzeigen** und **Gesendete Prompts in die Warteschlange stellen** (Prompts, die während der Arbeit einer Sitzung gesendet werden, einreihen statt sie einzuschieben).
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.
 
 Die Timeline hat eine Markierung für jede Antwort, jeden Denkprozess, jedes Werkzeug, jede Komprimierung und jeden Systemkontext, die das Gespräch zeigt, in derselben Reihenfolge. Ihre Markierungen folgen **Nachrichteninhalt**: Werden dort ein Werkzeugtyp, Denkprozesse oder Systemnachrichten ausgeblendet, verschwinden auch ihre Markierungen, außer bei einem Werkzeug mit offener Berechtigung, und **Nichts** blendet alle Werkzeugmarkierungen aus. Sichtbarkeits- und Aufklappeinstellungen ändern nur die Darstellung. Sie entfernen keine gespeicherten Werkzeuge/Denkprozesse und komprimieren keinen Modellkontext. Destruktive Vorgänge siehe [Verlauf und Bereinigung](history.md).
 
-Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtastatur: mindestens 8 % mit 44-Pixel-Untergrenze, höchstens 60 %. Manuelle Höhe wird proportional gemerkt; schmale Breite und langer Text erhöhen diese Grenzen nicht. Eine aufgeklappte Berechtigung/Frage minimiert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Klappen/erledigen Sie die Anfrage, um Größenänderung fortzusetzen.
+Beim manuellen Ändern der Eingabehöhe zählt die Höhe der Unterhaltung ohne Bildschirmtastatur: mindestens 8 % mit einer Untergrenze von 44 Pixeln, höchstens 60 %. Ein schmales Layout oder langer Text erhöhen diese Grenzen nicht. Bei geöffneter Tastatur kann das Feld vorübergehend kleiner werden, damit Bedienelemente und Nachrichten erreichbar bleiben. Das gespeicherte Höhenverhältnis bleibt dabei unverändert. Eine aufgeklappte Berechtigung/Frage minimiert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Klappen/erledigen Sie die Anfrage, um Größenänderung fortzusetzen.
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 
-1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
+Bei einem Projekt-Tab auf einem anderen CodeNomad-Server enthalten Benachrichtigungen den Servernamen. **Unterhaltung anzeigen** öffnet genau dieses Projekt und diese Unterhaltung; beim Trennen des Servers werden seine Hinweise entfernt.
+
+Die Komprimierung technischer Missionssitzungen bleibt stumm.
+
+1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Berechtigung anfordern** erneut, solange die Berechtigung fehlt.
 3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
 
@@ -95,6 +108,8 @@ Standardmäßig gehen **Eine Sitzung wartet auf Ihre Antwort** und **Eine Sitzun
 Browser-/OS-Berechtigung gehört zum Gerät und zur Anwendungs-Origin; eine gespeicherte Einstellung kann Ablehnung nicht übersteuern. Aktivieren Sie bei Blockade Benachrichtigungen in Browser-/OS-Einstellungen und kehren Sie hierher zurück. Nicht unterstützte Umgebungen lassen die Spalte System deaktiviert.
 
 Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachrichtigungen zählt, steuert Browser-Favicon-Punkt und natives App-Abzeichen.
+
+Wenn das System Benachrichtigungsaktionen unterstützt, zeigt ein Klick auf die Benachrichtigung die Unterhaltung an, sofern sie noch geöffnet ist. Ob das Fenster in den Vordergrund kommt, hängt von der Desktop-Umgebung ab.
 
 ## Erweiterte Optionen {#advanced}
 
@@ -111,4 +126,4 @@ Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachric
 | Lange Assistentenantworten anhalten | Stoppt automatisches Folgen, wenn eine gestreamte Antwort über die Ansicht hinauswächst. |
 | Umgebungsvariablen | Serverseitig vor jedem Prompt/Sitzungsbefehl angewandt; Lesen aktualisiert keine bereits laufende Ausführung. Siehe [OpenCode-Einrichtung](opencode.md). |
 
-Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md); Sprachsteuerung siehe [Spracheingabe und Wiedergabe](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).
+Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md). Unter **Sprache** finden Sie [Diktat, Wiedergabe und Gespräch](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).

@@ -39,17 +39,3 @@ export function readNativeScheduleIncarnation(file: string): NativeScheduleIncar
     return Object.freeze({ id: raw.id, pid: raw.pid, url: raw.url, ...(raw.version === undefined ? {} : { version: raw.version }) })
   } finally { closeSync(handle) }
 }
-
-export const sameNativeScheduleIncarnation = (a: NativeScheduleIncarnation, b: NativeScheduleIncarnation) =>
-  a.id === b.id && a.pid === b.pid && a.url === b.url && a.version === b.version
-
-/** Call inside the current RPC, after I/O and synchronously before every CAS/effect. */
-export function nativeScheduleIncarnationGuard(file: string, expected: NativeScheduleIncarnation): () => true {
-  assertNativeScheduleIncarnation(expected)
-  const captured = { ...expected }
-  return () => {
-    if (captured.pid !== process.pid || !sameNativeScheduleIncarnation(readNativeScheduleIncarnation(file), captured))
-      throw new Error("schedule-incarnation-changed")
-    return true
-  }
-}

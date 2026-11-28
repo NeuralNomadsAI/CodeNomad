@@ -19,7 +19,7 @@ const answerSchema = z.object({ answer: z.record(z.string(), z.union([z.string()
 
 /** Called INSIDE the normal proxy's owned native-session/request/deletion and
  * connection admission. It handles only the dock's real human answer path.
- * Auto/Yolo/SDK reply keeps the ordinary native route without human proof.
+ * Auto/SDK reply keeps the ordinary native route without human proof.
  * `undefined` means "use the ordinary native reply without a mark": every Form
  * outside a Mission family, and any Mission Form whose mark cannot be prepared
  * (auth disabled, plugin/binding unavailable) before anything was forwarded.

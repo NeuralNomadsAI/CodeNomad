@@ -1,20 +1,31 @@
-import { canonicalJson, sha256 } from "./client-state-partition-json"
+import { encodePartition, sameJson, type EncodedPartition } from "./client-state-partition-json"
 import { normalizePersistedOutline, type PersistedOutline } from "./session-outline-persistence"
 
-const encoded = new WeakMap<PersistedOutline, Promise<{ descriptor: object; partitions: Record<string, string> }>>()
-export function encodeOutlinePartitions(value: PersistedOutline) {
+export interface EncodedOutline {
+  source: PersistedOutline
+  descriptor: object
+  partitions: EncodedPartition[]
+}
+const encoded = new WeakMap<PersistedOutline, Promise<EncodedOutline>>()
+export function encodeOutlinePartitions(value: PersistedOutline, previous?: EncodedOutline) {
   let pending = encoded.get(value)
   if (!pending) {
     pending = (async () => {
-      const partitions: Record<string, string> = Object.create(null), entryPartitions: string[] = []
+      const partitions: EncodedPartition[] = []
       // Even maximally escaped 256-character IDs fit the native 1 MiB leaf limit.
       for (let offset = 0; offset < value.entries.length; offset += 512) {
-        const text = canonicalJson({ format: 1, index: offset / 512, entries: value.entries.slice(offset, offset + 512) })
-        const key = await sha256(text)
-        partitions[key] = text; entryPartitions.push(key)
+        const index = offset / 512
+        const entries = value.entries.slice(offset, offset + 512)
+        const old = previous?.partitions[index]
+        if (old && entries.length === Math.min(512, previous!.source.entries.length - offset)
+          && entries.every((entry, i) => sameJson(entry, previous!.source.entries[offset + i]))) {
+          partitions.push(old)
+        } else {
+          partitions.push(await encodePartition({ format: 1, index, entries }))
+        }
       }
       const { entries: _, ...metadata } = value
-      return { descriptor: { ...metadata, entryPartitions }, partitions }
+      return { source: value, descriptor: { ...metadata, entryPartitions: partitions.map(partition => partition.key) }, partitions }
     })()
     // Only normalized frozen indexes are memoized across frequent draft/scroll captures.
     if (Object.isFrozen(value)) encoded.set(value, pending)

@@ -5,7 +5,7 @@ import { listNativeWorktrees } from "../native-worktrees"
 
 // Only the native discovery transport is replaced. Filesystem identity, Git
 // annotations, nested projection and the production catalogue remain real.
-export function fixtureCatalogue(workspacePath: string, nativeDirectories?: string[]) {
+export function fixtureCatalogue(workspacePath: string, nativeDirectories?: string[], toHost = async (directory: string) => directory) {
   const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8" }).trim()
   const client = {
     location: { get: async ({ location }: { location: { directory: string } }) => {
@@ -19,5 +19,5 @@ export function fixtureCatalogue(workspacePath: string, nativeDirectories?: stri
         .filter(field => field.startsWith("worktree ")).map(field => ({ directory: field.slice(9) })),
     },
   } as unknown as OpenCodeClient
-  return listNativeWorktrees({ client, workspacePath, location: { directory: workspacePath }, toHost: async directory => directory })
+  return listNativeWorktrees({ client, workspacePath, location: { directory: workspacePath }, toHost })
 }

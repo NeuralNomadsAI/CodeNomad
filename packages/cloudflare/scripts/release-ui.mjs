@@ -3,6 +3,7 @@ import fs from "fs"
 import os from "os"
 import path from "path"
 import { fileURLToPath } from "url"
+import { precompressUi } from "../../../scripts/precompress-ui.mjs"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -36,8 +37,12 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-ui-release-"))
 const zipPath = path.join(tmpDir, `ui-${uiVersion}.zip`)
 
 try {
-  // Zip the CONTENTS of the dist dir (so index.html is at zip root).
-  execFileSync("/usr/bin/zip", ["-q", "-r", zipPath, "."], { cwd: uiBuildDir, stdio: "inherit" })
+  const bundle = path.join(tmpDir, "bundle")
+  fs.cpSync(uiBuildDir, bundle, { recursive: true })
+  // Compatible servers gate literal .html/.htm names; their updates keep HTML on those URLs.
+  await precompressUi(bundle, { includeHtml: false })
+  // Zip the contents so index.html is at the root.
+  execFileSync("/usr/bin/zip", ["-q", "-r", zipPath, "."], { cwd: bundle, stdio: "inherit" })
 
   // Upload to R2.
   const objectKey = `ui/ui-${uiVersion}.zip`

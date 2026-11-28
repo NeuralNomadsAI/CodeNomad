@@ -3,7 +3,7 @@ use super::{
     window::{NativeWindowState, WindowBounds, DEFAULT_ZOOM_LEVEL},
     ClientState,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(super) struct WindowGeometry {
     pub bounds: Option<WindowBounds>,
@@ -14,6 +14,8 @@ pub(super) struct WindowGeometry {
 #[derive(Default)]
 pub(super) struct WindowCaptures {
     latest: HashMap<String, NativeWindowState>,
+    active: Option<String>,
+    new_windows: HashSet<String>,
     // A clear/disable/removal is tentative until publication. Keep admission
     // based on its previous policy so a failed write cannot drop live events.
     mutation: Option<(String, Option<NativeWindowState>)>,
@@ -22,6 +24,23 @@ pub(super) struct WindowCaptures {
 }
 
 impl ClientState {
+    pub(crate) fn queue_active_window(&self, app: &tauri::AppHandle, id: String) {
+        if self.capture_active_window(id) {
+            self.schedule_window_flush(app);
+        }
+    }
+
+    fn capture_active_window(&self, id: String) -> bool {
+        if let Ok(mut pending) = self.pending_windows.lock() {
+            if pending.stopped {
+                return false;
+            }
+            pending.active = Some(id);
+            return true;
+        }
+        false
+    }
+
     pub(super) fn capture_window_geometry(
         &self,
         window_id: &str,
@@ -73,6 +92,8 @@ impl ClientState {
             window.as_ref()
         } else if window_id == crate::preferences_window::LABEL {
             state.preferences_window.as_ref()
+        } else if pending.new_windows.contains(window_id) {
+            None
         } else {
             let Ok(record) = state.record(window_id) else {
                 return false;
@@ -115,24 +136,82 @@ impl ClientState {
             .map_err(|error| error.to_string())?;
         if state.unsupported_future_envelope {
             pending.latest.clear();
+            pending.active = None;
             return Ok(());
         }
         let mut applied = false;
-        for (id, capture) in pending.latest.drain() {
-            if id == crate::preferences_window::LABEL {
-                state.preferences_window = Some(capture);
+        if let Some(id) = pending.active.take() {
+            if pending.new_windows.contains(&id) {
+                pending.active = Some(id);
+            } else if id != state.active_window_id && state.record(&id).is_ok() {
+                state.active_window_id = id;
                 applied = true;
-                continue;
             }
-            if let Ok(record) = state.record_mut(&id) {
+        }
+        let WindowCaptures { new_windows, latest, .. } = &mut *pending;
+        latest.retain(|id, capture| {
+            if new_windows.contains(id) {
+                return true;
+            }
+            if id == crate::preferences_window::LABEL {
+                state.preferences_window = Some(capture.clone());
+                applied = true;
+            } else if let Ok(record) = state.record_mut(id) {
                 if record.writes_enabled {
-                    record.window = Some(capture);
+                    record.window = Some(capture.clone());
                     applied = true;
                 }
             }
-        }
+            false
+        });
         pending.unpublished |= applied;
         Ok(())
+    }
+
+    pub(crate) fn admit_new_window_capture(&self, id: String) {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        if !pending.stopped {
+            pending.new_windows.insert(id);
+        }
+    }
+
+    pub(crate) fn discard_new_window_capture(&self, id: &str) {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        if pending.new_windows.remove(id) {
+            pending.latest.remove(id);
+            if pending.active.as_deref() == Some(id) {
+                pending.active = None;
+            }
+        }
+    }
+
+    pub(super) fn snapshot_new_window_capture(
+        &self,
+        state: &mut PersistedClientState,
+        id: &str,
+    ) -> Result<(), String> {
+        let pending = self.pending_windows.lock().map_err(|err| err.to_string())?;
+        if pending.new_windows.contains(id) {
+            state.record_mut(id)?.window = pending.latest.get(id).cloned();
+            if pending.active.as_deref() == Some(id) {
+                state.active_window_id = id.to_owned();
+            }
+        }
+        Ok(())
+    }
+
+    // Called with state locked after publication. Captures that arrived during
+    // publication now belong to the saved record and stay queued for flushing.
+    pub(super) fn finish_new_window_capture(&self, state: &PersistedClientState, id: &str) {
+        let mut pending = self.pending_windows.lock().unwrap_or_else(|err| err.into_inner());
+        if pending.new_windows.remove(id) {
+            if pending.latest.get(id) == state.record(id).ok().and_then(|record| record.window.as_ref()) {
+                pending.latest.remove(id);
+            }
+            if state.active_window_id == id && pending.active.as_deref() == Some(id) {
+                pending.active = None;
+            }
+        }
     }
 
     pub(super) fn window_captures_published(&self) {
@@ -175,31 +254,39 @@ impl ClientState {
         }
     }
 
-    pub(super) fn stop_window_captures(&self) {
+    pub(super) fn set_window_captures_stopped(&self, stopped: bool) {
         self.pending_windows
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .stopped = true;
+            .stopped = stopped;
+    }
+
+    pub(super) fn window_captures_stopped(&self) -> Result<bool, String> {
+        Ok(self.pending_windows.lock().map_err(|error| error.to_string())?.stopped)
     }
 
     // Caller holds write_lock, after the worker has joined and before ownership
     // release. Admission is closed, so this is also safe if a wakeup was omitted.
     pub(super) fn flush_pending_window_captures(&self) -> Result<(), String> {
-        if !self.is_primary() {
-            return Ok(());
-        }
         {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
+            let state = self.state.lock().map_err(|error| error.to_string())?;
             let pending = self
                 .pending_windows
                 .lock()
                 .map_err(|error| error.to_string())?;
             if state.unsupported_future_envelope
-                || (pending.latest.is_empty() && !pending.unpublished)
+                || (pending.latest.is_empty() && pending.active.is_none() && !pending.unpublished
+                    && !self.root_sync_pending.load(std::sync::atomic::Ordering::Relaxed))
             {
                 return Ok(());
             }
-            drop(pending);
+        }
+        // Keep the state mutex available to native window callbacks during the ownership read.
+        if !self.process.verify_primary()? {
+            return Ok(());
+        }
+        {
+            let mut state = self.state.lock().map_err(|error| error.to_string())?;
             self.apply_window_captures(&mut state)?;
         }
         self.write_current_state()

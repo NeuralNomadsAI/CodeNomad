@@ -52,9 +52,20 @@ serverApi.addPluginSource = async (_id, request) => {
 }
 serverApi.removePluginSource = async (_id, request) => {
   calls.push({ type: "remove", ...request })
-  snapshot.configured.sources = snapshot.configured.sources.filter(source => !(source.scope === request.scope && source.target === request.target && source.entryIndex === request.entryIndex))
+  // The server's contract: a source goes with its plugin's exact rules in that document, or an orphan ID's rules alone.
+  const removed = "pluginId" in request ? undefined
+    : snapshot.configured.sources.find(source => source.scope === request.scope && source.target === request.target && source.entryIndex === request.entryIndex)
+  const pluginId = "pluginId" in request ? request.pluginId : removed?.pluginId
+  snapshot.configured.sources = snapshot.configured.sources.filter(source => source !== removed)
+  if (pluginId) {
+    snapshot.configured.rules = snapshot.configured.rules.filter(rule => !(rule.selector === pluginId && rule.scope === request.scope))
+    if (!snapshot.configured.rules.some(rule => rule.selector === pluginId)) {
+      snapshot.controls = snapshot.controls.filter(control => control.id !== pluginId || control.runtime)
+      for (const control of snapshot.controls) if (control.id === pluginId) Object.assign(control, { effective: "default", global: "default", project: "default" })
+    }
+  }
   if (loseRemovalResponse) { loseRemovalResponse = false; throw new Error("Response lost after commit") }
-  return { scope: request.scope, spec: request.target, reloadPending: true }
+  return { scope: request.scope, spec: "pluginId" in request ? request.pluginId : request.target, reloadPending: true }
 }
 
 render(() => (
@@ -82,6 +93,39 @@ const notify = () => (serverEvents as any).dispatchBatch([{
   unload: (target: string) => {
     snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || entry.source.target !== target)
     snapshot.controls = snapshot.controls.filter(control => control.runtime?.source.type !== "package" || control.runtime.source.target !== target)
+    notify()
+  },
+  /** Exact `-id`, `id` rules after the last Global entry. */
+  addRules: (id: string) => {
+    const entryIndex = Math.max(-1, ...snapshot.configured.sources.filter(source => source.path === globalPath).map(source => source.entryIndex)) + 1
+    for (const [offset, enabled] of [[0, false], [1, true]] as const) {
+      snapshot.configured.rules.push({ selector: id, enabled, scope: "global", path: globalPath, order: 0, entryIndex: entryIndex + offset })
+    }
+    for (const control of snapshot.controls) if (control.id === id) Object.assign(control, { effective: "enabled", global: "enabled" })
+    notify()
+  },
+  /** What an uninstall that kept the rules left: OpenCode loaded the bare name as a package that failed without an ID
+   * (which may define any ID, so `-id` is not orphan yet). */
+  orphan: (id: string) => {
+    snapshot.configured.sources.push({ target: id, scope: "global", path: globalPath, entryIndex: 2, hasOptions: false })
+    snapshot.configured.rules.push({ selector: id, enabled: false, scope: "global", path: globalPath, order: 0, entryIndex: 1 })
+    snapshot.runtime.push({ key: `package:${id}`, source: { type: "package", target: id, version: "2.0.0" }, features: {},
+      state: { status: "failed", error: "Plugin must export a default definition" } })
+    snapshot.controls.push({ id, builtin: false, effective: "disabled", global: "disabled", project: "default" })
+    notify()
+  },
+  /** OpenCode unloads a removed package; with every declaration identified, the remaining `-id` is orphan. */
+  settle: (id: string) => {
+    snapshot.runtime = snapshot.runtime.filter(entry => entry.source.type !== "package" || entry.source.target !== id)
+    for (const control of snapshot.controls) if (control.id === id) control.orphan = true
+    notify()
+  },
+  /** A Global declaration naming a local path the inventory reports as a failed plugin without an ID: the server
+   * identifies the declaration by its selected entrypoint only, so it has no `pluginId`. */
+  localDeclaration: (file: string) => {
+    snapshot.configured.sources.push({ target: file, scope: "global", path: globalPath, entryIndex: 3, hasOptions: false })
+    snapshot.runtime.push({ key: `local:${file}`, source: { type: "local", path: file }, features: {},
+      state: { status: "failed", error: "Plugin failed to load" } })
     notify()
   },
   failNextAdd: (status: number, code?: string) => { nextError = { status, code } },

@@ -18,8 +18,7 @@ if (!mode) {
   const projectKey = "mission-project-HhdJiAYMjxA", disclosureKey = "mission-disclosures-E9x1_W9tWRE"
   const legacy = { selected: "legacy-mission", selectedRecurrence: "daily", selectedScheduled: "scheduled",
     selectedTask: { missionId: "legacy-mission", taskId: "task" }, expanded: ["mission:legacy-mission"],
-    reader: { missionId: "legacy-mission", kind: "report" as const, itemId: "report", instanceId: "old-backend",
-      recurrence: { instanceId: "old-backend", projectID: "project", scheduleID: "schedule", passageID: "passage" } } }
+    reader: { missionId: "legacy-mission", kind: "report" as const, itemId: "report" } }
   const layout = { [projectKey]: JSON.stringify(legacy), [disclosureKey]: "-q1aEyLZiDLY,+yH2N9QrcmKE",
     "mission-project-vo6-9pq1uzw": JSON.stringify(legacy),
     ...(mode === "native-with-preview" ? {
@@ -61,9 +60,9 @@ if (!mode) {
   else ids.forEach((instanceId, index) => publishInstanceLifecycleAuthority({ type: "opened", instanceId,
     folder: index < 2 ? "/same" : "/explicit", occurrence: index % 2 }))
 
-  test("restores selection, tree and reader with recreated instance bindings", () => {
-    assert.deepEqual(missionProjectView("first"), { ...legacy, reader: { ...legacy.reader, instanceId: "first",
-      recurrence: { ...legacy.reader.recurrence, instanceId: "first" } } })
+  test("restores selection, tree and reader, without a schedule's selection", () => {
+    const { selectedRecurrence: _daily, selectedScheduled: _scheduled, ...restored } = legacy
+    assert.deepEqual(missionProjectView("first"), restored)
     if (mode === "native-with-preview") {
       assert.equal(getTabViewState("first").previews?.session.mode, "preview")
       assert.equal(JSON.parse(state.readClientLayoutValue("opencode-session-browser-state-v1")!).session.targetUrl, "https://example.com/")

@@ -41,22 +41,24 @@ export class MemoryService {
   }
 
   /** All HTTP config writers share the repository lock with memory mutations. */
-  async withSettingsLock<T>(action: () => T | Promise<T>): Promise<T> {
+  async withSettingsLock<T>(action: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted()
     try { await mkdir(this.store.configBaseDir, { recursive: true, mode: 0o700 }) }
     catch { throw new MemoryError("unreadable", "Memory configuration is unavailable") }
-    const release = await lockMemoryRepository(this.store.directory)
+    const release = await lockMemoryRepository(this.store.directory, undefined, signal)
     try {
+      signal?.throwIfAborted()
       this.settings.getRawConfigOwner("server")
       return await action()
     } finally { await release() }
   }
 
-  async setEnabled(enabled: boolean): Promise<MemorySettings> {
+  async setEnabled(enabled: boolean, signal?: AbortSignal): Promise<MemorySettings> {
     return this.withSettingsLock(() => {
       this.settings.mergePatchOwner("config", "server", { memoryEnabled: enabled })
       this.invalidate()
       return this.getSettings()
-    })
+    }, signal)
   }
 
   private async uiTarget(context?: MemoryContext): Promise<MemoryProjectTarget> {
@@ -112,37 +114,46 @@ export class MemoryService {
     return this.execute(input, () => this.sessionTarget(sessionID), sessionID)
   }
 
-  async executeUI(input: unknown, context?: MemoryContext): Promise<MemoryResult> {
+  async executeUI(input: unknown, context?: MemoryContext, signal?: AbortSignal): Promise<MemoryResult> {
+    signal?.throwIfAborted()
     const operation = MemoryOperationSchema.safeParse(input)
     const cleanupTarget = context && operation.success && operation.data.action === "list" ? await this.uiTarget(context) : undefined
-    const result = await this.execute(input, () => this.uiTarget(context))
+    const result = await this.execute(input, () => this.uiTarget(context), undefined, signal)
     if (cleanupTarget) {
       if (JSON.stringify(await this.uiTarget(context)) !== JSON.stringify(cleanupTarget))
         throw new MemoryError("conflict", "Memory project changed")
+      signal?.throwIfAborted()
       return { ...result, cleanupDirectory: cleanupTarget.directory }
     }
     return result
   }
 
-  private async namespace(operation: MemoryOperation, target: () => Promise<MemoryProjectTarget>, agent: boolean): Promise<MemoryNamespace> {
+  private async namespace(operation: MemoryOperation, target: () => Promise<MemoryProjectTarget>, agent: boolean, signal?: AbortSignal): Promise<MemoryNamespace> {
+    signal?.throwIfAborted()
     // Even global agent calls must have a current native owner.
     const authorized = agent || operation.scope === "project" ? await target() : undefined
+    signal?.throwIfAborted()
     if (operation.scope === "global") return { scope: "global" }
-    const projectId = (await this.projectIdentity(authorized!)).id
+    const projectId = (await this.projectIdentity(authorized!, undefined, signal)).id
+    signal?.throwIfAborted()
     if (JSON.stringify(await target()) !== JSON.stringify(authorized)) throw new MemoryError("conflict", "Memory project changed")
     return { scope: "project", projectId }
   }
 
-  private async execute(input: unknown, target: () => Promise<MemoryProjectTarget>, sessionID?: string): Promise<MemoryResult> {
+  private async execute(input: unknown, target: () => Promise<MemoryProjectTarget>, sessionID?: string, signal?: AbortSignal): Promise<MemoryResult> {
+    signal?.throwIfAborted()
     const parsed = MemoryOperationSchema.safeParse(input)
     if (!parsed.success) throw new MemoryError("invalid", "Invalid memory operation")
     const operation = parsed.data, agent = sessionID !== undefined
     if (operation.action === "save" && (operation.id === undefined ? operation.revision !== undefined || !agent : !operation.revision))
       throw new MemoryError("invalid", "Editing memory requires its ID and revision")
-    const namespace = await this.namespace(operation, target, agent)
+    const namespace = await this.namespace(operation, target, agent, signal)
+    signal?.throwIfAborted()
     if (agent && !this.getSettings().enabled) throw new MemoryError("disabled", "Memory is disabled")
     const revalidate = async () => {
-      const current = await this.namespace(operation, target, agent)
+      signal?.throwIfAborted()
+      const current = await this.namespace(operation, target, agent, signal)
+      signal?.throwIfAborted()
       if (JSON.stringify(current) !== JSON.stringify(namespace)) throw new MemoryError("conflict", "Memory project changed")
       if ((agent || operation.action === "save" || operation.action === "delete") && !this.getSettings().enabled)
         throw new MemoryError("disabled", "Memory is disabled")
@@ -150,10 +161,11 @@ export class MemoryService {
     if (operation.action === "list" || operation.action === "read") {
       // Capture before the read: a concurrent later write stays unread next visit.
       const observedAt = new Date().toISOString()
-      const all = await this.store.listForUI(namespace)
+      const all = await this.store.listForUI(namespace, signal)
+      signal?.throwIfAborted()
       const entries = agent ? memoryForAgent(all) : all
       const cleanupWritable = !agent && operation.action === "list" && this.getSettings().enabled
-        && entries.some(entry => !reviewMemoryEntry(entry).flagged) && await this.store.cleanupWritable(namespace)
+        && entries.some(entry => !reviewMemoryEntry(entry).flagged) && await this.store.cleanupWritable(namespace, signal)
       await revalidate()
       if (operation.action === "list") return { entries: agent
         ? entries.map(entry => { const { text: _text, ...header } = versioned(entry); return header })
@@ -178,7 +190,7 @@ export class MemoryService {
           throw new MemoryError("full", "Memory is full. Merge or delete entries before retrying.", memoryForAgent(entries).map(entry => entry.title))
         throw error
       }
-    })
+    }, signal)
     this.invalidate()
     await revalidate()
     return result

@@ -91,7 +91,7 @@ You can configure the server using flags or environment variables:
 | `--config <path>` | `CLI_CONFIG` | Config file location |
 | `--launch` | `CLI_LAUNCH` | Open the UI in a Chromium-based browser (strict boolean, default off) |
 | `--log-level <level>` | `CLI_LOG_LEVEL` | Logging level (trace, debug, info, warn, error) |
-| `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file (defaults to stdout) |
+| `--log-destination <path>` | `CLI_LOG_DESTINATION` | Log destination file. Defaults to stdout plus `logs/server.log` beside the configuration file; a chosen file replaces both |
 | `--username <username>` | `CODENOMAD_SERVER_USERNAME` | Username for CodeNomad's internal auth (default `codenomad`) |
 | `--password <password>` | `CODENOMAD_SERVER_PASSWORD` | Password for CodeNomad's internal auth |
 | `--generate-token` | `CODENOMAD_GENERATE_TOKEN` | Emit a one-time local bootstrap token for desktop flows (strict boolean, default off) |
@@ -252,6 +252,10 @@ When running as a server CodeNomad can also be installed as a PWA from any suppo
 CodeNomad owns no private OpenCode port, database, service registration, or daemon PID. Allowed profile environment variables and the current `NODE_EXTRA_CA_CERTS` are passed when starting a missing daemon; connecting to an existing daemon does not change its process environment. Separately, CodeNomad applies the profile's complete execution-host environment to the native session before each prompt, custom command, or session shell request, including removal of previously configured values. Legacy `OPENCODE_DB` and `XDG_STATE_HOME` ownership variables are ignored. See [Session Environment](../../dev-docs/SESSION_ENVIRONMENT.md). WSL lifecycle commands run inside Linux and never inspect or signal Linux PIDs from Windows.
 
 Closing a project tab deletes its logical CodeNomad workspace record without evicting the native Location or stopping sessions. Separate occurrences of the same folder are independent. The `workspace.stopped` broadcast closes any other window's tab displaying that record, with a notification only in that other window. Whole-window close, quit and renderer reload do not delete records; backend shutdown clears only CodeNomad's in-memory connection state and never stops the global service. Reopening the project finds its native sessions again.
+
+### Server Metadata
+
+`GET /api/meta` reports the API contract version (`apiContract`), implemented route families (`capabilities`) and `serverId` when a stable installation identity exists. Registry admission requires an exact contract match and a stable identity. Keep the identity claim with the config; see the [metadata contract](../../dev-docs/architecture.md#server-metadata-contract) for initialization and repair.
 
 ### Event Delivery
 

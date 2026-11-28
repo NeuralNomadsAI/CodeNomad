@@ -29,17 +29,23 @@ import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
-import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory,
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory, orderMissionCleanups,
   isCleanupReason, isCleanupReceipt, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
 import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
+import type { NativeJournalRange } from "../opencode/missions/native-journal-range"
+import { foldJournalRange, type CachedJournalFold } from "./journal-range-view"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
 const PAGE_SIZE = 100
 const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
+// One intent's native target fan-out, independent of journal history length.
+const MAX_INTENT_TARGETS = 2_000
+const RANGE_CACHE_COUNT = 64
+const RANGE_CACHE_SOURCE_BYTES = 64 * 1024 * 1024
 // A key's mission range, relative to the project prefix; anything else lies outside every range.
 const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
 const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
@@ -47,8 +53,10 @@ const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_EVENTS}-even
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
 type CapacitySlot = { intent: CapacityIntent; sessionID: string }
   | { intent: Extract<MissionEvent, { type: "mission.deleted" }>; document: true }
+type CapacityEntries = { count: number; events: MissionEvent[] }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
 interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
+type SelectedSnapshot = MissionSnapshot & { latestUpdatedAt?: number; otherDocuments?: Pick<MissionMap, "id" | "coordinatorSessionId" | "document">[] }
 
 /** One mission's range reduced like a snapshot: `mission` is absent when the
  * range holds no live map (deleted, purged, damaged or unknown). */
@@ -59,6 +67,8 @@ export interface MissionView extends Omit<MissionSnapshot, "missions"> {
 }
 
 export interface MissionStorage {
+  /** Qualified native capability, scoped to this ordinary project. */
+  readonly range?: NativeJournalRange
   get(key: string): Promise<MissionJsonValue | undefined>
   /** Async adapters repeat current after preparation; not a native commit proof. */
   set(key: string, value: MissionJsonValue, current?: () => void): Promise<void>
@@ -75,6 +85,12 @@ export interface MissionStorage {
 
 export class MissionJournal {
   readonly projectToken: string
+  /** Activation-local LRU. Charge source bytes as a conservative weight for the
+   * retained map and fold, which include scalar state as well as live bodies. */
+  private readonly rangeViews = new Map<string, CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }>()
+  private rangeViewBytes = 0
 
   /** `index`: the plugin activation's shared index; without one, `readHints` builds its own. */
   constructor(
@@ -100,7 +116,7 @@ export class MissionJournal {
     const index = this.index
     return runMissionExclusive(`append:${this.projectToken}`, () => index.read({
       scan: visit => this.scanRanges(visit),
-      range: async missionID => this.range(missionID, await this.observeMission(missionID)),
+      range: missionID => this.projectRange(missionID),
     }, read))
   }
 
@@ -144,6 +160,107 @@ export class MissionJournal {
     return this.range(missionID, await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))).view
   }
 
+  /** Business state without the historical event collection. */
+  async missionProjection(missionID: string): Promise<Omit<MissionView, "events">> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () =>
+      structuredClone((await this.projectRange(missionID)).view))
+  }
+
+  /** Only projected output leaves the lane. The projector may point-read a
+   * document, but must not enter the journal again. */
+  async readProjection<T>(missionID: string, read: (view: Readonly<Omit<MissionView, "events">>,
+    provenance?: { digest: string; sources: ReturnType<CachedJournalFold["inputSources"]>;
+      taskSources: ReadonlyMap<string, string>; reportSources: ReadonlyMap<string, string> }) => T | Promise<T>): Promise<T> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      return structuredClone(await read(view, cached && { digest: cached.digest, sources: cached.inputSources(),
+        taskSources: cached.taskSources, reportSources: cached.reportSources }))
+    })
+  }
+
+  readDisplay(missionID: string, pick?: (value: string) => string | undefined, slot?: "tasks" | "pins") {
+    return isSafeKey(missionID) ? this.storage.range?.readDisplay?.(missionID, pick, slot) : undefined
+  }
+
+  saveDisplay(missionID: string, digest: string, value: string, slot?: "tasks" | "pins") {
+    return this.storage.range?.saveDisplay?.(missionID, digest, value, slot)
+  }
+
+  /** An old objective is resolved by provenance and two point reads, fenced by
+   * the same exact incarnation/stamp. A byte hash cannot fence A → B → A. */
+  async changeObjective(missionID: string, revision: number): Promise<{ revision: number; value: { before: string; after: string } } | undefined> {
+    if (!this.storage.range) return
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const { view } = await this.projectRange(missionID)
+      const cached = this.rangeViews.get(missionID)
+      const source = cached?.digest.includes("/") && cached.objectives.get(revision)
+      if (!view.mission || !cached || !source) return
+      const objective = async (id: string) => {
+        const event = await this.event(missionID, id)
+        return event && "objective" in event ? event.objective : undefined
+      }
+      const before = await objective(source.before), after = await objective(source.after)
+      await this.projectRange(missionID)
+      if (this.rangeViews.get(missionID)?.digest !== cached.digest || before === undefined || after === undefined) return
+      return { revision: view.mission.revision, value: { before, after } }
+    })
+  }
+
+  private async projectRange(missionID: string): Promise<MissionIndexRange> {
+    if (!this.storage.range || !isSafeKey(missionID)) return this.range(missionID, await this.observeMission(missionID))
+    const cached = this.rangeViews.get(missionID)
+    this.rangeViews.delete(missionID)
+    this.rangeViewBytes -= cached?.bytes ?? 0
+    const result = await foldJournalRange(this.storage.range, missionID, cached)
+    if (result.unchanged && cached) {
+      this.cacheRange(missionID, cached)
+      return cached.range
+    }
+    if (result.unchanged) throw new Error("Missing Mission journal projection")
+    const malformed = result.observation.discardedEvents
+    if (!result.advanced && !result.created && result.validEvents) {
+      // A missing creation can be an interrupted purge. The sidecar is outside
+      // this range, so these views are never cached.
+      if (await this.readRecord(missionID).catch(() => undefined)) return this.range(missionID, {
+        events: [], discardedEvents: malformed, unreadable: [], purged: [],
+      })
+      return this.range(missionID, await this.observeMission(missionID))
+    }
+    const previous = result.advanced ? cached?.range : undefined
+    if (result.advanced && !previous) throw new Error("Missing previous Mission journal projection")
+    const events = result.advanced ? previous!.view.events : result.references
+    const cleanups = result.advanced ? previous!.view.cleanups : result.cleanups
+    const cleanupUnavailable = result.advanced ? previous!.view.cleanupUnavailable : result.cleanupUnavailable
+    const first = result.advanced ? previous!.first : result.first
+    const view: MissionView = { missionID, version: MISSION_SCHEMA_VERSION, projectID: this.projectID,
+      generatedAt: this.now(), events, cleanups,
+      discardedEvents: result.discardedEvents + malformed,
+      ...(result.mission ? { mission: result.mission } : {}),
+      ...(result.controlUnavailable || malformed ? { controlUnavailable: true as const } : {}),
+      ...(result.notificationUnavailable || malformed ? { notificationUnavailable: true as const } : {}),
+      ...(cleanupUnavailable || malformed ? { cleanupUnavailable: true as const } : {}) }
+    if (result.mission) {
+      const { advance, project, objectives, inputSources, taskSources, reportSources } = result.advanced ? cached! : result
+      this.cacheRange(missionID, { digest: result.observation.digest, advance, project, objectives, inputSources, taskSources, reportSources, bytes: result.observation.bytes,
+        range: { view, uncertain: false, first } })
+    }
+    return { view, uncertain: false, first }
+  }
+
+  private cacheRange(missionID: string, cached: CachedJournalFold & {
+    range: MissionIndexRange; bytes: number
+  }): void {
+    if (cached.bytes > RANGE_CACHE_SOURCE_BYTES) return
+    while (this.rangeViews.size >= RANGE_CACHE_COUNT || this.rangeViewBytes + cached.bytes > RANGE_CACHE_SOURCE_BYTES) {
+      const oldest = this.rangeViews.keys().next().value!
+      this.rangeViewBytes -= this.rangeViews.get(oldest)!.bytes
+      this.rangeViews.delete(oldest)
+    }
+    this.rangeViews.set(missionID, cached)
+    this.rangeViewBytes += cached.bytes
+  }
+
   private range(missionID: string, { events, discardedEvents, unreadable }: Observation): MissionIndexRange {
     const { missions: [mission], ...view } = this.reduce(events, discardedEvents)
     return { view: { ...view, missionID, ...(mission ? { mission } : {}), events }, uncertain: unreadable.length > 0 }
@@ -151,13 +268,22 @@ export class MissionJournal {
 
   private async observeMission(missionID: string): Promise<Observation> {
     // No unsafe ID owns a range: entries there never parse as events.
-    return isSafeKey(missionID) ? this.observe(`${this.prefix()}/${missionID}/`) : { events: [], discardedEvents: 0, purged: [], unreadable: [] }
+    if (!isSafeKey(missionID)) return { events: [], discardedEvents: 0, purged: [], unreadable: [] }
+    if (!this.storage.range) return this.observe(`${this.prefix()}/${missionID}/`)
+    const events: MissionEvent[] = []
+    const { discardedEvents } = await this.storage.range.readOrdered(missionID, batch => { events.push(...batch) })
+    return this.resolve(events, discardedEvents)
   }
 
   /** A group without its creation event whose mission left a deletion record is
    * a purge in progress (or a late write after it): it leaves the observation.
    * Every other incomplete group remains damage evidence. */
   private async observe(prefix = this.prefix()): Promise<Observation> {
+    const { events, discardedEvents } = await this.scanEvents(prefix)
+    return this.resolve(events, discardedEvents)
+  }
+
+  private async scanEvents(prefix: string, capacity?: CapacityEntries & { prefix: string }) {
     const events: MissionEvent[] = []
     let discardedEvents = 0
     const bound = this.rangeBound()
@@ -167,12 +293,16 @@ export class MissionJournal {
       for (const entry of page.entries) {
         bound(entry.key)
         const event = this.parseEntry(entry.key, entry.value)
+        if (capacity && entry.key.startsWith(capacity.prefix)) {
+          capacity.count++
+          if (event) capacity.events.push(event)
+        }
         if (!event) discardedEvents += 1
         else events.push(event)
       }
       after = page.next
     } while (after)
-    return this.resolve(events, discardedEvents)
+    return { events, discardedEvents }
   }
 
   /** No mission range, nor the entries outside every range together, is read
@@ -183,7 +313,7 @@ export class MissionJournal {
     return key => {
       const missionID = key.startsWith(prefix) ? RANGE.exec(key.slice(prefix.length))?.[1] : undefined
       const count = (counts.get(missionID ?? "") ?? 0) + 1
-      if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
+      if (count > MISSION_MAX_EVENTS && (!missionID || !this.storage.range)) throw new Error(RANGE_OVER_BOUND)
       counts.set(missionID ?? "", count)
       return missionID
     }
@@ -193,6 +323,11 @@ export class MissionJournal {
    * one mission range at a time like `observeMission`, under the same read bound.
    * Returns the entries outside every range. */
   private async scanRanges(visit: (range: MissionIndexRange) => void): Promise<number> {
+    if (this.storage.range) {
+      const { missionIDs, stray } = await this.storage.range.listRanges()
+      for (const missionID of missionIDs) visit(await this.projectRange(missionID))
+      return stray
+    }
     const prefix = this.prefix(), bound = this.rangeBound()
     let stray = 0, group: { missionID: string; events: MissionEvent[]; discardedEvents: number } | undefined
     const flush = async () => { if (group) visit(this.range(group.missionID, await this.resolve(group.events, group.discardedEvents))) }
@@ -266,9 +401,42 @@ export class MissionJournal {
     return record
   }
 
-  async snapshot(): Promise<MissionSnapshot> {
+  async snapshot(selected?: string): Promise<SelectedSnapshot> {
+    if (this.storage.range) return runMissionExclusive(`append:${this.projectToken}`, () => this.projectSnapshot(selected))
     const { events, discardedEvents } = await this.events()
     return this.reduce(events, discardedEvents)
+  }
+
+  private async projectSnapshot(selected?: string): Promise<SelectedSnapshot> {
+    const missions: { map: MissionMap; first?: Pick<MissionEvent, "id" | "createdAt"> }[] = [], cleanups: NonNullable<MissionSnapshot["cleanups"]> = []
+    const otherDocuments: NonNullable<SelectedSnapshot["otherDocuments"]> = []
+    let discardedEvents = 0, cleanupUnavailable = false, controlUnavailable = false, notificationUnavailable = false, latestUpdatedAt = 0
+    const stray = await this.scanRanges(({ view, first }) => {
+      discardedEvents += view.discardedEvents
+      cleanupUnavailable ||= Boolean(view.cleanupUnavailable)
+      controlUnavailable ||= Boolean(view.controlUnavailable)
+      notificationUnavailable ||= Boolean(view.notificationUnavailable)
+      if (view.mission) latestUpdatedAt = Math.max(latestUpdatedAt, view.mission.updatedAt)
+      if (view.mission && (selected === undefined || selected === view.missionID)) missions.push({ map: view.mission, first: first ?? view.events.reduce<MissionEvent | undefined>(
+        (early, event) => !early || compareEvents(event, early) < 0 ? event : early, undefined) })
+      else if (view.mission) otherDocuments.push({ id: view.mission.id, coordinatorSessionId: view.mission.coordinatorSessionId })
+      for (const cleanup of view.cleanups ?? []) cleanups.push(structuredClone(cleanup))
+    })
+    // Stray entries are malformed across all three journals of receipts.
+    discardedEvents += stray
+    if (stray) cleanupUnavailable = controlUnavailable = notificationUnavailable = true
+    missions.sort((a, b) => b.map.updatedAt - a.map.updatedAt || (a.first && b.first ? compareEvents(a.first, b.first) : 0))
+    return { version: MISSION_SCHEMA_VERSION, generatedAt: this.now(), projectID: this.projectID, discardedEvents,
+      cleanups: orderMissionCleanups(cleanups), ...(selected === undefined ? {} : { latestUpdatedAt, otherDocuments }),
+      ...(cleanupUnavailable ? { cleanupUnavailable: true } : {}),
+      ...(controlUnavailable ? { controlUnavailable: true } : {}),
+      ...(notificationUnavailable ? { notificationUnavailable: true } : {}),
+      missions: missions.map(({ map }) => {
+        const published = structuredClone(map)
+        if (controlUnavailable) published.controlUnavailable = true
+        if (notificationUnavailable) published.notificationUnavailable = true
+        return published
+      }) }
   }
 
   private reduce(events: readonly MissionEvent[], discardedEvents: number): MissionSnapshot {
@@ -288,7 +456,26 @@ export class MissionJournal {
   }
 
   append(event: MissionEvent, current?: () => void): Promise<void> {
-    return runMissionExclusive(`append:${this.projectToken}`, () => this.appendUnlocked(event, current))
+    return runMissionExclusive(`append:${this.projectToken}`, async () => { await this.appendUnlocked(event, current) })
+  }
+
+  /** Reuse the authoritative publication read for capacity and the returned map.
+   * The append lane holds the observation through the write. Unguarded display hints
+   * never enter this path. Callers must serialize business admission separately. */
+  appendWithSnapshot(event: MissionEvent, current?: () => void): Promise<SelectedSnapshot> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      if (this.storage.range) {
+        await this.appendUnlocked(event, current)
+        return this.projectSnapshot(event.missionID)
+      }
+      const missionID = safeKey(event.missionID)
+      const capacity = { prefix: `${this.prefix()}/${missionID}/`, count: 0, events: [] as MissionEvent[] }
+      const observed = await this.scanEvents(this.prefix(), capacity)
+      const added = await this.appendUnlocked(event, current, capacity)
+      if (added) observed.events.push(added)
+      const { events } = await this.resolve(observed.events, observed.discardedEvents)
+      return this.reduce(events, observed.discardedEvents)
+    })
   }
 
   /** Appends a finish with the project's next finish number. The counter lives beside
@@ -320,6 +507,7 @@ export class MissionJournal {
 
   async event(missionID: string, eventID: string): Promise<MissionEvent | undefined> {
     const key = this.eventKey(missionID, eventID)
+    if (this.storage.range) return this.storage.range.readEvent(missionID, eventID)
     const value = await this.storage.get(key)
     if (value === undefined) return undefined
     const parsed = this.parseEntry(key, value)
@@ -345,8 +533,27 @@ export class MissionJournal {
    * the rest. Actors only join through ordinary writes, so after any ordinary
    * write one Stop (at most one target per actor) fits, and after it the deletion
    * (at most one cleanup target per actor) still fits. */
-  private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
-    const capacity = await this.storedCapacity(missionID)
+  private async fits(missionID: string, request: MissionEvent | number, entries?: CapacityEntries): Promise<boolean> {
+    if (this.storage.range) {
+      const actor = typeof request === "number" ? undefined : eventActors(request)[0]
+      if (actor) {
+        // Bound the distinct actor IDs that can later become Stop or cleanup targets,
+        // independently of the number of events. Reuse does not add a target.
+        const actors = new Set<string>()
+        let known = false
+        await this.storage.range.readOrdered(missionID, batch => {
+          for (const event of batch) for (const id of eventActors(event)) {
+            if (id === actor) known = true
+            else if (actors.size < MAX_INTENT_TARGETS) actors.add(id)
+          }
+        })
+        if (!known && actors.size >= MAX_INTENT_TARGETS) {
+          throw new Error(`Mission reached its ${MAX_INTENT_TARGETS}-actor safety limit`)
+        }
+      }
+      return true
+    }
+    const capacity = await this.storedCapacity(missionID, entries)
     const slots = capacity.cleanupSlots, used = capacity.count + slots.size
     if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size, capacity.document) <= MISSION_MAX_EVENTS
     const kept = request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots) ? 0
@@ -355,7 +562,7 @@ export class MissionJournal {
     return used + this.requiredCapacity(request, slots) + kept <= MISSION_MAX_EVENTS
   }
 
-  private async appendUnlocked(event: MissionEvent, current?: () => void): Promise<void> {
+  private async appendUnlocked(event: MissionEvent, current?: () => void, entries?: CapacityEntries): Promise<MissionEvent | undefined> {
     if (event.projectID !== this.projectID) throw new Error("Mission event belongs to another project")
     const normalized = JSON.parse(JSON.stringify(event)) as unknown
     const parsed = parseMissionEvent(normalized)
@@ -367,10 +574,11 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    if (!await this.fits(parsed.missionID, parsed)) throw new Error(MISSION_FULL)
+    if (!await this.fits(parsed.missionID, parsed, entries)) throw new Error(MISSION_FULL)
     this.written(parsed.missionID)
     current?.()
     await this.storage.set(key, stored, current)
+    return parsed
   }
 
   private requiredCapacity(event: MissionEvent, slots: Map<string, CapacitySlot>): number {
@@ -387,7 +595,7 @@ export class MissionJournal {
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string>; document: boolean }> {
+  private async storedCapacity(missionID: string, entries?: CapacityEntries): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string>; document: boolean }> {
     const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
     // Every session a valid entry admits as an actor: a superset of the map's actors.
@@ -402,27 +610,34 @@ export class MissionJournal {
         : controlReceiptID(intent.id, sessionID)
       cleanupSlots.set(this.eventKey(intent.missionID, id), { intent, sessionID })
     }
-    let after: string | undefined
-    do {
-      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
-      count += page.entries.length
-      if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
-      for (const entry of page.entries) {
-        // Invalid entries still consume physical space, but supply no authority
-        // to establish, supersede or discharge a reservation.
-        const event = this.parseEntry(entry.key, entry.value)
-        if (event) for (const sessionID of eventActors(event)) actors.add(sessionID)
-        if (event?.type === "mission.deleted") {
-          for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
-          if (event.documentCleanup) cleanupSlots.set(this.eventKey(event.missionID, documentCleanupReceiptID(event.id)), { intent: event, document: true })
-        } else if (event?.type === "mission.session-cleaned" || event?.type === "mission.document-cleaned") receipts.push(event)
-        else if (event?.type === "mission.control-requested") {
-          const previous = latestControls.get(event.missionID)
-          if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
-        } else if (event?.type === "mission.control-applied") receipts.push(event)
-      }
-      after = page.next
-    } while (after)
+    const collect = (event: MissionEvent) => {
+      for (const sessionID of eventActors(event)) actors.add(sessionID)
+      if (event.type === "mission.deleted") {
+        for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
+        if (event.documentCleanup) cleanupSlots.set(this.eventKey(event.missionID, documentCleanupReceiptID(event.id)), { intent: event, document: true })
+      } else if (event.type === "mission.session-cleaned" || event.type === "mission.document-cleaned") receipts.push(event)
+      else if (event.type === "mission.control-requested") {
+        const previous = latestControls.get(event.missionID)
+        if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
+      } else if (event.type === "mission.control-applied") receipts.push(event)
+    }
+    if (entries) {
+      count = entries.count
+      for (const event of entries.events) collect(event)
+    } else {
+      let after: string | undefined
+      do {
+        const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
+        count += page.entries.length
+        if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
+        for (const { key, value } of page.entries) {
+          // Invalid entries count toward capacity but supply no receipt authority.
+          const event = this.parseEntry(key, value)
+          if (event) collect(event)
+        }
+        after = page.next
+      } while (after)
+    }
     for (const operation of latestControls.values()) {
       for (const target of operation.targets) reserve(operation, target.sessionID)
     }
@@ -523,6 +738,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (input.prepared !== undefined && typeof input.prepared !== "boolean") return undefined
       const preparedBy = input.preparedBy
       if (input.startOnCreation !== undefined && typeof input.startOnCreation !== "boolean") return undefined
+      if (input.coordinatorGoal !== undefined && typeof input.coordinatorGoal !== "boolean") return undefined
       if (preparedBy !== undefined && (!record(preparedBy) || !onlyFields(preparedBy, ["missionID", "coordinatorSessionID"])
         || preparedBy.missionID !== undefined && !text(preparedBy.missionID, MAX_SHORT_TEXT)
         || !text(preparedBy.coordinatorSessionID, MAX_SHORT_TEXT))) return undefined
@@ -555,28 +771,24 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
           ...(preparedBy.missionID === undefined ? {} : { missionID: preparedBy.missionID as string }),
           coordinatorSessionID: preparedBy.coordinatorSessionID as string } }),
         ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation as boolean }),
+        ...(input.coordinatorGoal === undefined ? {} : { coordinatorGoal: input.coordinatorGoal as boolean }),
       }
     }
     case "mission.control-requested": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
-        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_EVENTS) return undefined
+        || !["start", "pause", "stop"].includes(String(input.action))) return undefined
+      const targets = parseIntentTargets(input.targets)
+      if (!targets) return undefined
       // A graceful Pause interrupts nothing and has no targets; every other control has some.
       const graceful = input.graceful
       if (graceful !== undefined && (graceful !== true || input.action !== "pause")) return undefined
-      if (graceful ? input.targets.length : !input.targets.length) return undefined
-      const targets: Array<{ sessionID: string; location: MissionLocation }> = []
+      if (graceful ? targets.length : !targets.length) return undefined
       const recurrence = input.recurrence
       if (recurrence !== undefined && (!record(recurrence) || input.action !== "start"
         || !text(recurrence.grantID, MAX_SHORT_TEXT) || !text(recurrence.passageID, MAX_SHORT_TEXT)
         || !text(recurrence.messageID, MAX_SHORT_TEXT) || !text(recurrence.coordinatorSessionID, MAX_SHORT_TEXT)
         || recurrence.passageID !== input.requestID
         || recurrence.messageID !== recurrenceMessageID(recurrence.passageID))) return undefined
-      for (const target of input.targets) {
-        if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
-        const location = parseLocation(target.location)
-        if (!location || targets.some(item => item.sessionID === target.sessionID)) return undefined
-        targets.push({ sessionID: target.sessionID, location })
-      }
       if (recurrence !== undefined && (targets.length !== 1 || targets[0].sessionID !== recurrence.coordinatorSessionID)) return undefined
       return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets,
         ...(graceful ? { graceful: true as const } : {}),
@@ -602,22 +814,12 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
       if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
       if (input.documentCleanup !== undefined && input.documentCleanup !== true) return undefined
-      const cleanupTargets: Array<{ sessionID: string; location: MissionLocation }> = []
-      if (input.cleanupTargets !== undefined) {
-        // Each target needs a receipt within the mission's range.
-        if (input.deleteManagedSessions !== true || !Array.isArray(input.cleanupTargets) || input.cleanupTargets.length > MISSION_MAX_EVENTS) return undefined
-        for (const target of input.cleanupTargets) {
-          if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
-          const location = parseLocation(target.location)
-          if (!location || cleanupTargets.some((entry) => entry.sessionID === target.sessionID)) return undefined
-          cleanupTargets.push({ sessionID: target.sessionID, location })
-        }
-      }
-      if (input.deleteManagedSessions === true && input.cleanupTargets === undefined) return undefined
+      const cleanupTargets = input.cleanupTargets === undefined ? undefined : parseIntentTargets(input.cleanupTargets)
+      if (input.deleteManagedSessions === true ? !cleanupTargets : input.cleanupTargets !== undefined) return undefined
       return {
         ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision),
         ...(input.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: input.deleteManagedSessions }),
-        ...(input.cleanupTargets === undefined ? {} : { cleanupTargets }),
+        ...(cleanupTargets === undefined ? {} : { cleanupTargets }),
         ...(input.documentCleanup === true ? { documentCleanup: true as const } : {}),
       }
     }
@@ -843,6 +1045,19 @@ function eventBase(value: Record<string, unknown>) {
     projectID: value.projectID as string,
     createdAt: Number(value.createdAt),
   }
+}
+
+function parseIntentTargets(input: unknown): Array<{ sessionID: string; location: MissionLocation }> | undefined {
+  if (!Array.isArray(input) || input.length > MAX_INTENT_TARGETS) return undefined
+  const seen = new Set<string>(), targets: Array<{ sessionID: string; location: MissionLocation }> = []
+  for (const target of input) {
+    if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT) || seen.has(target.sessionID)) return undefined
+    const location = parseLocation(target.location)
+    if (!location) return undefined
+    seen.add(target.sessionID)
+    targets.push({ sessionID: target.sessionID, location })
+  }
+  return targets
 }
 
 function parseLocation(input: unknown): MissionLocation | undefined {

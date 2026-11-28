@@ -4,18 +4,17 @@ import type { Endpoint } from "@opencode/client/service"
 import { isBelowOpenCodeMinimum, UnsupportedOpenCodeError, MINIMUM_OPENCODE_VERSION, RECOMMENDED_OPENCODE_VERSION } from "./runtime-support"
 import { rememberRuntime } from "./compatibility/runtime"
 import { OpenCodeSharedService } from "../workspaces/opencode-service"
+import { MINIMUM, RECOMMENDED, NEXT_MINOR, NEXT_MAJOR, BELOW_MINIMUM } from "./runtime-version-fixture"
 
 test("native plugin runtime minimum does not become an allowlist of tested labels", () => {
-  assert.equal(MINIMUM_OPENCODE_VERSION, "2.3.0")
-  assert.equal(RECOMMENDED_OPENCODE_VERSION, "2.3.0")
-  for (const version of ["2.3.0", "2.3.0+custom", "2.3.1", "2.4.0", "2.2.0-dev.1", "3.0.0", "custom-build"]) {
+  for (const version of [MINIMUM, `${MINIMUM}+custom`, RECOMMENDED, NEXT_MINOR, "2.2.0-dev.1", NEXT_MAJOR, "custom-build"]) {
     assert.equal(isBelowOpenCodeMinimum(version), false, version)
   }
-  for (const version of ["2.0.0", "2.0.32", "2.1.4", "2.2.0", "2.2.2", "2.2.3", "2.2.7", "2.2.7+custom", "0.0.0-beta-19507"]) assert.equal(isBelowOpenCodeMinimum(version), true, version)
+  for (const version of ["2.0.0", "2.0.32", "2.1.4", "2.2.0", "2.2.2", "2.2.3", "2.2.7", "2.2.7+custom", "2.3.0", "2.3.1", BELOW_MINIMUM, `${BELOW_MINIMUM}+custom`, "0.0.0-beta-19507"]) assert.equal(isBelowOpenCodeMinimum(version), true, version)
 })
 
 test("refuses old authenticated daemons before client calls or plugin preparation", async () => {
-  for (const version of ["2.0.32", "2.1.2", "2.2.3", "2.2.7"]) {
+  for (const version of ["2.0.32", "2.1.2", "2.2.3", "2.2.7", "2.3.0", "2.3.1", BELOW_MINIMUM]) {
     let constructed = 0, prepared = 0
     const endpoint: Endpoint = { url: "http://127.0.0.1:4321" }
     rememberRuntime(endpoint, { version, pid: 1, discovery: "info" })
@@ -25,8 +24,8 @@ test("refuses old authenticated daemons before client calls or plugin preparatio
       prepareDesktopPlugins: async () => { prepared++; return true },
     }
     await assert.rejects(service.client(options), (error: unknown) => error instanceof UnsupportedOpenCodeError
-      && error.actualVersion === version && error.minimumVersion === "2.3.0" && error.reason === "native_contract"
-      && /background subagent report contract.*of 2\.3\.0/.test(error.message))
+      && error.actualVersion === version && error.minimumVersion === MINIMUM && error.reason === "native_contract"
+      && error.message.includes(`browser permission check of ${MINIMUM}`))
     assert.equal(constructed, 0)
     assert.equal(prepared, 0)
   }

@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "閉じる, 停止, close, stop",
 
   "commands.scrubSessions.label": "セッションを整理",
-  "commands.scrubSessions.description": "空のセッション、主要タスクを完了したサブエージェントのセッション、不要なフォークされたセッションを削除します。",
+  "commands.scrubSessions.description": "空で非アクティブと確認できたセッションを削除します。",
   "commands.scrubSessions.keywords": "整理, クリーンアップ, 空, セッション, 削除, cleanup, blank, empty, sessions, remove, delete, scrub",
 
   "commands.instanceInfo.label": "インスタンス情報",

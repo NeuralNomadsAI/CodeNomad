@@ -21,7 +21,7 @@ import {
   updateSessionAgent,
   updateSessionModel,
 } from "./session-actions.ts"
-import { setConversationModeEnabled } from "./conversation-speech.ts"
+import { isConversationModeEnabled, toggleConversationMode } from "./conversation-speech.ts"
 import { getModelThinkingSelection, setModelThinkingSelection } from "./preferences"
 import { sessions, setAgents, setProviders, setSessions, withSession } from "./session-state.ts"
 import { loadMessages } from "./session-api.ts"
@@ -30,6 +30,10 @@ import { messageStoreBus } from "./message-v2/bus.ts"
 import { contentRevision } from "../../../server/src/opencode/session-pruning/revision.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
+
+function setConversationModeEnabled(instanceId: string, enabled: boolean) {
+  if (isConversationModeEnabled(instanceId) !== enabled) toggleConversationMode(instanceId)
+}
 
 const instanceId = "session-actions"
 const sessionId = "session"
@@ -138,11 +142,15 @@ describe("native undo settlement", () => {
     const calls: string[] = []
     let release!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
-    seed({ session: {
-      revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
-      interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
-      wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
-    } })
+    seed({
+      session: {
+        revert: { stage: async () => { calls.push("stage"); if (calls.length === 1) throw busy } },
+        interrupt: async (input: unknown) => { calls.push("interrupt"); assert.deepEqual(input, { sessionID: sessionId, resume: false }) },
+      },
+      experimental: { session: {
+        wait: async (_input: unknown, options: any) => { calls.push("wait"); assert.ok(options.signal instanceof AbortSignal); await gate },
+      } },
+    })
     const undo = stageSessionRevert(instanceId, sessionId, "message")
     await tick()
     assert.deepEqual(calls, ["stage", "interrupt", "wait"])
@@ -154,14 +162,18 @@ describe("native undo settlement", () => {
   for (const failure of ["interrupt", "wait", "retry", "other-error", "replacement"] as const) {
     it(`does not claim successful undo after ${failure}`, async () => {
       let stages = 0, interrupts = 0
-      seed({ session: {
-        revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
-        interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
-        wait: async () => {
-          if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
-          if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+      seed({
+        session: {
+          revert: { stage: async () => { stages++; throw failure === "other-error" ? new Error("stage failed") : busy } },
+          interrupt: async () => { interrupts++; if (failure === "interrupt") throw new Error("interrupt failed") },
         },
-      } })
+        experimental: { session: {
+          wait: async () => {
+            if (failure === "wait") throw new DOMException("wait timed out", "TimeoutError")
+            if (failure === "replacement") updateInstance(instanceId, { client: {} as any })
+          },
+        } },
+      })
       await assert.rejects(stageSessionRevert(instanceId, sessionId, "message"))
       assert.equal(stages, failure === "retry" ? 2 : 1)
       assert.equal(interrupts, failure === "other-error" ? 0 : 1)
@@ -939,6 +951,28 @@ describe("native prompt serialization", () => {
     releaseFirst()
     await Promise.all([first, second])
     assert.deepEqual(prompts, ["first", "second"])
+  })
+
+  it("reserves a prompt's place in the queue before preparing its history window", async () => {
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    const prompts: string[] = []
+    seed({ session: {
+      instructions: { entry: { put: async () => {}, remove: async () => {} } },
+      switchAgent: async () => {},
+      switchModel: async () => {},
+      prompt: async (input: any) => {
+        prompts.push(input.text)
+        return { id: input.id }
+      },
+    } })
+    const first = sendMessage(instanceId, sessionId, "from history", [], { prepareAdmission: () => pending })
+    const second = sendMessage(instanceId, sessionId, "later")
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(prompts, [])
+    release()
+    await Promise.all([first, second])
+    assert.deepEqual(prompts, ["from history", "later"])
   })
 
   it("uses the current client when a queued prompt starts after reconnect", async () => {

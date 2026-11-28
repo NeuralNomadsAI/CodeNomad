@@ -11,6 +11,7 @@ export function MissionRepositoryFields(props: { row: MissionCriterionDraft; num
   const { t } = useI18n()
   const patch = (next: Partial<MissionCriterionDraft>) => props.onChange({ ...props.row, ...next })
   const repository = () => props.discovery?.repository
+  const remote = () => props.row.kind === "remote-branch-commits"
   const differs = () => props.row.kind === "repository-activity" && (!repository() || props.row.repository?.provider !== repository()?.provider
     || props.row.repository?.host !== repository()?.host || props.row.repository?.repository !== repository()?.repository)
   const selected = () => props.row.kind === "repository-activity" ? differs() ? "stored" : props.row.event ?? "" : props.row.kind
@@ -20,6 +21,8 @@ export function MissionRepositoryFields(props: { row: MissionCriterionDraft; num
     const detected = repository()
     if ((repositoryEvents as readonly string[]).includes(value) && detected)
       patch({ kind: "repository-activity", event: value as MissionRepositoryCondition["event"], repository: { ...detected }, source: "", author: undefined })
+    else if (value === "remote-branch-commits" && detected)
+      patch({ kind: value, repository: { ...detected }, source: "", event: undefined, author: undefined })
     else patch({ kind: value as MissionCriterionDraft["kind"], event: undefined,
       source: isMissionGithubKind(value) ? detected?.repository ?? "" : "", repository: isMissionGithubKind(value) ? detected : undefined, author: undefined })
   }
@@ -27,13 +30,14 @@ export function MissionRepositoryFields(props: { row: MissionCriterionDraft; num
     ? ["github-notification", "github-security-alert"] : []
   const legacy = () => isMissionGithubKind(props.row.kind) && !special().includes(props.row.kind)
   return <>
-    <Show when={repository() || legacy() || props.row.kind === "repository-activity"} fallback={
+    <Show when={repository() || remote() || legacy() || props.row.kind === "repository-activity"} fallback={
       <label><span>{t("missions.scheduling.repository.eventLabel")}</span><output>{t("missions.scheduling.condition.branch-commits")}</output></label>}>
     <label><span>{t("missions.scheduling.repository.eventLabel")}</span>
       <select aria-label={label()} value={selected()} aria-invalid={!!props.errorID} aria-describedby={props.errorID}
         onChange={event => choose(event.currentTarget.value)}>
         <optgroup label={t("missions.scheduling.repository.git")}>
           <option value="branch-commits">{t("missions.scheduling.condition.branch-commits")}</option>
+          <Show when={repository() || remote()}><option value="remote-branch-commits">{t("missions.scheduling.condition.remote-branch-commits")}</option></Show>
         </optgroup>
         <Show when={repository()}>{detected => <optgroup label={t(`missions.scheduling.repository.provider.${detected().provider}`)}>
           <For each={repositoryEvents}>{event => <option value={event}>{t(`missions.scheduling.repository.${detected().provider === "gitlab" ? "merge" : "pull"}.${event}`)}</option>}</For>
@@ -46,9 +50,15 @@ export function MissionRepositoryFields(props: { row: MissionCriterionDraft; num
       </select>
     </label>
     </Show>
-    <Show when={props.row.kind === "repository-activity" || isMissionGithubKind(props.row.kind) && props.row.repository}>
+    <Show when={remote() || props.row.kind === "repository-activity" || isMissionGithubKind(props.row.kind) && props.row.repository}>
       <label class="mission-repository-identity"><span>{t("missions.scheduling.repository.repository")}</span>
-        <output dir="ltr">{props.row.kind === "repository-activity" ? `${props.row.repository?.host}/${props.row.repository?.repository}` : `github.com/${props.row.source}`}</output></label>
+        <output dir="ltr">{props.row.repository ? `${props.row.repository.host}/${props.row.repository.repository}` : `github.com/${props.row.source}`}</output></label>
+    </Show>
+    <Show when={remote()}>
+      <label><span>{t("missions.scheduling.repository.branch")}</span>
+        <input aria-label={t("missions.scheduling.criterionSource", { number: props.number })} value={props.row.source} maxLength={1013}
+          aria-invalid={!!props.errorID} aria-describedby={props.errorID} dir="ltr"
+          onInput={event => patch({ source: event.currentTarget.value })} /></label>
     </Show>
     <Show when={props.discovery?.loading}><span role="status">{t("missions.scheduling.repository.detecting")}</span></Show>
     <Show when={props.discovery?.failed}><div role="alert">{t("missions.scheduling.repository.failed")}

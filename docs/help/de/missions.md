@@ -4,25 +4,31 @@ Eine Mission verbindet ein Ziel, eine Koordinator-Unterhaltung, Aufgaben und Erg
 
 Ist Missions nicht verfügbar, öffnet **OpenCode-Einstellungen** die Dienstwiederherstellung für ein fehlendes oder fehlerhaftes Plugin. **Serverdiagnose** öffnet den Diagnosebericht unter Einstellungen → Info, wenn die lokale Missions-Verbindung des Servers nicht verfügbar ist.
 
+## Missionen ein- oder ausblenden {#activation}
+
+Aktivieren Sie unter **Rechtes Panel anpassen** das Kästchen **Missionen**, um den Tab einzublenden. Deaktivieren Sie es und bestätigen Sie, um ihn auszublenden. Das schreibt auch `codenomad.missions` oder `-codenomad.missions` in die globale Konfiguration des verbundenen OpenCode-Servers. Projektregeln können Vorrang haben. Beim Ausschalten wird nichts gelöscht oder pausiert, aber geplante Läufe können ausfallen. Schlägt das Schreiben fehl, bleibt die gewählte Sichtbarkeit erhalten. **Zurücksetzen** ändert nur das Layout. **Status → Plugins** lässt die Warnung bei genau dieser globalen Deaktivierung weg; bei anderen bleibt **Erneut aktivieren** verfügbar.
+
 ## Eine Mission erstellen {#create}
 
 Remote-Verbindungen verwenden dasselbe Formular und dieselben Steuerelemente. Verwenden Sie vorzugsweise HTTPS, um den Netzwerkverkehr zu schützen.
 
 **Mission erstellen** öffnet das Formular anstelle des Baums. Eine bestätigte Erstellung wählt die Mission aus; bei einer abgelehnten Erstellung bleibt das Formular bearbeitbar.
 
-Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem alle Zeitpläne dieses Projekts auflisten, prüfen, starten, pausieren, stoppen, fortsetzen, sofort ausführen, bearbeiten und löschen, auch die im Editor erstellten. Dieselben Revisions- und Zulassungsprüfungen gelten; eine ausdrücklich deaktivierte Zeitplanung bleibt deaktiviert. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
+Bitten Sie einen Agenten in jeder Projektunterhaltung, auch einen Unteragenten oder geplanten Lauf, eine separate einmalige oder geplante Mission vorzubereiten. Seine Unterhaltung bleibt unverändert; standardmäßig wird eine neue Koordinator-Unterhaltung erstellt. Halten Sie das zuständige CodeNomad-Backend verfügbar. **Automatisch starten** erlaubt den ersten Start dieser neuen Mission; die Wiederherstellung liest das ursprüngliche Ergebnis. Agenten können außerdem die geplanten Missionen dieses Projekts auflisten, speichern, pausieren, fortsetzen und löschen, auch die im Editor erstellten. Unbestätigte Aktionen behalten ihre ursprüngliche Anfrage zur schreibgeschützten Statusabfrage.
 
 ### Konfiguration {#saved-briefs}
 
 Agenten können aus jeder zugehörigen Unterhaltung alle Missionen des Projekts lesen, auch Ihre. Schreibgeschützte Ansichten zeigen Aufgaben, Ergebnisse, Bereinigung, geplante Durchläufe und Quellenauswahl; das Lesen startet oder wiederholt keine Arbeit.
 
-Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten, bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen und tägliche Zeitpläne erstellen oder steuern.
+Agenten können die Zeitplanung prüfen, ihre Einstellungen unter Beibehaltung eines ausdrücklichen OFF vorbereiten und bestätigte Teiländerungen mit der ursprünglichen Anfrage fortsetzen.
 
 **Konfiguration** lädt gespeichertes Ziel, Notizen, Playbook, Profile und Aufgabensitzungen. Der Name wird zum bearbeitbaren Titel. Prüfen Sie die Felder.
 
 Agenten können Konfigurationen lesen, speichern, ersetzen oder umbenennen, entfernen und reparieren sowie die Anweisungen einer bestehenden Mission speichern. Sie können globale oder Playbook-spezifische Profil- und Aufgabensitzungsstandards ändern, Vererbung wiederherstellen, ungültige Einstellungen zurücksetzen und die Einstellung zum Löschen von Aufgabenunterhaltungen ändern. Bibliothek und Einstellungen gelten für alle Projekte des CodeNomad-Profils. Die Unteragententiefe des Projekts unterstützt 1–10 oder **Erben**, einschließlich der Reparatur eines leeren Konfigurationsblocks. Jede Änderung prüft den zuletzt gelesenen Wert und bewahrt zwischenzeitliche menschliche Änderungen.
 
 **Konfiguration speichern** unten neben Abbrechen und Erstellen speichert eine wiederverwendbare Konfiguration, ohne eine Mission zu erstellen oder zu starten. Zeitplanung und automatischer Start werden separat gewählt. Das Zahnrad öffnet die Einstellungen und die Bibliothek; das Entfernen einer Konfiguration erhält Missionen und Unterhaltungen.
+
+Um eine gespeicherte Konfiguration zu ersetzen, verwenden Sie ihren Namen und wählen **Ersetzen**. Tragen mehrere Konfigurationen diesen Namen, laden Sie zuerst die gewünschte. Mit einem neuen Namen speichern Sie eine Kopie, solange in der Bibliothek Platz ist.
 
 ### Ziel, Titel und Notizen {#mission-instructions}
 
@@ -58,7 +64,13 @@ Kalenderbasierte Zeitplanung benötigt einen expliziten Agenten und ein Modell f
 
 **Automatisch starten** steht außerhalb der Zeitplanung und ist standardmäßig aus. Ausgeschaltet erstellt es eine pausierte Mission für späteres ▶ Starten. Eingeschaltet fordert es den Start nach bestätigter Erstellung mit den üblichen Prüfungen und automatischer Vorbereitung der Zeitplanung an.
 
+### Koordinator mit /goal aktiv halten {#coordinator-goal}
+
+**Koordinator mit /goal aktiv halten** steht für einmalige Missionen bereit und ist standardmäßig aus. Aktiviert setzt der Start OpenCode `/goal` auf dem Koordinator; Pausieren und Fortsetzen der Mission pausieren und setzen das Ziel fort, Abschluss oder Stopp entfernen es. Startet OpenCode während der Ausführung neu, setzt Missions das durch den Neustart pausierte Ziel automatisch fort (bei aktivierten OpenCode-Automationen auch bei geschlossenem CodeNomad); manuelle Pausen, Stillstand und Rundenlimits bleiben unberührt. Status und Steuerung erscheinen in der Missionsübersicht.
+
 ## Zeitplanung {#daily-schedules}
+
+Eine Mission mit wiederkehrendem Zeitplan oder Ereignis bleibt eine einzige Zeile der Liste: Jeder Start ersetzt den vorherigen in derselben Koordinator-Unterhaltung und wartet, solange der vorherige noch aktiv ist. Ihr Detail zeigt **Starten, wenn**, **Gewünschter Zustand**, die nächste Aktivierung oder Prüfung, **Gestartete Durchläufe** und **Frühere Läufe** (die letzten 20 Starts). Ist **Automatisch starten** aus, wird sie pausiert erstellt. **Ausgewählte Mission bearbeiten** öffnet das Erstellungsformular erneut, und der nächste Start verwendet, was Sie speichern. **Ausgewählte Mission löschen…** entfernt zuerst ihre Zeitplanung. ⏸ in der Symbolleiste pausiert sie vollständig, den laufenden Start und ihre Zeitplanung, und ▶ setzt beides fort. ■ stoppt den laufenden Start; läuft nichts mehr, stoppt es die Zeitplanung endgültig und lässt die Mission in der Liste.
 
 ### Kriterien {#native-scheduling}
 
@@ -70,7 +82,7 @@ Verfügbar sind einmal jetzt, alle N Stunden, täglich, ausgewählte Wochentage,
 
 Einmal jetzt erhält seinen Zeitpunkt beim Start und bietet nur eine Gelegenheit; eine nicht erfüllte Bedingung kann diese verbrauchen. Zeitplanung benötigt den verfügbaren OpenCode-Dienst und Ausführungshost.
 
-Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet. Ein ausdrückliches OFF bleibt erhalten: **Zeitplanungseinstellungen öffnen** öffnet, wenn angeboten, die zuständige Datei; **i** zeigt Herkunft oder Umgebungsdetails.
+Beim Starten oder Fortsetzen wird die Zeitplanung automatisch in der OpenCode-Projektkonfiguration vorbereitet.
 
 ### Ereignisse und Kombinationen {#scheduling-conditions}
 
@@ -78,29 +90,27 @@ Wählen Sie **Repository-Aktivität → Ereignis**, danach optionale Filter in d
 
 Forge-Prüfungen verwenden `gh`, `glab` oder `tea` auf dem OpenCode-Host, auch bei geschlossenem CodeNomad; öffentliche Repositorys erlauben anonymen Zugriff. Selbst gehostete Forges erfordern eine dort angemeldete CLI. **github.com** bietet außerdem Kontobenachrichtigungen und Dependabot-Warnungen über angemeldetes `gh` mit [Benachrichtigungszugriff](https://docs.github.com/en/rest/activity/notifications) oder [Lesezugriff auf Warnungen](https://docs.github.com/en/rest/dependabot/alerts). Benachrichtigungen behalten ihren Lesestatus; Warnungen umfassen behobene oder verworfene Einträge. Gespeicherte Benachrichtigungen mit leerem **GitHub-Repository** umfassen das Konto. Der erste Start setzt die Referenz.
 
-Ereignisse beziehen sich auf erfolgreiche andere Missionen/Zeitpläne, lokale Commits, neue Nachrichten oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Die für neue Nachrichten gewählte Unterhaltung liefert auch Kontext für den Durchlauf. Ein anderer Kriteriumstyp leert die Quelle. Gespeicherter Unterhaltungskontext bleibt beim Bearbeiten erhalten.
+Ereignisse beziehen sich auf lokale Commits oder explizite Dateien des Projekts. Wählen Sie die Quelle im jeweiligen Kriterium. Die Suche ignoriert Groß- und Kleinschreibung, auch bei Buchstaben mit Akzenten. Während einer Suche setzen Sie mit **Weitere Quellen laden** fort, auch wenn die Seite bereits Treffer enthält. Ein anderer Kriteriumstyp leert die Quelle.
 
-**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein. **sonst** macht nachfolgende Zeitpläne zum Rückfall: seit ihrem vorherigen Termin beziehungsweise ihrer Aktivierung darf oben kein Durchlauf gestartet sein. Ereignisse danach bedingen diesen Rückfall.
+**oder** verbindet benachbarte Zeitpläne oder Ereignisse. **wenn** macht Ereignisse nach Zeitplänen zu Bedingungen: seit dem letzten erfolgreichen Durchlauf muss eines eingetreten sein.
 
 Führende Ereignisse werden alle 15 Minuten geprüft. Der erste Start setzt die Referenz, Erfolg schreibt sie fort, Fehlschlag erhält sie. Durchläufe überlappen nicht.
 
 ### Zähler und Verlauf {#scheduling-limits}
 
-**Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf.
+**Koordinator-Sitzung** verwendet standardmäßig für jeden Durchlauf eine **Neue Sitzung**. Mit einem Zeitplan oder Ereignis können Sie unter **Vorhandene Sitzung** eine Stamm-Unterhaltung dieses Projekts und derselben Ausführungs-Location wählen. Jeder Durchlauf setzt sie mit dem konfigurierten Agenten und Modell fort; Verlauf, Titel und Berechtigungen bleiben erhalten. Missionssteuerungen betreffen auch vorhandene Arbeit darin. Jeder Durchlauf behält sein eigenes Ergebnis und Journal im Verlauf. Bei jedem Start wird die Unterhaltung auf Agent, Modell und Denken des Koordinators umgestellt.
 
-Der ausgewählte Zeitplan zeigt Zustand, nächsten Termin beziehungsweise Prüfung, gestartete/erfolgreiche Durchläufe und frühere Ergebnisse. Der Verlauf hält 30 Ergebnisse; Gesamtzähler bleiben. Ein zugelassenes **Jetzt ausführen** zählt mit. Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
+Sie können einen Agenten bitten, den Zeitplan mit seiner aktuellen Stamm-Unterhaltung vorzubereiten. Die Durchläufe warten, bis die Unterhaltung inaktiv ist.
 
-Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, auch für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
+Nicht darstellbare gespeicherte Regeln bleiben bis zum ausdrücklichen Ersetzen erhalten; prüfen Sie gespeicherte Enden und Grenzen vor Änderungen.
 
-### Bestehende tägliche Zeitpläne {#existing-daily-schedules}
+Wählen Sie unter **Verfolgte Gespräche** mit **Gespräch hinzufügen** ein Gespräch aus, für eine sofortige Mission. Ändern Sie die Auswahl vor dem Start oder entfernen Sie sie mit ×.
 
-Agenten können diese Zeitpläne aus jeder Unterhaltung desselben Projekts finden und steuern, auch aus einem anderen Worktree.
-
-Diese Einträge behalten ihre Kontrollen und Zeitzone. Nach Dienstneustart benötigen unterbrochene tägliche Zeitpläne **Fortsetzen**. Sie holen den letzten zulässigen Tag nach, nicht alle versäumten Tage. Ergebnisse stehen beim ausgewählten Eintrag.
+Wählen Sie **Neue Commits auf einem lokalen Branch**, um eine lokale Git-Referenz zu beobachten, oder **Neue Commits auf einem Remote-Branch** und geben Sie den Branch-Namen ein (z. B. `dev`). Die Prüfung liest das erkannte Repository direkt, ohne lokalen Fetch. Mehrere Commits zwischen Prüfungen ergeben einen Durchlauf.
 
 ## Baum und Ergebnisse {#tracking}
 
-Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge.
+Der Chevron öffnet Aufgaben; ein Zeilenklick wählt Mission oder Aufgabe. Die Aktionen bleiben im Kopf. Missionen ohne Aufgaben haben keinen Chevron. Der Filter durchsucht geladene Einträge. Einmalige und wiederkehrende Missionen stehen in einer Liste, neueste Aktivität zuerst; ein laufender geplanter Durchlauf steht ganz oben.
 
 Das Auge schaltet die zentrale Zusammenfassung um und folgt der Auswahl. **Unterhaltung öffnen** führt zum jeweiligen Koordinator oder zur Aufgabe. Das ⋯-Menü enthält anwendbare Aktualisierungs-, Unterbrechungs-, Konfigurations- und Bearbeitungsaktionen.
 
@@ -110,9 +120,9 @@ Weitere Einträge und Aufgaben laden am Listenende automatisch. Schlägt das Lad
 
 ### Farben und Zustände {#status-colours}
 
-Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, pulsierendes Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause, ein orangefarbenes Warndreieck Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
+Die Flagge zeigt den Missionszustand, der Chevron die Aufmerksamkeit ihrer Aufgaben. Wiederkehrende Einträge haben ein Wiederholungssymbol. Rot verlangt eine Antwort, Gelb zeigt beobachtete Arbeit. Ein orangefarbenes Pausensymbol bedeutet Pause: nichts läuft weiter oder startet, bis Sie fortsetzen; ein orangefarbenes Warndreieck bedeutet Unterbrechung. Grün kennzeichnet eine abgeschlossene Mission, Aufgabe oder einen erfolgreichen Durchlauf zum Ansehen.
 
-Ein Akzentsymbol mit einem kleinen statischen neutralen Strich darunter bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse, gestoppte Zeitpläne und **Status unbestätigt** sind neutral; lesen Sie den Statustext.
+Eine Sanduhr in der Akzentfarbe bedeutet **Wartet auf geplanten Durchlauf**: der nächste Weckzeitpunkt ist bestätigt. Der Akzent folgt der Palette. Das Akzentsymbol allein steht für Vorbereitung oder noch nicht gestartete Aufgaben. Angesehene Abschlüsse und gestoppte Zeitpläne sind neutral; lesen Sie den Statustext.
 
 Auswahl oder Klick/Streichen über grüne Aufgabensymbole bestätigt Ergebnisse; das Chevron-Menü bietet **Als gelesen markieren**. Bei **Erfolgreicher Durchlauf zum Ansehen** wählen Sie die wiederkehrende Zeile im aktiven Fenster ausdrücklich aus oder nutzen **Als gelesen markieren**. Bei aktiver Zeitplanung kehrt das Symbol zum Warten zurück, sonst zu neutral. Neue Ergebnisse in einer bereits ausgewählten Zeile bleiben ungelesen. Zurückgezogene Aufgaben bleiben im Verlauf.
 
@@ -134,15 +144,17 @@ Bei laufendem CodeNomad können Agenten gespeicherte Projektunterhaltungen suche
 
 ## Schließen und Neustarts {#lifetime}
 
-CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne können bei verfügbarem Dienst/Host weiterlaufen; gesunde Kalender werden nach Dienstneustart fortgesetzt. Pausen, Stopps und ungewisse Ergebnisse behalten ihre Sperren. Bestehende tägliche Einträge brauchen Fortsetzen.
+CodeNomad zu schließen stoppt native Arbeit nicht. Aktivierte native Zeitpläne können bei verfügbarem Dienst/Host weiterlaufen; gesunde Kalender werden nach Dienstneustart fortgesetzt. Pausen, Stopps und ungewisse Ergebnisse behalten ihre Sperren.
 
 Einige Koordinations- und Wiederherstellungsaktionen benötigen den CodeNomad-Server.
+
+Eine laufende einmalige Mission weist ihre Aufgaben weiter zu und stellt deren Berichte zu, auch wenn kein CodeNomad-Fenster das Projekt geöffnet hat. In CodeNomad geänderte Umgebungsvariablen und Berechtigungseinstellungen gelten für diese Unterhaltungen wieder, sobald das Projekt geöffnet ist.
 
 ## Pause, Stopp und unbestätigte Aktionen {#controls-recovery}
 
 Einmalige Pause lässt aktuelle Schritte ohne neue Arbeit enden; sofortiges Unterbrechen fordert Unterbrechung an. Stopp ist endgültig und benötigt Bestätigung. Zeitplan-Pause sperrt neue Starts und fordert Unterbrechung des aktuellen Durchlaufs an. Werkzeugwirkungen können weiterlaufen.
 
-Behalten Sie unbestätigte Originalanfragen. Nutzen Sie Statusprüfung, Quittungsaktualisierung oder den angebotenen Wiederholungsversuch statt einer Ersatzaktion.
+Behalten Sie unbestätigte Originalanfragen: Solange die Ansicht eines nativen Zeitplans oder der Editor geöffnet ist, liest CodeNomad sie automatisch erneut bis zur Klärung und wiederholt nur eine exakt aufgezeichnete Teilvorbereitung selbstständig. Nutzen Sie **Status prüfen** für Steuerungen einmaliger Missionen und **Missionskarte aktualisieren** für eine gewöhnliche einmalige Erstellung, wenn angeboten; erstellen Sie keine Ersatzaktion.
 
 ## Bearbeiten, löschen und Unterhaltungen bereinigen {#cleanup}
 

@@ -11,6 +11,17 @@ test("background inventory excludes foreground shells and authorizes the session
   const host = "\\\\wsl.localhost\\Ubuntu\\home\\user\\repo"
   const shells = ["foreground", "background", "foreign"].map(id => ({ id, cwd: "/tmp/build", metadata: { sessionID: id } }))
   const client = {
+    experimental: {
+      job: {
+        list: async (input: { kind?: string; status?: string }, options?: { signal?: AbortSignal }) => {
+          reads++
+          assert.deepEqual(input, { kind: "shell", status: "running" })
+          assert.ok(options?.signal instanceof AbortSignal)
+          if (!supported) throw new Error("OpenCode background job inventory is unavailable")
+          return ["background", "foreign"].map(shellID => ({ kind: "shell", shellID }))
+        },
+      },
+    },
     shell: { list: async ({ location }: { location: { directory: string } }) => {
       assert.equal(location.directory, "/repo")
       return { location: { directory: "/repo" }, data: shells }
@@ -23,14 +34,6 @@ test("background inventory excludes foreground shells and authorizes the session
     getServicePathForPath: async (_id: string, path: string) => path === host ? "/repo" : path,
     getSharedServiceConnection: async () => ({
       client, endpoint: { url: "http://localhost:3000", password: "fixture" }, assertCurrent() {},
-      fetch: async (url: URL) => {
-        reads++
-        assert.equal(url.pathname, "/api/experimental/job")
-        assert.equal(url.searchParams.get("kind"), "shell")
-        assert.equal(url.searchParams.get("status"), "running")
-        return supported ? Response.json({ data: ["background", "foreign"].map(shellID => ({ kind: "shell", shellID })) })
-          : new Response(null, { status: 404 })
-      },
     }),
   }
   registerBackgroundShellRoutes(app, manager as any)

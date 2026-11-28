@@ -48,3 +48,8 @@ export const previewReads = new BackgroundReadQueue(1)
 // Per-row permission receipts arrive in bursts as virtualized rows mount; their
 // own lane keeps them from delaying recovery, catalogue and Git reads.
 export const receiptReads = new BackgroundReadQueue(1)
+
+// The visible Missions panel keeps its own lane, so slow outline or inventory scans in
+// backgroundReads cannot starve it. Two slots: a list refresh still in flight leaves room
+// for the Mission just selected.
+export const missionReads = new BackgroundReadQueue(2)

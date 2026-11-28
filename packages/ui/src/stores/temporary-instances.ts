@@ -1,13 +1,17 @@
 import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { getLogger } from "../lib/logger"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { showAlertDialog, showChoiceDialog } from "./alerts"
 import { activeAppTabId, closeInstanceTab, detachInstanceTab, getAdjacentAppTabId, getInstanceAppTabId, selectAppTab, selectInstanceTab } from "./app-tabs"
 import { getSessionAttachmentsForInstance } from "./attachments"
 import { closeWorkspace, createInstance, instances, trackWorkspaceClose, updateInstance } from "./instances"
-import { addNamedRecentFolder } from "./preferences"
+import { preferencesOf } from "./preferences"
 import { getSessionDraftPromptsForInstance, getSessions } from "./sessions"
+import { backendIdOf, LOCAL_BACKEND_ID } from "../lib/backend-identity"
+import type { Instance } from "../types/instance"
 
 const log = getLogger("api")
 
@@ -27,11 +31,12 @@ function showFailure(titleKey: string, error: unknown) {
   })
 }
 
-// A kept folder leaves the registry; every window drops its temporary mark.
+// A kept folder leaves the local registry; every window drops its temporary mark.
 serverEvents.on("workspace.temporaryChanged", (event) => {
   if (event.type !== "workspace.temporaryChanged") return
   const registered = new Set(event.folders)
   for (const instance of instances().values()) {
+    if (backendIdOf(instance) !== (event.backendId ?? LOCAL_BACKEND_ID)) continue
     if (instance.temporary && !registered.has(instance.folder)) updateInstance(instance.id, { temporary: false })
   }
 })
@@ -52,13 +57,24 @@ function temporaryName(date: Date): string {
  * on restart, still marked temporary.
  */
 export async function openTemporaryInstance(): Promise<string> {
-  const { path } = await serverApi.createTemporaryFolder()
+  const { path, supportsCancelAndAbandon } = await serverApi.createTemporaryFolder()
+  let cancelling = false
   try {
-    const { instanceId } = await createInstance(path, temporaryName(new Date()))
+    const { instanceId } = await createInstance(path, temporaryName(new Date()), {
+      cancelOnDeparture: requestId => {
+        cancelling = true
+        // Older servers ignore requestId on abandon. Cancel the record and retain the folder.
+        return supportsCancelAndAbandon === true
+          ? serverApi.abandonTemporaryFolder(path, requestId)
+          : serverApi.cancelWorkspaceCreation(requestId, true)
+      },
+    })
     return instanceId
   } catch (error) {
     // Never leave an empty registered folder behind a failed launch.
-    await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    if (!cancelling) {
+      await serverApi.abandonTemporaryFolder(path).catch((cleanupError) => log.warn("Failed to remove unused temporary folder", cleanupError))
+    }
     throw error
   }
 }
@@ -66,9 +82,9 @@ export async function openTemporaryInstance(): Promise<string> {
 // Another window kept the folder and this one missed the event.
 const isNoLongerTemporary = (error: unknown) => error instanceof Error && error.message === "temporary_not_temporary"
 
-function clearTemporaryMark(folder: string) {
+function clearTemporaryMark(project: Pick<Instance, "folder" | "backendId">) {
   for (const instance of instances().values()) {
-    if (instance.folder === folder) updateInstance(instance.id, { temporary: false })
+    if (instance.folder === project.folder && backendIdOf(instance) === backendIdOf(project)) updateInstance(instance.id, { temporary: false })
   }
 }
 
@@ -76,17 +92,24 @@ function clearTemporaryMark(folder: string) {
 export async function keepTemporaryInstance(instanceId: string): Promise<boolean> {
   const instance = instances().get(instanceId)
   if (!instance?.temporary) return false
+  const owner = captureBackendOperation(instanceId)
   try {
-    await serverApi.keepTemporaryWorkspace(instanceId)
+    owner.signal.throwIfAborted()
+    await backendOf(instanceId).api.keepTemporaryWorkspace(instanceId)
   } catch (error) {
+    if (!owner.current()) return false
     if (!isNoLongerTemporary(error)) {
       showFailure("temporaryInstance.keep.failedTitle", error)
       return false
     }
   }
-  clearTemporaryMark(instance.folder)
-  await addNamedRecentFolder(instance.folder, instance.projectName ?? "")
-    .catch((error) => log.error("Failed to add the kept project to recent folders", error))
+  clearTemporaryMark(instance)
+  try {
+    await preferencesOf(instanceId).addNamedRecentFolder(instance.folder, instance.projectName ?? "")
+  } catch (error) {
+    log.error("Failed to add the kept project to recent folders", error)
+  }
+  if (!owner.current()) return false
   return true
 }
 
@@ -100,14 +123,20 @@ export async function keepTemporaryInstance(instanceId: string): Promise<boolean
  * no conversation or file.
  */
 async function discardTemporaryInstance(instanceId: string, quiet = false): Promise<boolean> {
+  const owner = captureBackendOperation(instanceId)
   const tabId = getInstanceAppTabId(instanceId)
   const wasActive = activeAppTabId() === tabId
   const neighbour = wasActive ? getAdjacentAppTabId(tabId) : null
   if (wasActive && neighbour) selectAppTab(neighbour)
   else if (wasActive) detachInstanceTab(instanceId)
   try {
-    await trackWorkspaceClose(instanceId, () => serverApi.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {}))
+    const { api } = backendOf(instanceId)
+    await trackWorkspaceClose(instanceId, async () => {
+      owner.signal.throwIfAborted()
+      await api.discardTemporaryWorkspace(instanceId, quiet ? { onlyIfEmpty: true } : {})
+    })
   } catch (error) {
+    if (!owner.current()) return false
     if (!isNoLongerTemporary(error)) {
       if (instances().has(instanceId)) {
         if (neighbour) selectAppTab(tabId)
@@ -119,12 +148,12 @@ async function discardTemporaryInstance(instanceId: string, quiet = false): Prom
     // Kept elsewhere: nothing was deleted; it closes like an ordinary project.
     if (!quiet) showFailure("temporaryInstance.discard.failedTitle", error)
     const instance = instances().get(instanceId)
-    if (instance) clearTemporaryMark(instance.folder)
+    if (instance) clearTemporaryMark(instance)
     detachInstanceTab(instanceId)
     await closeWorkspace(instanceId).catch(() => {})
     return true
   }
-  detachInstanceTab(instanceId)
+  if (owner.current()) detachInstanceTab(instanceId)
   return true
 }
 
@@ -141,8 +170,10 @@ function hasUnsentWork(instanceId: string): boolean {
  * discard does not succeed, closing it asks whether to keep it as
  * a project or discard it. Cancelling leaves the tab open.
  */
-export async function closeTemporaryInstance(instanceId: string): Promise<void> {
-  if (getSessions(instanceId).length === 0 && !hasUnsentWork(instanceId)
+export async function closeTemporaryInstance(
+  instanceId: string, { retainWorkspace = false, current = () => true }: { retainWorkspace?: boolean; current?: () => boolean } = {},
+): Promise<void> {
+  if (!retainWorkspace && getSessions(instanceId).length === 0 && !hasUnsentWork(instanceId)
     && await discardTemporaryInstance(instanceId, true)) return
   const choice = await showChoiceDialog(tGlobal("temporaryInstance.close.message"), [
     { value: "discard", label: tGlobal("temporaryInstance.close.discard"), tone: "danger" },
@@ -152,8 +183,12 @@ export async function closeTemporaryInstance(instanceId: string): Promise<void> 
     variant: "warning",
     cancelLabel: tGlobal("temporaryInstance.close.cancel"),
   })
+  if (!current()) return
   if (choice === "keep") {
-    if (await keepTemporaryInstance(instanceId)) closeInstanceTab(instanceId)
+    if (await keepTemporaryInstance(instanceId)) {
+      if (retainWorkspace) detachInstanceTab(instanceId)
+      else closeInstanceTab(instanceId)
+    }
   } else if (choice === "discard") {
     await discardTemporaryInstance(instanceId)
   }

@@ -65,6 +65,12 @@
           message.textContent = "On the CodeNomad host, open Settings → Remote Access, create a new pairing link and open it on this device."
           return
         }
+        // The single-use code never travels over cleartext HTTP.
+        if (location.protocol !== "https:") {
+          title.textContent = "Pairing failed"
+          message.textContent = "Open the pairing link over HTTPS."
+          return
+        }
 
         try {
           const res = await fetch("/api/remote-control/pair", {

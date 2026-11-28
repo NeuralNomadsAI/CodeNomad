@@ -17,6 +17,7 @@ let isInitialized = false
 let highlightSuppressed = false
 let escapeRawHtmlEnabled = false
 let literalRawHtmlEnabled = false
+let originRelativeImagesEnabled = true
 let defaultCodeBlockWrapEnabled = true
 let collectMermaid: ((block: MermaidCodeBlock) => void) | undefined
 let mermaidFences: boolean[] = []
@@ -129,6 +130,17 @@ function sanitizeRawHtmlFragment(html: string): string {
 
     if (!ALLOWED_RAW_HTML_TAGS.has(tagName)) {
       element.replaceWith(...Array.from(element.childNodes))
+      return
+    }
+
+    const source = element.getAttribute("src")?.trim() ?? ""
+    if (tagName === "img" && !originRelativeImagesEnabled && /^(\/|\.\/|\.\.\/)/.test(source)) {
+      const label = document.createElement("span")
+      label.className = "markdown-local-image"
+      label.dataset.localImage = source
+      label.title = source
+      label.textContent = element.getAttribute("alt")?.trim() || source.split("/").filter(Boolean).at(-1) || source
+      element.replaceWith(label)
       return
     }
 
@@ -669,6 +681,7 @@ export async function renderMarkdown(
     suppressHighlight?: boolean
     escapeRawHtml?: boolean
     literalRawHtml?: boolean
+    originRelativeImages?: boolean
     defaultCodeBlockWrap?: boolean
     onMermaid?: (block: MermaidCodeBlock) => void
     truncated?: boolean
@@ -693,6 +706,7 @@ export async function renderMarkdown(
   const previousSuppressed = highlightSuppressed
   const previousEscapeRawHtml = escapeRawHtmlEnabled
   const previousLiteralRawHtml = literalRawHtmlEnabled
+  const previousOriginRelativeImages = originRelativeImagesEnabled
   const previousDefaultCodeBlockWrap = defaultCodeBlockWrapEnabled
   const previousCollector = collectMermaid, previousFences = mermaidFences
   collectMermaid = options?.onMermaid
@@ -700,6 +714,7 @@ export async function renderMarkdown(
   highlightSuppressed = suppressHighlight
   escapeRawHtmlEnabled = escapeRawHtml
   literalRawHtmlEnabled = literalRawHtml
+  originRelativeImagesEnabled = options?.originRelativeImages ?? true
   defaultCodeBlockWrapEnabled = defaultCodeBlockWrap
 
   try {
@@ -718,6 +733,7 @@ export async function renderMarkdown(
     highlightSuppressed = previousSuppressed
     escapeRawHtmlEnabled = previousEscapeRawHtml
     literalRawHtmlEnabled = previousLiteralRawHtml
+    originRelativeImagesEnabled = previousOriginRelativeImages
     defaultCodeBlockWrapEnabled = previousDefaultCodeBlockWrap
     collectMermaid = previousCollector; mermaidFences = previousFences
   }

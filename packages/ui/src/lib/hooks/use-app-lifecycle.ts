@@ -1,13 +1,13 @@
-import { onMount, onCleanup, type Accessor } from "solid-js"
+import { createEffect, onMount, onCleanup, type Accessor } from "solid-js"
 import { setupTabKeyboardShortcuts } from "../keyboard"
 import { registerNavigationShortcuts } from "../shortcuts/navigation"
 import { registerInputShortcuts } from "../shortcuts/input"
 import { registerAgentShortcuts } from "../shortcuts/agent"
-import { registerEscapeShortcut, setEscapeStateChangeHandler } from "../shortcuts/escape"
+import { registerEscapeShortcut, resetEscapeState, setEscapeStateChangeHandler } from "../shortcuts/escape"
 import { keyboardRegistry } from "../keyboard-registry"
 import { commandHotkeyDefinitions } from "../hotkey-definitions"
 import { resolveResolvable, type Command } from "../commands"
-import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
+import { abortSession, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../logger"
@@ -21,8 +21,6 @@ interface UseAppLifecycleOptions {
   handleCloseActiveTab: () => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
-  showFolderSelection: Accessor<boolean>
-  setShowFolderSelection: (value: boolean) => void
   getActiveInstance: () => Instance | null
   getActiveSessionIdForInstance: () => string | null
   commands?: Accessor<Command[]>
@@ -30,17 +28,21 @@ interface UseAppLifecycleOptions {
 }
 
 export function useAppLifecycle(options: UseAppLifecycleOptions) {
+  createEffect(() => {
+    options.getActiveInstance()?.id
+    options.getActiveSessionIdForInstance()
+    resetEscapeState()
+  })
   onMount(() => {
     setEscapeStateChangeHandler(options.setEscapeInDebounce)
-    const isMainView = () => !options.showFolderSelection()
     const hasActiveSession = () => {
       const id = options.getActiveSessionIdForInstance()
-      return isMainView() && Boolean(options.getActiveInstance() && id && id !== "info" && id !== "logs")
+      return Boolean(options.getActiveInstance() && id && id !== "info" && id !== "logs")
     }
     // A composer is shown in a conversation and, before the first one, in the draft view.
     const hasComposer = () => {
       const id = options.getActiveSessionIdForInstance()
-      return isMainView() && Boolean(options.getActiveInstance()) && id !== "info" && id !== "logs"
+      return Boolean(options.getActiveInstance()) && id !== "info" && id !== "logs"
     }
     const requestComposer = (action: SessionSidebarRequestAction) => {
       const instance = options.getActiveInstance()
@@ -58,10 +60,9 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
           showCommandPalette(instance.id)
         }
       },
-      isMainView,
     )
 
-    const cleanupNavigation = registerNavigationShortcuts(isMainView)
+    const cleanupNavigation = registerNavigationShortcuts()
     const cleanupInput = registerInputShortcuts(
       () => requestComposer("clear-prompt"),
       () => {
@@ -89,10 +90,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         const sessionId = options.getActiveSessionIdForInstance()
         if (!sessionId || sessionId === "info") return false
 
-        const sessions = getSessions(instance.id)
-        const session = sessions.find((s) => s.id === sessionId)
-        if (!session) return false
-
         return isSessionBusy(instance.id, sessionId)
       },
       async () => {
@@ -113,7 +110,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       },
       () => hideCommandPalette(),
       hasActiveSession,
-      { isOpen: options.showFolderSelection, close: () => options.setShowFolderSelection(false) },
     )
 
     if (options.commands && options.executeCommand) {
@@ -129,7 +125,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
           condition: () => {
             if (command.disabled && resolveResolvable(command.disabled)) return false
             if (definition.scope === "app") return true
-            if (!isMainView()) return false
             return definition.scope === "session" ? hasActiveSession() : Boolean(options.getActiveInstance())
           },
         })

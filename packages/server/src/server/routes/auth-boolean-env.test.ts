@@ -6,6 +6,7 @@ import { it } from "node:test"
 import pino from "pino"
 import { parseCliOptions } from "../../index"
 import { AuthManager } from "../../auth/manager"
+import { EventBus } from "../../events/bus"
 import { createHttpServer } from "../http-server"
 
 for (const value of ["false", "1"]) {
@@ -33,10 +34,10 @@ for (const value of ["false", "1"]) {
     const stub = new Proxy({}, { get: () => () => undefined }) as never
     const { instance: app } = createHttpServer({
       bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
-      workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: stub,
+      workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: new EventBus(),
       serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
       instanceStore: stub, speechService: stub, sidecarManager: stub, previewManager: stub,
-      clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+      clientConnectionManager: stub, remoteProxySessionManager: stub,
       authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
       remoteControlManager: stub, uiStaticDir: directory,
     })

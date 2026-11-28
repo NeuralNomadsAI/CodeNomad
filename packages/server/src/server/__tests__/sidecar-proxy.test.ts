@@ -10,6 +10,7 @@ import pino from "pino"
 import type { FastifyInstance } from "fastify"
 import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
+import { EventBus } from "../../events/bus"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../http-server"
 import { resolveConfigLocation } from "../../config/location"
@@ -190,10 +191,10 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
   const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
     bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
-    workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: stub,
+    workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: new EventBus(),
     serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
-    clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
+    clientConnectionManager: stub, remoteProxySessionManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
     remoteControlManager: stub, uiStaticDir: directory,
     allowedOrigins: options.allowedOrigins, uiDevServerUrl: options.devServerUrl,

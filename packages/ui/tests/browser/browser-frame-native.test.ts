@@ -64,6 +64,53 @@ const snapshot = (page: Page) => page.evaluate(() => {
   return { calls: fixture.calls, errors: fixture.errors, locations: fixture.locations, listeners: fixture.listenerCount() }
 })
 
+test("Tauri remote previews keep loaded capabilities out of addresses and native history", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?isolated&history`)
+    await page.waitForFunction(() => (window as any).nativeFixture?.calls.some((c: any) => c.command === "browser_target_register"))
+    const registered = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register")!.payload
+    assert.equal(registered.url, "http://local-cap.preview.localhost:1234/previews/remote-token/start")
+    assert.equal(await page.getByRole("textbox", { name: "Address" }).inputValue(), "http://remote-app.test/start")
+    await page.evaluate(id => (window as any).nativeFixture.navigate(id, "http://local-cap.preview.localhost:1234/previews/remote-token/next?q=1"), registered.registrationId)
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.urls.length === 2)
+    assert.equal(await page.getByRole("textbox", { name: "Address" }).inputValue(), "http://remote-app.test/next?q=1")
+    await page.getByRole("button", { name: "Back", exact: true }).click()
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.index === 0)
+    await page.getByRole("button", { name: "Forward", exact: true }).click()
+    await page.waitForFunction(() => (window as any).nativeFixture.history?.index === 1)
+    await page.getByRole("textbox", { name: "Address" }).fill("http://remote-app.test/typed")
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.action === "navigate"
+      && c.payload.url.endsWith("/previews/remote-token/typed")))
+    await page.getByRole("button", { name: "Refresh", exact: true }).click()
+    assert.ok((await snapshot(page)).calls.some((c: any) => c.payload?.action === "reload"))
+    assert.ok((await page.evaluate(() => (window as any).nativeFixture.history.urls)).every((value: string) => !value.includes(".preview.localhost")))
+    assert.deepEqual((await snapshot(page)).errors, [])
+  } finally { await page.close() }
+})
+
+test("Electron renderer seam loads remote capabilities while showing only application addresses", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${url}?host=electron&isolated`)
+    const guest = page.locator("webview")
+    await guest.waitFor()
+    assert.equal(await guest.getAttribute("src"), "http://local-cap.preview.localhost:1234/previews/remote-token/start")
+    const address = page.getByRole("textbox", { name: "Address" })
+    await address.fill("http://remote-app.test/next")
+    await address.press("Enter")
+    await page.waitForFunction(() => document.querySelector("webview")?.getAttribute("src")?.endsWith("/previews/remote-token/next"))
+    await page.evaluate(() => {
+      const event = new Event("did-navigate")
+      Object.assign(event, { url: "http://local-cap.preview.localhost:1234/previews/remote-token/committed?q=1" })
+      document.querySelector("webview")!.dispatchEvent(event)
+    })
+    assert.equal(await address.inputValue(), "http://remote-app.test/committed?q=1")
+    assert.deepEqual((await snapshot(page)).errors, [])
+  } finally { await page.close() }
+})
+
 for (const platform of ["macos", "linux"]) {
   test(`Tauri ${platform} keeps dimensions, history and hidden registration independent of emulation`, async () => {
     const page = await browser.newPage({ userAgent: `${platform} WebKit fixture` })
@@ -124,6 +171,131 @@ for (const platform of ["macos", "linux"]) {
     } finally { await page.close() }
   })
 }
+
+test("Tauri: an address entered before registration completes loads once the target exists", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const next = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(next)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    // Settling announces the initial load first, as Rust does, after the typed Enter.
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    const navigations = (next: string) => page.evaluate((next) => (window as any).nativeFixture.calls.filter((c: any) =>
+      c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next).length, next)
+    await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_action" && c.payload.action === "navigate" && c.payload.url === next), next)
+    await page.waitForTimeout(200)
+    assert.equal(await navigations(next), 1, "the typed address loads exactly once")
+    assert.deepEqual((await snapshot(page)).errors, [], "the first Enter loads instead of reporting an unregistered target")
+  } finally { await page.close() }
+})
+
+test("Tauri: an address typed while the profile restores supersedes the pending one", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture" })
+  try {
+    await page.goto(`${url}?viewport=mobile`)
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.deferRegistration = true; f.deferEmulation = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const address = page.getByRole("textbox", { name: "Address" })
+    const pending = new URL("/browser-native-guest?pending", url).href, latest = new URL("/browser-native-guest?latest", url).href
+    await address.fill(pending); await address.press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.payload?.action === "emulate"))
+    await address.fill(latest); await address.press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleEmulation())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    const navigated = (await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").map((c: any) => c.payload.url)
+    assert.deepEqual(navigated, [latest], "the latest address wins and the superseded one is never loaded")
+  } finally { await page.close() }
+})
+
+test("Tauri: an address typed for one session is never loaded into a replaced session's target", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const typed = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(typed)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.session("other-session"); f.settleRegistration() })
+    await page.waitForTimeout(300)
+    const first = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register").payload.registrationId
+    assert.equal((await snapshot(page)).calls.some((c: any) => c.payload?.action === "navigate" && c.payload.registrationId === first), false,
+      "the replaced session's target receives no pending navigation")
+  } finally { await page.close() }
+})
+
+test("Tauri: an initial URL changed and restored during registration is not loaded twice", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const original = (await snapshot(page)).calls.find((c: any) => c.command === "browser_target_register").payload.url
+    await page.evaluate((other) => (window as any).nativeFixture.address(other), new URL("/browser-native-guest?other", url).href)
+    await page.evaluate((original) => (window as any).nativeFixture.address(original), original)
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    assert.equal((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").length, 0)
+  } finally { await page.close() }
+})
+
+test("Tauri: a registration retry that already carries the typed address does not load it twice", async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    const registrations = () => page.evaluate(() => (window as any).nativeFixture.calls.filter((c: any) => c.command === "browser_target_register").map((c: any) => c.payload.url))
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    const next = new URL("/browser-native-guest?typed", url).href
+    await page.getByRole("textbox", { name: "Address" }).fill(next)
+    await page.getByRole("textbox", { name: "Address" }).press("Enter")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration(true))
+    // The failure's alert hides the target; dismissing it lets registration retry.
+    await page.getByRole("alertdialog").waitFor()
+    await page.evaluate(() => (window as any).nativeFixture.overlay(false))
+    await page.waitForFunction((next) => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_register" && c.payload.url === next), next)
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_update" && c.payload.visible))
+    assert.equal((await registrations()).at(-1), next)
+    assert.equal((await snapshot(page)).calls.filter((c: any) => c.payload?.action === "navigate").length, 0, "the retry's own load is not requested again")
+  } finally { await page.close() }
+})
+
+test("Tauri: a viewport chosen before registration completes applies once the target exists", async () => {
+  const page = await browser.newPage({ userAgent: "Windows fixture" })
+  try {
+    await page.goto(url)
+    await page.evaluate(() => { (window as any).nativeFixture.deferRegistration = true })
+    await page.evaluate(() => (window as any).nativeFixture.mount(false))
+    await page.evaluate(() => { const f = (window as any).nativeFixture; f.calls.length = 0; f.mount(true) })
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) => c.command === "browser_target_register"))
+    await page.getByRole("button", { name: "Viewport" }).click()
+    await page.getByRole("menuitemradio", { name: /^Desktop/ }).click()
+    assert.deepEqual((await snapshot(page)).errors, [], "choosing a viewport while registering reports nothing")
+    await page.evaluate(() => (window as any).nativeFixture.settleRegistration())
+    await page.waitForFunction(() => (window as any).nativeFixture.calls.some((c: any) =>
+      c.command === "browser_target_update" && c.payload.visible))
+    await page.getByRole("button", { name: "Viewport" }).click()
+    assert.equal(await page.getByRole("menuitemradio", { name: /^Desktop/ }).getAttribute("aria-checked"), "true")
+    assert.deepEqual((await snapshot(page)).errors, [])
+  } finally { await page.close() }
+})
 
 test("viewport menu distinguishes size from device emulation and restores desktop overrides", async () => {
   const page = await browser.newPage({ userAgent: "Windows fixture" })

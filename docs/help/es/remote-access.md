@@ -54,13 +54,15 @@ No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si
 
 Un administrador puede fijar la dirección de escucha: define `CODENOMAD_LOCKED_HOST` para todo el sistema con la dirección que debe usar el servidor y reinicia CodeNomad. Tiene prioridad sobre `--host`, `CLI_HOST` y **Permitir conexiones desde otras IP**, que muestra el resultado pero no puede cambiarlo. Usa una dirección de la intranet para que los compañeros accedan por la red de la empresa, o `127.0.0.1` para mantenerlo en este equipo. Para que todo acceso quede dentro de la red de la empresa, define también `CODENOMAD_REMOTE_CONTROL=disabled` ([control remoto](remote-control.md#administrator-policy)).
 
-## Actualizar {#upgrading}
+## Orígenes permitidos {#upgrading}
 
-Vuelve a iniciar sesión después de actualizar. Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación.
+Para un alias de nombre de host, un proxy inverso o una interfaz alojada por separado, configura `CODENOMAD_ALLOWED_ORIGINS` en el backend con los orígenes de confianza de la interfaz (esquema, nombre de host y puerto). Los clientes nativos de la LAN deben enviar una cabecera `Origin` permitida en las solicitudes de modificación. Sus orígenes HTTPS también permiten al anfitrión emparejar dispositivos sin el túnel; consulta [Emparejar por HTTPS directo](remote-control.md#direct-https).
 
-Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), gestión de servidores guardados (`/api/remote-servers/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. Solo los SideCars tienen una excepción: el ajuste **Abrir SideCars por HTTPS** del anfitrión abre su contenido y sus WebSockets a los navegadores con sesión iniciada desde un origen HTTPS de confianza ([SideCars](browser-sidecars.md#register-sidecar)). El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
+Si la interfaz se aloja por separado, despliégala y recarga las pestañas y ventanas abiertas antes de actualizar el servidor. Si el servidor proporciona la interfaz, recárgalas después de actualizarlo.
 
-Las API de registro `/api/sidecars` siguen disponibles para los clientes directos de LAN autenticados y los dispositivos emparejados. Las vistas previas web de Control remoto siguen disponibles con su token de capacidad mientras estén activadas en el anfitrión.
+Usa una conexión loopback para las operaciones reservadas al anfitrión: contenido de SideCar (`/sidecars/`) y WebSockets, gestión de Control remoto (`/api/remote-control/`), puente de plugins (`/api/opencode-plugin/`), proxies remotos (`/api/remote-proxy/`), cambios de contraseña e inicialización por token. Estas operaciones requieren loopback incluso con una sesión autenticada mediante acceso directo por LAN. Solo los SideCars tienen una excepción: el ajuste **Abrir SideCars por HTTPS** del anfitrión abre su contenido y sus WebSockets a los navegadores con sesión iniciada desde un origen HTTPS de confianza ([SideCars](browser-sidecars.md#register-sidecar)). El contenido de las vistas previas activas (`/previews/`) está disponible mediante acceso directo por LAN con un token de capacidad válido.
+
+Las API de registro `/api/sidecars` siguen disponibles para los clientes directos de LAN autenticados y los dispositivos emparejados. Las vistas previas web de Control remoto siguen disponibles con su token de capacidad mientras estén activadas en el anfitrión. Para gestionar servidores e introducir credenciales de forma segura, consulta [Guardar un servidor remoto](remote-access.md#saved-servers).
 
 ## Configurar TLS de confianza {#tls}
 
@@ -93,14 +95,32 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-1. En la página de inicio de escritorio, elige **Conectar servidor CodeNomad**. El mismo botón aparece en una pestaña **Servidores** vacía y en **Configuración → Acceso remoto → Servidores**.
+Los clientes remotos autenticados pueden usar y administrar los mismos servidores guardados que los clientes locales. Introducir una nueva contraseña de servidor o un enlace de emparejamiento requiere HTTPS o Control remoto.
+
+En **Configuración → Servidores**, pega una dirección o enlace de emparejamiento en **Dirección o enlace del servidor**, o escríbelo y pulsa Intro. Esto guarda el servidor sin abrir un proyecto. **Editar servidor** cambia la **URL** o el **Nombre** opcional; renombrar con la misma URL y política TLS funciona sin conexión. Tras confirmar, **Eliminar** cierra las pestañas de ese servidor en esta ventana y quita sus accesos recientes. Para los proyectos temporales, elige **Conservar** o **Descartar**; **Descartar** borra sus archivos y conversaciones. Los demás proyectos y conversaciones siguen en el servidor.
+
+El anfitrión de CodeNomad necesita OpenSSH y CodeNomad ya debe estar en ejecución en el destino. En **Configuración → Servidores**, elige **Añadir servidor SSH**. Introduce la **URL** de CodeNomad vista desde el host SSH, el **Host SSH (opcional)** o alias y pulsa **Guardar**. El perfil se guarda sin conexión. OpenSSH requiere autenticación por clave y una clave de host verificada en `known_hosts`. Inicia sesión en CodeNomad en ese servidor; se comprueban los certificados HTTPS.
+
+El editor del servidor tiene la casilla **Omitir la verificación TLS**. El campo **Dirección o enlace del servidor** solo ofrece esta opción tras un fallo de certificado para esa dirección; cambiar la dirección borra la elección. El emparejamiento siempre verifica TLS.
+
+Solo si `multiBackend` está en `false`, usa el flujo de ventanas de escritorio separadas que se indica a continuación:
+
+1. **Configuración → Acceso remoto → Servidores** → **Conectar servidor CodeNomad**.
 2. En **Conectar a un servidor**, introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
-
-Selecciona un servidor guardado en la pestaña **Servidores** de la página de inicio para volver a abrirlo. Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
-
-Para abrir un servidor guardado directamente desde la línea de comandos, inicia la aplicación de escritorio con `--connect-server <nombre>` (o `--connect-server=<nombre>`), usando el nombre guardado del servidor o su URL `https://`. CodeNomad abre solo la ventana remota, con las mismas comprobaciones e inicio de sesión que **Conectar**; si CodeNomad ya se está ejecutando, su ventana actual lo abre en lugar de una nueva. Una URL que no coincide con ningún servidor guardado se guarda con su nombre de host. Los valores de inicio nunca llevan credenciales: se rechaza una URL con nombre de usuario, contraseña o código de emparejamiento. En Windows, la compilación Tauri no se inicia si un argumento de inicio contiene `|`; usa en su lugar la URL del servidor o cambia el nombre del servidor.
 
 Cerrar la última ventana local mientras siguen abiertas ventanas remotas conserva sus pestañas: **Ventana → Nueva ventana** en una ventana remota, o iniciar CodeNomad de nuevo, la vuelve a abrir.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.
+
+## Abrir un proyecto remoto en una pestaña {#remote-project-tabs}
+
+En una pestaña vacía, elige **Explorar** y selecciona un servidor. Pega la dirección o el enlace de emparejamiento en **Dirección o enlace del servidor** para guardarlo. Inicia sesión si se te pide. Selecciona una carpeta para explorarla; pulsa Intro en el campo de ruta o elige **Abrir** para abrirla. **Volver a Explorar** vuelve a la lista de servidores.
+
+Los proyectos locales y remotos comparten ventana. **Pestañas recientes** muestra los accesos directos del servidor seleccionado mientras exploras. Los proyectos abiertos aquí conservan el icono y el nombre del servidor en la lista mixta. [Restaurar pestañas remotas](projects.md#restore-remote-tabs).
+
+En **Configuración → Servidores**, **Abrir** selecciona el servidor en **Explorar** y reutiliza una pestaña vacía si hay alguna abierta.
+
+### `--connect-server` {#connect-server}
+
+`--connect-server <name-or-url>` abre una ventana remota independiente, sea cual sea el valor de `multiBackend`. Usa un nombre o ID guardado, o una URL HTTP(S). Las URL nuevas se guardan con su nombre de host. La URL de inicio no puede incluir usuario, contraseña ni código de emparejamiento. Consulta la [tabla de argumentos de escritorio](desktop.md#desktop-cli) para ver la sintaxis y cómo abrir solo la ventana remota.

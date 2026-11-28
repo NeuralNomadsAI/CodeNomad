@@ -2,6 +2,11 @@ import { limitToolTitleForRender } from "../utils"
 
 export const TASK_STEP_RENDER_LIMIT = 200
 
+/** Newest task steps a card's nested steps scroller mounts before its reveal. */
+export const TASK_STEP_MOUNT_LIMIT = 30
+/** Task steps one reveal of the steps gap mounts. */
+export const TASK_STEP_REVEAL_STEP = 100
+
 export function isTaskStepListTruncated(count: number): boolean {
   return count > TASK_STEP_RENDER_LIMIT
 }

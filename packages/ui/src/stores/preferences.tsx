@@ -1,7 +1,15 @@
-import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
+import { createContext, createMemo, createRoot, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
-import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import { ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
+import { backends, localBackend, isLocalBackend, type BackendClient, type BackendId } from "../lib/backend-client"
+import { backendEvents } from "../lib/backend-events"
+import { tGlobal } from "../lib/i18n"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { generateUUID } from "../lib/client-identity"
+import { sameServerSelection } from "../lib/native/server-selection-intent"
+import { readRemoteProjectHistory, RECENT_PROJECT_LIMIT, type RemoteProjectRecentEdit } from "../lib/remote-project-recent-data"
+import type { ConversationPermissionMode, RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import { transcriptPresetFallbacks } from "../../../server/src/settings/transcript-preset-defaults"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -74,6 +82,11 @@ export interface ToolCallExpansionDefaults {
   tools: Record<string, VisibilityPreference>
 }
 
+/** Every setting a transcript preset replaces. */
+export type TranscriptDetailSettings = Pick<UiSettings,
+  | "showThinkingBlocks" | "thinkingBlocksExpansion" | "toolCallExpansionDefaults" | "toolOutputExpansion" | "diagnosticsExpansion"
+  | "systemMessagesVisibility" | "toolGroupVisibility" | "toolInputsVisibility" | "showUsageMetrics" | "usageMetricsExpansion">
+
 export interface SpeechSettings {
   provider: SpeechProviderPreference
   apiKey?: string
@@ -111,6 +124,8 @@ export type SpeechSettingsUpdate = Partial<Omit<SpeechSettings, "provider" | "ha
 }
 
 export interface UiSettings {
+  /** Host-owned admission flag, enabled only by explicit configuration. */
+  multiBackend: boolean
   highContrast: HighContrastPreference
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
@@ -121,6 +136,7 @@ export interface UiSettings {
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
   followUpBehavior: FollowUpBehavior
+  newConversationPermissions: ConversationPermissionMode
   showPromptVoiceInput: boolean
   locale?: string
   diffViewMode: DiffViewMode
@@ -130,9 +146,12 @@ export interface UiSettings {
   toolOutputExpansion: ExpansionPreference
   diagnosticsExpansion: VisibilityPreference
   systemMessagesVisibility: VisibilityPreference
+  toolGroupVisibility: VisibilityPreference
   toolInputsVisibility: ToolInputsVisibilityPreference
   showUsageMetrics: boolean
   usageMetricsExpansion: ExpansionPreference
+  /** The Custom choices a preset last replaced; choosing Custom applies them again. */
+  transcriptCustomPreset?: TranscriptDetailSettings
   showProviderUsageCreditBalance: boolean
   autoCleanupBlankSessions: boolean
   keepUnseenSubagentIdleStatus: boolean
@@ -201,6 +220,9 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  sidecarRecents?: Record<string, number>
+  remoteProjectRecents?: unknown
+  remoteProjectHistory?: unknown
   /** The folder the last clone was created in, where the next clone is suggested. */
   lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
@@ -226,7 +248,7 @@ interface NormalizedUiState {
   }
 }
 
-const MAX_RECENT_FOLDERS = 20
+const MAX_RECENT_FOLDERS = RECENT_PROJECT_LIMIT
 const MAX_RECENT_MODELS = 5
 const MAX_FAVORITE_MODELS = 50
 
@@ -237,6 +259,7 @@ const defaultToolCallExpansionDefaults: ToolCallExpansionDefaults = {
 }
 
 const defaultUiSettings: UiSettings = {
+  multiBackend: true,
   highContrast: "auto",
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
@@ -246,6 +269,7 @@ const defaultUiSettings: UiSettings = {
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
   followUpBehavior: "steer",
+  newConversationPermissions: "autonomous",
   showPromptVoiceInput: true,
   diffViewMode: "split",
   hideDiffWhitespaceChanges: true,
@@ -253,6 +277,7 @@ const defaultUiSettings: UiSettings = {
   toolOutputExpansion: "expanded",
   diagnosticsExpansion: "expanded",
   systemMessagesVisibility: "hidden",
+  toolGroupVisibility: "collapsed",
   toolInputsVisibility: "collapsed",
   showUsageMetrics: false,
   usageMetricsExpansion: "collapsed",
@@ -345,17 +370,43 @@ const defaultSpeechSettings: SpeechSettings = {
   },
 }
 
-function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
-  const sanitized = input ?? {}
+function normalizeTranscriptDetailSettings(sanitized: Partial<UiSettings>): TranscriptDetailSettings {
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
-  const usageMetricsFallback =
-    toolCallExpansionDefaults.preset === "nothing" || toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
-      ? "collapsed"
-      : "expanded"
+  const fallback = transcriptPresetFallbacks(toolCallExpansionDefaults.preset)
   return {
-    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
+    toolCallExpansionDefaults,
+    toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
+    diagnosticsExpansion: normalizeVisibilityPreference(
+      sanitized.diagnosticsExpansion,
+      defaultUiSettings.diagnosticsExpansion,
+    ),
+    systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
+    toolGroupVisibility: normalizeVisibilityPreference(
+      sanitized.toolGroupVisibility,
+      fallback.toolGroupVisibility,
+    ),
+    toolInputsVisibility:
+      sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
+        ? sanitized.toolInputsVisibility
+        : defaultUiSettings.toolInputsVisibility,
+    showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
+    usageMetricsExpansion: normalizeExpansionPreference(
+      sanitized.usageMetricsExpansion,
+      fallback.usageMetricsExpansion,
+    ),
+  }
+}
+
+function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
+  const sanitized = input ?? {}
+  const custom: unknown = sanitized.transcriptCustomPreset
+  return {
+    multiBackend: sanitized.multiBackend === undefined ? defaultUiSettings.multiBackend : sanitized.multiBackend === true,
+    highContrast: normalizeHighContrastPreference(sanitized.highContrast),
+    ...normalizeTranscriptDetailSettings(sanitized),
+    transcriptCustomPreset: custom && typeof custom === "object" && !Array.isArray(custom) ? normalizeTranscriptDetailSettings(custom) : undefined,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
     scrollControlsInTimelineCorner: sanitized.scrollControlsInTimelineCorner ?? defaultUiSettings.scrollControlsInTimelineCorner,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
@@ -365,26 +416,11 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
       sanitized.followUpBehavior === "queue" || sanitized.followUpBehavior === "steer"
         ? sanitized.followUpBehavior
         : defaultUiSettings.followUpBehavior,
+    newConversationPermissions: sanitized.newConversationPermissions === "supervised" ? "supervised" : defaultUiSettings.newConversationPermissions,
     showPromptVoiceInput: sanitized.showPromptVoiceInput ?? defaultUiSettings.showPromptVoiceInput,
     locale: sanitized.locale ?? defaultUiSettings.locale,
     diffViewMode: sanitized.diffViewMode ?? defaultUiSettings.diffViewMode,
     hideDiffWhitespaceChanges: sanitized.hideDiffWhitespaceChanges ?? defaultUiSettings.hideDiffWhitespaceChanges,
-    toolCallExpansionDefaults,
-    toolOutputExpansion: sanitized.toolOutputExpansion ?? defaultUiSettings.toolOutputExpansion,
-    diagnosticsExpansion: normalizeVisibilityPreference(
-      sanitized.diagnosticsExpansion,
-      defaultUiSettings.diagnosticsExpansion,
-    ),
-    systemMessagesVisibility: normalizeVisibilityPreference(sanitized.systemMessagesVisibility, "hidden"),
-    toolInputsVisibility:
-      sanitized.toolInputsVisibility === "hidden" || sanitized.toolInputsVisibility === "collapsed" || sanitized.toolInputsVisibility === "expanded"
-        ? sanitized.toolInputsVisibility
-        : defaultUiSettings.toolInputsVisibility,
-    showUsageMetrics: sanitized.showUsageMetrics ?? defaultUiSettings.showUsageMetrics,
-    usageMetricsExpansion: normalizeExpansionPreference(
-      sanitized.usageMetricsExpansion,
-      usageMetricsFallback,
-    ),
     showProviderUsageCreditBalance:
       sanitized.showProviderUsageCreditBalance ?? defaultUiSettings.showProviderUsageCreditBalance,
     autoCleanupBlankSessions: sanitized.autoCleanupBlankSessions ?? defaultUiSettings.autoCleanupBlankSessions,
@@ -479,6 +515,7 @@ function cloneArray<T>(value: unknown, mapper: (item: any) => T | null): T[] {
 
 function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
   const source = input ?? {}
+  const receivedAt = new Date().toISOString()
   return {
     recentFolders: cloneArray<RecentFolder>(source.recentFolders, (f) => {
       if (!f || typeof f !== "object") return null
@@ -510,7 +547,9 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
       const name = typeof (server as any).name === "string" ? (server as any).name.trim() : ""
       const baseUrl = typeof (server as any).baseUrl === "string" ? (server as any).baseUrl.trim() : ""
       if (!id || !name || !baseUrl) return null
-      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : new Date().toISOString()
+      const ssh = (server as RemoteServerProfile).ssh
+      if (ssh !== undefined && (!ssh || typeof ssh.host !== "string" || !ssh.host.trim())) return null
+      const createdAt = typeof (server as any).createdAt === "string" ? (server as any).createdAt : receivedAt
       const updatedAt = typeof (server as any).updatedAt === "string" ? (server as any).updatedAt : createdAt
       const lastConnectedAt = typeof (server as any).lastConnectedAt === "string" ? (server as any).lastConnectedAt : undefined
       return {
@@ -518,6 +557,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         name,
         baseUrl,
         skipTlsVerify: Boolean((server as any).skipTlsVerify),
+        ...(ssh === undefined ? {} : { ssh: { host: ssh.host.trim() } }),
         createdAt,
         updatedAt,
         lastConnectedAt,
@@ -610,16 +650,18 @@ interface RemoteServerProfileInput {
   name: string
   baseUrl: string
   skipTlsVerify: boolean
+  ssh?: { host: string }
 }
 
 function buildRemoteServerProfile(input: RemoteServerProfileInput, source: RemoteServerProfile[]): RemoteServerProfile {
   const existing = input.id ? source.find((entry) => entry.id === input.id) : undefined
   const now = new Date().toISOString()
   return {
-    id: existing?.id ?? input.id ?? createRandomId(),
+    id: existing?.id ?? input.id ?? generateUUID(),
     name: input.name.trim(),
     baseUrl: input.baseUrl.trim(),
     skipTlsVerify: Boolean(input.skipTlsVerify),
+    ...(input.ssh === undefined ? {} : { ssh: { host: input.ssh.host.trim() } }),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     lastConnectedAt: existing?.lastConnectedAt,
@@ -635,13 +677,15 @@ function buildRemoteServerList(profile: RemoteServerProfile, source: RemoteServe
   })
 }
 
-function createRandomId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID()
-  }
-  return `remote-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+function createPreferencesStore(backend: BackendClient) {
+const storage = backend.storage
+const local = isLocalBackend(backend)
+const attachment = local ? undefined : backendEvents.signal(backend.id)
+if (attachment) storage.bindOwnerAuthority(attachment)
+const current = () => local || (attachment !== undefined && !attachment.aborted && backends.get(backend.id) === backend)
+function assertCurrent() {
+  if (!current()) throw new Error(`Backend unavailable: ${backend.id}`)
 }
-
 const [uiConfigBucket, setUiConfigBucket] = createSignal<UiConfigBucket>({})
 const [serverConfigBucket, setServerConfigBucket] = createSignal<ServerConfigBucket>({})
 const [uiStateBucket, setUiStateBucket] = createSignal<UiStateBucket>({})
@@ -649,11 +693,21 @@ const [isLoaded, setIsLoaded] = createSignal(false)
 // Mission inputs require a successful UI-owner read, not server/state readiness.
 const [isUiConfigLoaded, setIsUiConfigLoaded] = createSignal(false)
 const [uiConfigLoadFailed, setUiConfigLoadFailed] = createSignal(false)
-const missionDefaultsValid = () => isUiConfigLoaded() && validMissionDefaults(missionPreferenceValue(uiConfigBucket(), "missionProfileDefaults"))
-const missionModelsValid = () => isUiConfigLoaded() && validMissionModels(missionPreferenceValue(uiConfigBucket(), "missionModels"))
+const missionDefaultsValid = (): boolean => isUiConfigLoaded() && (!local && !missionPreferenceSnapshot("missionProfileDefaults").present
+  ? hostPreferences.missionDefaultsValid() : validMissionDefaults(missionPreferenceValue(uiConfigBucket(), "missionProfileDefaults")))
+const missionModelsValid = (): boolean => isUiConfigLoaded() && (!local && !missionPreferenceSnapshot("missionModels").present
+  ? hostPreferences.missionModelsValid() : validMissionModels(missionPreferenceValue(uiConfigBucket(), "missionModels")))
 const missionPreferenceSnapshot = (key: MissionPreferenceKey) => missionPreferenceExpectation(uiConfigBucket(), key)
 
-const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(uiConfigBucket().settings))
+const effectiveUiConfig = (): UiConfigBucket => local ? uiConfigBucket() : {
+  settings: {
+    ...hostPreferences.preferences(),
+    ...Object.fromEntries(serverModelPreferenceKeys.map(key => [key,
+      Object.prototype.hasOwnProperty.call(uiConfigBucket().settings ?? {}, key) ? uiConfigBucket().settings![key] : hostPreferences.preferences()[key],
+    ])),
+  },
+}
+const uiSettings = createMemo<UiSettings>(() => normalizeUiSettings(effectiveUiConfig().settings))
 const [pendingHighContrast, setPendingHighContrast] = createSignal<HighContrastPreference>()
 const [highContrastSaveFailed, setHighContrastSaveFailed] = createSignal(false)
 const [highContrastSavePending, setHighContrastSavePending] = createSignal(false)
@@ -704,31 +758,72 @@ function getAppearancePresetId(appearance: Appearance): string | undefined {
   return id && colorSchemePresets()[id]?.appearance === appearance ? id : undefined
 }
 const serverSettings = createMemo(() => normalizeServerConfig(serverConfigBucket()))
-const uiState = createMemo(() => normalizeUiState(uiStateBucket()))
+const uiState: Accessor<NormalizedUiState> = createMemo<NormalizedUiState>(() => normalizeUiState(local ? uiStateBucket() : {
+  ...uiStateBucket(),
+  remoteServers: hostPreferences.remoteServers(),
+  models: { ...hostPreferences.uiState().models, ...uiStateBucket().models },
+}))
 
 const preferences = uiSettings
-const recentFolders = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const recentFolders: Accessor<RecentFolder[]> = createMemo<RecentFolder[]>(() => uiState().recentFolders)
+const sidecarRecents = createMemo(() => Object.entries(uiStateBucket().sidecarRecents ?? {})
+  .filter((entry): entry is [string, number] => Number.isFinite(entry[1]))
+  .sort((a, b) => b[1] - a[1]))
+function recordSidecarRecent(id: string): void {
+  const overflow = sidecarRecents().filter(([key]) => key !== id).slice(MAX_RECENT_FOLDERS - 1)
+  const patch = Object.fromEntries(overflow.map(([key]) => [key, null] as const))
+  void patchStateOwner("ui", { sidecarRecents: { ...patch, [id]: Date.now() } })
+    .catch(error => log.warn("Failed to record recent SideCar", error))
+}
 const opencodeBinaries = createMemo<OpenCodeBinary[]>(() => uiState().opencodeBinaries)
-const remoteServers = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
+const remoteServers: Accessor<RemoteServerProfile[]> = createMemo<RemoteServerProfile[]>(() => uiState().remoteServers)
 
 let loadPromise: Promise<void> | null = null
+let stateLoaded = false
+const documentLoads = new Map<string, Promise<void>>()
+
+async function ensureEditDocument(document: "config/ui" | "state/ui"): Promise<void> {
+  assertCurrent()
+  if (local) return ensureLoaded()
+  if (document === "config/ui" ? isUiConfigLoaded() : stateLoaded) return
+  let loading = documentLoads.get(document)
+  if (!loading) {
+    loading = (document === "config/ui" ? storage.revalidateUiConfigOwner() : storage.loadStateOwner("ui"))
+      .then(value => {
+        assertCurrent()
+        if (document === "config/ui") {
+          setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
+        } else { setUiStateBucket(value as any); stateLoaded = true }
+      })
+      .catch(error => { if (current() && document === "config/ui") setUiConfigLoadFailed(true); throw error })
+      .finally(() => { if (documentLoads.get(document) === loading) documentLoads.delete(document) })
+    documentLoads.set(document, loading)
+  }
+  await loading
+}
 
 async function ensureLoaded(): Promise<void> {
+  assertCurrent()
   if (isLoaded()) return
   if (!loadPromise) {
     loadPromise = Promise.all([
-      storage.revalidateUiConfigOwner().then(value => { setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
-        .catch(error => { setUiConfigLoadFailed(true); throw error }),
-      storage.loadConfigOwner("server"),
-      storage.loadStateOwner("ui"),
+      local ? storage.revalidateUiConfigOwner().then(value => { assertCurrent(); setUiConfigBucket(value as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false); return value })
+        .catch(error => { if (current()) setUiConfigLoadFailed(true); throw error }) : ensureEditDocument("config/ui"),
+      local ? storage.loadConfigOwner("server") : storage.loadConfigOwner("server").then(value => { assertCurrent(); setServerConfigBucket(value as any); return value }),
+      local ? storage.loadStateOwner("ui") : ensureEditDocument("state/ui"),
     ])
       .then(([, srvCfg, uiSt]) => {
-        setServerConfigBucket(srvCfg as any)
-        setUiStateBucket(uiSt as any)
+        assertCurrent()
+        if (local) {
+          setServerConfigBucket(srvCfg as any)
+          setUiStateBucket(uiSt as any)
+        }
         setIsLoaded(true)
       })
       .catch((error) => {
+        if (!current()) throw error
         log.error("Failed to load settings", error)
+        if (!local) throw error
         setServerConfigBucket({})
         setUiStateBucket({})
         setIsLoaded(true)
@@ -741,20 +836,35 @@ async function ensureLoaded(): Promise<void> {
 }
 
 async function patchConfigOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+  if (!local && owner === "ui") await ensureEditDocument("config/ui")
+  else await ensureLoaded()
+  assertCurrent()
+  if (!local && owner === "server") throw new Error("Server administration requires its local host")
   let updated: OwnerBucket
   try { updated = await storage.patchConfigOwner(owner, patch) }
   catch (error) {
     if (owner === "ui" && error instanceof ConfigOwnerReconciliationPendingError) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true) }
     throw error
   }
+  assertCurrent()
   if (owner === "ui") setUiConfigBucket(updated as any)
   if (owner === "server") setServerConfigBucket(updated as any)
 }
 
-async function patchStateOwner(owner: string, patch: unknown) {
-  await ensureLoaded()
+let stateWrite: Promise<void> = Promise.resolve()
+function patchStateOwner(owner: string, patch: unknown, admitted?: () => boolean): Promise<void> {
+  stateWrite = writeStateOwner(owner, patch, admitted)
+  return stateWrite
+}
+async function writeStateOwner(owner: string, patch: unknown, admitted?: () => boolean) {
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
+  assertCurrent()
+  if (!local && owner === "ui" && patch && typeof patch === "object" && "opencodeBinaries" in patch) {
+    throw new Error("Binary administration requires its local host")
+  }
+  if (admitted && !admitted()) throw new DOMException("Obsolete server edit", "AbortError")
   const updated = await storage.patchStateOwner(owner, patch)
+  assertCurrent()
   if (owner === "ui") setUiStateBucket(updated as any)
 }
 
@@ -813,6 +923,14 @@ function setHighContrastPreference(preference: HighContrastPreference): Promise<
 }
 
 function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
+  if (!local) {
+    const hostUpdates = Object.fromEntries(Object.entries(updates).filter(([key]) => !serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey)))
+    const serverUpdates = Object.fromEntries(Object.entries(updates).filter(([key]) => serverModelPreferenceKeys.includes(key as ServerModelPreferenceKey)))
+    if (Object.keys(hostUpdates).length) {
+      if (Object.keys(serverUpdates).length) return Promise.resolve(false)
+      return hostPreferences.updatePreferences(hostUpdates)
+    }
+  }
   const keys = Object.keys(updates)
   const missionKeys = keys.filter((key): key is MissionPreferenceKey => key === "missionProfileDefaults" || key === "missionModels")
   if (missionKeys.length) {
@@ -826,7 +944,7 @@ function updatePreferences(updates: Partial<UiSettings>): Promise<boolean> {
 }
 
 // Preserve null deletion markers rather than passing resets through normalizers.
-export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
+function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Record<string, HotkeyBinding[] | null> | null } }): Promise<boolean> {
   return patchConfigOwner("ui", patch).then(() => true, error => {
     log.error("Failed to patch hotkey settings", error)
     return false
@@ -838,14 +956,17 @@ export function patchHotkeyPreferences(patch: { settings: { hotkeyOverrides: Rec
 async function reloadMissionPreferences(): Promise<void> {
   try {
     const owner = await storage.revalidateUiConfigOwner()
+    assertCurrent()
     setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
   } catch (error) { setIsUiConfigLoaded(false); setUiConfigLoadFailed(true); throw error }
 }
 
 async function patchMissionPreferences(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<void> {
+  assertCurrent()
   setIsUiConfigLoaded(false)
   try {
     const owner = await storage.patchMissionPreferences(patch, expected)
+    assertCurrent()
     setUiConfigBucket(owner as any); setIsUiConfigLoaded(true); setUiConfigLoadFailed(false)
   } catch (error) {
     // A conflict, unknown mutation outcome or unordered acknowledged write is not
@@ -863,11 +984,11 @@ function saveMissionDefaults(input: MissionProfileDefault[], expected: MissionPr
 }
 
 let missionModelWriteQueue = Promise.resolve()
-function saveUserMissionModel(input: UserMissionModel): Promise<void> {
+function saveUserMissionModel(input: UserMissionModel, expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
   const model = parseMissionModel(input)
   if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
-  const expected = missionPreferenceSnapshot("missionModels")
-  const current = normalizeMissionModels(expected.present ? expected.value : [])
+  if (expected.key !== "missionModels" || !validMissionModels(expected.present ? expected.value : undefined)) return Promise.reject(new Error("Invalid mission model expectation"))
+  const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
   const write = missionModelWriteQueue.then(async () => {
     await patchMissionPreferences({ settings: { missionModels: saveMissionModelRecord(current, model) } }, [expected])
   })
@@ -877,7 +998,7 @@ function saveUserMissionModel(input: UserMissionModel): Promise<void> {
 function removeUserMissionModel(id: string, expected = missionPreferenceSnapshot("missionModels")): Promise<void> {
   if (!missionModelsValid()) return Promise.reject(new Error("Invalid mission model document"))
   if (expected.key !== "missionModels" || !validMissionModels(expected.present ? expected.value : undefined)) return Promise.reject(new Error("Invalid mission model expectation"))
-  const current = normalizeMissionModels(expected.present ? expected.value : [])
+   const current = normalizeMissionModels(expected.present ? expected.value : preferences().missionModels)
   const write = missionModelWriteQueue.then(async () => {
     await patchMissionPreferences({ settings: { missionModels: removeMissionModelRecord(current, id) } }, [expected])
   })
@@ -1169,6 +1290,22 @@ function addRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
+const remoteProjectHistory = createMemo(() => readRemoteProjectHistory(
+  local ? uiStateBucket().remoteProjectRecents : undefined, local ? uiStateBucket().remoteProjectHistory : undefined,
+))
+let remoteProjectRecentWrites = Promise.resolve()
+function editRemoteProjectRecents(edit: (current: ReturnType<typeof readRemoteProjectHistory>) => Record<string, RemoteProjectRecentEdit | null> | undefined): Promise<void> {
+  if (!local) throw new Error("Remote project recents belong to the host")
+  const write = remoteProjectRecentWrites.then(async () => {
+    await ensureLoaded()
+    const bucket = await storage.loadStateOwner("ui")
+    const next = edit(readRemoteProjectHistory(bucket.remoteProjectRecents, bucket.remoteProjectHistory))
+    if (next) await patchStateOwner("ui", { remoteProjectHistory: next })
+  })
+  remoteProjectRecentWrites = storage.trackWrite(write.catch(() => {}))
+  return write
+}
+
 // This window's latest clone parent wins over the saved one, whatever the
 // outcome of saves; the saved one carries it to other windows and restarts.
 // Every clone saves its parent, one save after another, so the last clone's is kept.
@@ -1197,7 +1334,7 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
   const name = projectName.trim()
   if (!folderPath || !name) return
   // Derive from loaded state; an unloaded empty list would erase every recent folder.
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   const next = recentFolders().map((folder) => (folder.path === folderPath ? { ...folder, projectName: name } : folder))
   try {
     await patchStateOwner("ui", { recentFolders: next })
@@ -1207,10 +1344,38 @@ async function renameRecentFolderProject(folderPath: string, projectName: string
   }
 }
 
-async function saveRemoteServerProfile(input: RemoteServerProfileInput): Promise<RemoteServerProfile> {
+let remoteServerEdits = Promise.resolve<unknown>(undefined)
+function queueRemoteServerEdit<T>(current: () => boolean, edit: () => Promise<T>): Promise<T> {
+  const write = remoteServerEdits.catch(() => {}).then(async () => {
+    await ensureLoaded()
+    if (!current()) throw new DOMException("Obsolete server edit", "AbortError")
+    return edit()
+  })
+  remoteServerEdits = write
+  return write
+}
+async function saveRemoteServerProfile(input: RemoteServerProfileInput, current?: () => boolean): Promise<RemoteServerProfile> {
+  if (current) return queueRemoteServerEdit(current, async () => {
+    const duplicate = !input.id && remoteServers().find(entry => entry.baseUrl === input.baseUrl && entry.ssh?.host === input.ssh?.host)
+    if (duplicate && duplicate.skipTlsVerify !== input.skipTlsVerify) throw new DOMException("Changed server policy", "AbortError")
+    const profile = buildRemoteServerProfile({ ...input, id: input.id ?? (duplicate ? duplicate.id : undefined) }, remoteServers())
+    const cancelled = await confirmRemoteServerPolicy(profile)
+    if (cancelled) return cancelled
+    await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) }, current)
+    return profile
+  })
   const profile = buildRemoteServerProfile(input, remoteServers())
+  const cancelled = await confirmRemoteServerPolicy(profile)
+  if (cancelled) return cancelled
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(profile, remoteServers()) })
   return profile
+}
+
+async function confirmRemoteServerPolicy(profile: RemoteServerProfile): Promise<RemoteServerProfile | undefined> {
+  const previous = remoteServers().find(value => value.id === profile.id)
+  if (preferences().multiBackend === true && previous && !sameServerSelection(previous, profile)) {
+    if (!await (await import("./remote-server-usage")).confirmRemoteServerChange(profile.id)) return previous
+  }
 }
 
 async function markRemoteServerConnected(id: string): Promise<void> {
@@ -1225,9 +1390,19 @@ async function markRemoteServerConnected(id: string): Promise<void> {
   await patchStateOwner("ui", { remoteServers: buildRemoteServerList(updated, remoteServers()) })
 }
 
-function removeRemoteServerProfile(id: string): void {
-  const next = remoteServers().filter((entry) => entry.id !== id)
-  void patchStateOwner("ui", { remoteServers: next }).catch((error) => log.error("Failed to remove remote server", error))
+function removeRemoteServerProfile(id: string, current: () => boolean = () => true, signal?: AbortSignal): Promise<void> {
+  const target = remoteServers().find(entry => entry.id === id)
+  if (!target) return Promise.resolve()
+  const isCurrent = () => {
+    const saved = remoteServers().find(entry => entry.id === id)
+    return current() && !signal?.aborted && !!saved && sameServerSelection(target, saved)
+  }
+  return queueRemoteServerEdit(isCurrent, async () => {
+    const { confirmAndCloseServerTabs } = await import("./remote-server-removal")
+    if (!await confirmAndCloseServerTabs(id, isCurrent, signal)) return
+    if (preferences().multiBackend === true) await backend.api.forgetRemoteServer(id, signal)
+    await patchStateOwner("ui", { remoteServers: remoteServers().filter(entry => entry.id !== id) }, isCurrent)
+  })
 }
 
 function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
@@ -1240,7 +1415,7 @@ function recordWorkspaceLaunch(folderPath: string, aliasPath?: string): void {
 
 /** Adds a named project to the recent folders, e.g. a kept temporary folder. */
 async function addNamedRecentFolder(folderPath: string, projectName: string): Promise<void> {
-  await ensureLoaded()
+  await (local ? ensureLoaded() : ensureEditDocument("state/ui"))
   await patchStateOwner("ui", { recentFolders: buildRecentFolderList(folderPath, recentFolders(), undefined, projectName) })
 }
 
@@ -1318,9 +1493,9 @@ function setModelThinkingSelection(model: { providerId: string; modelId: string 
   const current = uiState().models.thinkingSelections[key]
   if (current === value) return
 
-  const selections = { ...uiState().models.thinkingSelections }
+  const selections: Record<string, string | null> = { ...uiState().models.thinkingSelections }
   if (!value) {
-    delete selections[key]
+    selections[key] = null
   } else {
     selections[key] = value
   }
@@ -1416,10 +1591,6 @@ async function getAgentModelPreference(instanceId: string, agent: string): Promi
   return selections[agent]
 }
 
-void ensureLoaded().catch((error: unknown) => {
-  log.error("Failed to initialize settings", error)
-})
-
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
   ensureLoaded: typeof ensureLoaded
@@ -1509,8 +1680,6 @@ interface ConfigContextValue {
   getAgentModelPreference: typeof getAgentModelPreference
 }
 
-const ConfigContext = createContext<ConfigContextValue>()
-
 const configContextValue: ConfigContextValue = {
   isLoaded,
   ensureLoaded,
@@ -1592,21 +1761,18 @@ const configContextValue: ConfigContextValue = {
   getAgentModelPreference,
 }
 
-export const ConfigProvider: ParentComponent = (props) => {
-  onMount(() => {
-    ensureLoaded().catch((error: unknown) => {
-      log.error("Failed to initialize settings", error)
-    })
-
+function subscribe() {
     const unsubUi = storage.onConfigOwnerChanged("ui", (bucket) => {
+      if (!current()) return
       setUiConfigBucket(bucket as any)
     })
     const unsubServer = storage.onConfigOwnerChanged("server", (bucket) => {
+      if (!current()) return
       setServerConfigBucket(bucket as any)
-      resetSpeechCapabilities()
-      void loadSpeechCapabilities(true)
+      if (local) { resetSpeechCapabilities(); void loadSpeechCapabilities(true) }
     })
     const unsubStateUi = storage.onStateOwnerChanged("ui", (bucket) => {
+      if (!current()) return
       setUiStateBucket(bucket as any)
     })
 
@@ -1615,20 +1781,152 @@ export const ConfigProvider: ParentComponent = (props) => {
       unsubServer()
       unsubStateUi()
     }
-  })
-
-  return <ConfigContext.Provider value={configContextValue}>{props.children}</ConfigContext.Provider>
+}
+return { ...configContextValue, lastCloneParent, rememberCloneParent, addNamedRecentFolder, sidecarRecents, recordSidecarRecent, remoteProjectHistory, editRemoteProjectRecents, patchHotkeyPreferences, setUpdateFeed, setSidecarsOverDirectHttps, subscribe, ensureEditDocument,
+  settleStateWrite: async () => { await Promise.all([favoritesOnlyWriteQueue, cloneParentSaves]); await stateWrite } }
 }
 
-export function useConfig(): ConfigContextValue {
+const serverModelPreferenceKeys = ["modelVisibility", "missionProfileDefaults", "missionModels"] as const
+type ServerModelPreferenceKey = typeof serverModelPreferenceKeys[number]
+const hostPreferences = createPreferencesStore(localBackend)
+type ConfigContextValue = ReturnType<typeof createPreferencesStore>
+const deferredServerEdits = new Set([
+  "addRecentFolder", "removeRecentFolder", "recordWorkspaceLaunch", "addRecentModelPreference", "toggleFavoriteModelPreference",
+  "setFavoritesOnlyPreference", "setModelThinkingSelection", "rememberCloneParent", "addOpenCodeBinary", "removeOpenCodeBinary",
+  "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
+])
+const hostPreferenceMethods = [
+  "themePreference", "setThemePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId",
+  "highContrastPreference", "setHighContrastPreference", "highContrastSaveFailed", "highContrastSavePending",
+  "customColorSchemePreference", "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId",
+  "setColorSchemePreference", "selectColorSchemePreset", "saveColorSchemeOverride", "resetColorSchemeOverride",
+  "saveColorSchemePreset", "deleteColorSchemePreset", "remoteServers", "saveRemoteServerProfile",
+  "markRemoteServerConnected", "removeRemoteServerProfile", "patchHotkeyPreferences", "setUpdateFeed",
+  "toggleShowThinkingBlocks", "toggleShowMessageTimeline", "toggleUsageMetrics", "toggleAutoCleanupBlankSessions",
+  "toggleShowPromptVoiceInput", "setDiffViewMode", "setToolOutputExpansion", "setDiagnosticsExpansion",
+  "setThinkingBlocksExpansion", "setToolInputsVisibility",
+] as const satisfies readonly (keyof ConfigContextValue)[]
+const scopedPreferences = new WeakMap<BackendClient, { config: ConfigContextValue; attachment: AbortSignal }>()
+const preferenceReads = new Set([
+  "isLoaded", "isUiConfigLoaded", "uiConfigLoadFailed", "missionDefaultsValid", "missionModelsValid", "missionPreferenceSnapshot",
+  "preferences", "getProviderModelVisibilityPreference", "providerModelVisibilitySaveFailed", "serverSettings", "isSecureEnvVar",
+  "recentFolders", "opencodeBinaries", "uiState", "isFavoriteModelPreference", "getFavoritesOnlyPreference", "getModelThinkingSelection", "lastCloneParent",
+  "themePreference", "colorSchemePreference", "getAppearancePalette", "getAppearancePresetId", "customColorSchemePreference",
+  "highContrastPreference", "highContrastSaveFailed", "highContrastSavePending",
+  "colorSchemeOverrides", "colorSchemePresets", "activeColorSchemePresetId", "remoteServers",
+])
+const stateEdits = new Set([...deferredServerEdits].filter(key => ![
+  "updateEnvironmentVariables", "addEnvironmentVariable", "removeEnvironmentVariable", "toggleSecureEnvVar", "updateLastUsedBinary", "updateLogLevel",
+].includes(key)).concat(["addNamedRecentFolder", "renameRecentFolderProject"]))
+const configEdits = new Set(["updatePreferences", "saveMissionDefaults", "resetMissionModels", "saveUserMissionModel", "removeUserMissionModel", "setProviderModelVisibility"])
+// Host-owned updates delegated through a server target keep the host's silent failure contract.
+function isServerEdit(key: string, args: unknown[]): boolean {
+  if (!stateEdits.has(key) && !configEdits.has(key)) return false
+  return key !== "updatePreferences" || Object.keys((args[0] ?? {}) as object)
+    .some(name => serverModelPreferenceKeys.includes(name as ServerModelPreferenceKey))
+}
+function notifyRefusedPreferenceEdit() {
+  void import("../lib/notifications").then(({ showToastNotification }) => {
+    showToastNotification({ category: "settings", variant: "error", message: tGlobal("settings.preferenceSaveFailed") })
+  }).catch(error => log.error("Failed to notify refused preference edit", error))
+}
+// Empty server buckets keep host presentation/model inheritance but carry no write authority.
+const unavailablePreferences = createPreferencesStore({ ...localBackend, id: "unavailable" })
+for (const key of hostPreferenceMethods) Object.assign(unavailablePreferences, { [key]: hostPreferences[key] })
+const unavailableTarget = (backendId: BackendId): ConfigContextValue => new Proxy(unavailablePreferences, {
+  get: (target, key) => (...args: unknown[]) => {
+    if (!preferenceReads.has(String(key))) {
+      if (isServerEdit(String(key), args)) notifyRefusedPreferenceEdit()
+      throw new Error(`Backend unavailable: ${backendId}`)
+    }
+    return (target[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+  },
+})
+/** Explicit settings target; host-owned preferences always retain their single local owner. */
+export function preferencesForBackend(backendId: BackendId): ConfigContextValue {
+  const backend = backends.get(backendId)
+  const attachment = backendEvents.signal(backendId)
+  if (!backend) return unavailableTarget(backendId)
+  if (backend === localBackend) return hostPreferences
+  if (!attachment || attachment.aborted) return unavailableTarget(backendId)
+  const cached = scopedPreferences.get(backend)
+  let config = cached?.attachment === attachment ? cached.config : undefined
+  if (!config) {
+    const rooted = createRoot(dispose => ({ config: createPreferencesStore(backend), dispose }), null)
+    config = rooted.config
+    const editTails = new Map<string, Promise<void>>()
+    const ready = rooted.config.isLoaded, load = rooted.config.ensureLoaded, loadDocument = rooted.config.ensureEditDocument, settle = rooted.config.settleStateWrite
+    // All presentation and native-host controls retain the local owner.
+    for (const key of hostPreferenceMethods) Object.assign(config, { [key]: hostPreferences[key] })
+    for (const [key, method] of Object.entries(config)) {
+      Object.assign(config, { [key]: (...args: unknown[]) => {
+        const attached = backendEvents.signal(backendId)
+        if (attachment.aborted || attached !== attachment || backends.get(backendId) !== backend) {
+          if (preferenceReads.has(key)) return (unavailablePreferences[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown)(...args)
+          if (isServerEdit(key, args)) notifyRefusedPreferenceEdit()
+          throw new Error(`Backend unavailable: ${backendId}`)
+        }
+        if (stateEdits.has(key) || configEdits.has(key)) {
+          const remoteEdit = isServerEdit(key, args)
+          const document = stateEdits.has(key) ? "state/ui" : "config/ui"
+          const write = (editTails.get(document) ?? Promise.resolve()).then(async () => {
+            await loadDocument(document)
+            if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
+            const result = await (method as (...args: unknown[]) => unknown)(...args)
+            if (document === "state/ui") await settle()
+            return result
+          })
+          editTails.set(document, backend.storage.trackWrite(write.then(result => {
+            if (remoteEdit && result === false) notifyRefusedPreferenceEdit()
+          }, error => {
+            if (remoteEdit) notifyRefusedPreferenceEdit()
+            log.error("Failed to update settings", error)
+          })))
+          return write
+        }
+        if (deferredServerEdits.has(key) && !ready()) {
+          void load().then(() => {
+            if (attachment.aborted || backends.get(backendId) !== backend) throw new Error(`Backend unavailable: ${backendId}`)
+            return (method as (...args: unknown[]) => unknown)(...args)
+          }).catch(error => log.error("Failed to update settings", error))
+          return
+        }
+        return (method as (...args: unknown[]) => unknown)(...args)
+      } })
+    }
+    scopedPreferences.set(backend, { config, attachment })
+    const unsubscribe = config.subscribe()
+    attachment.addEventListener("abort", () => { unsubscribe(); rooted.dispose() }, { once: true })
+    void config.ensureLoaded().catch(error => log.error("Failed to initialize settings", error))
+  }
+  return config
+}
+export function preferencesOf(instanceId: string) {
+  return preferencesForBackend(parseInstanceKey(instanceId).backendId)
+}
+const ConfigContext = createContext<ConfigContextValue>()
+export const ConfigProvider: ParentComponent = (props) => {
+  onMount(() => { void hostPreferences.ensureLoaded(); return hostPreferences.subscribe() })
+
+  return <ConfigContext.Provider value={hostPreferences}>{props.children}</ConfigContext.Provider>
+}
+
+export function useConfig(instanceId?: Accessor<string | undefined>): ConfigContextValue {
   const context = useContext(ConfigContext)
   if (!context) {
     throw new Error("useConfig must be used within ConfigProvider")
   }
-  return context
+  if (!instanceId) return context
+  return new Proxy(context, {
+    get: (_target, key) => (...args: unknown[]) => {
+      const config = preferencesOf(instanceId() ?? "")
+      const method = config[key as keyof ConfigContextValue] as (...args: unknown[]) => unknown
+      return method(...args)
+    },
+  })
 }
 
-export {
+export const {
   ensureLoaded,
   preferences,
   uiState,
@@ -1675,6 +1973,8 @@ export {
   removeRecentFolder,
   renameRecentFolderProject,
   addNamedRecentFolder,
+  remoteProjectHistory,
+  editRemoteProjectRecents,
   addOpenCodeBinary,
   removeOpenCodeBinary,
   recordWorkspaceLaunch,
@@ -1695,5 +1995,8 @@ export {
   setThinkingBlocksExpansion,
   setAgentModelPreference,
   getAgentModelPreference,
-}
+  patchHotkeyPreferences,
+} = hostPreferences
+
+void hostPreferences.ensureLoaded().catch((error: unknown) => log.error("Failed to initialize settings", error))
 

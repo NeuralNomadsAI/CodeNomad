@@ -19,25 +19,18 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { requestAdmission } from "../request-admission"
 import { registerMissionCreation } from "./mission-creation"
-import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot"
-import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
-import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
 import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
   missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
-import { registerMissionScheduleActivation } from "./mission-schedule-activation"
-import { registerMissionScheduled } from "./mission-scheduled"
-import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
-import { registerMissionScheduleList } from "./mission-schedule-list"
-import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
+import { registerMissionCalendars } from "./mission-calendars"
+import type { SessionPermissionModes } from "../../permissions/session-mode"
 
 export interface MissionRouteDeps {
-  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
-  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply" | "verify">
+  permissionModes?: SessionPermissionModes
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
@@ -83,12 +76,7 @@ const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), r
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
   registerMissionCreation(app, deps)
-  registerMissionScheduleList(app, deps)
-  registerMissionScheduleActivation(app, deps)
-  registerMissionScheduled(app, deps)
-  registerMissionRecurrenceSnapshot(app, deps)
-  registerMissionRecurrenceCreate(app, deps)
-  registerMissionRecurrenceCurrent(app, deps)
+  registerMissionCalendars(app, deps)
   registerMissionPlaybookRoutes(app)
   // Opt-in bounded transport. A plugin without it stays unavailable: never fall back to
   // a project snapshot or legacy list that would transfer every open mission's map.
@@ -249,6 +237,31 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
 }
 
 const missionRpc = (client: OpenCodeClient) => client.rpc(CODENOMAD_MISSIONS_RPC)
+// Display-only read cache: avoids calling location.get + plugin.list (300-1600ms each)
+// on every sequential panel-page/task-marks request. Keyed by live OpenCodeClient so
+// reconnects start empty; any RPC error evicts immediately and falls back to plugin.list.
+const PLUGIN_READ_CACHE_TTL_MS = 15_000
+const pluginReadCache = new WeakMap<OpenCodeClient, Map<string, { projectID: string; at: number }>>()
+
+function cachedPluginProject(client: OpenCodeClient, directory: string): string | undefined {
+  const entry = pluginReadCache.get(client)?.get(directory)
+  if (!entry) return undefined
+  if (Date.now() - entry.at >= PLUGIN_READ_CACHE_TTL_MS) {
+    pluginReadCache.get(client)?.delete(directory)
+    return undefined
+  }
+  return entry.projectID
+}
+
+function rememberPluginProject(client: OpenCodeClient, directory: string, projectID: string): void {
+  let map = pluginReadCache.get(client)
+  if (!map) pluginReadCache.set(client, map = new Map())
+  map.set(directory, { projectID, at: Date.now() })
+}
+
+function forgetPluginProject(client: OpenCodeClient, directory: string): void {
+  pluginReadCache.get(client)?.delete(directory)
+}
 
 interface MissionPluginRead {
   rpc: ReturnType<typeof missionRpc>
@@ -282,45 +295,66 @@ async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: stri
   const location = { directory: ownedLocation.directory }
   const options = locationRequestOptions(ownedLocation)
 
+  let activeClient: OpenCodeClient | undefined
   try {
     const connection = await lifetime.wait(deps.workspaceManager.getSharedServiceConnection(workspaceID))
     if (!connection) return unavailable("workspace-unavailable")
     connection.assertCurrent()
-    const client = connection.client
-    const resolved = await client.location.get({ location }, options)
-    const inventory = await client.plugin.list({ location }, options)
-    const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
-    // Local V2 plugins currently advertise `server` but do not set `features.rpc`
-    // after registration. The reviewed typed call is the RPC capability check.
-    if (plugin?.state.status === "failed") return unavailable("plugin-failed")
-    if (!plugin || plugin.state.status !== "active") return unavailable("plugin-unavailable")
+    const client = activeClient = connection.client
+    let projectID = cachedPluginProject(client, ownedLocation.directory)
+    let fromCache = projectID !== undefined
+    if (projectID === undefined) {
+      const resolved = await client.location.get({ location }, options)
+      const inventory = await client.plugin.list({ location }, options)
+      const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
+      // Local V2 plugins currently advertise `server` but do not set `features.rpc`
+      // after registration. The reviewed typed call is the RPC capability check.
+      if (plugin?.state.status === "failed") return unavailable("plugin-failed")
+      if (!plugin || plugin.state.status !== "active") return unavailable("plugin-unavailable")
+      projectID = resolved.project.id
+      rememberPluginProject(client, ownedLocation.directory, projectID)
+    }
     let observationCurrent = () => false
-    return await read({
-      rpc: missionRpc(client), call: { location, ...options }, projectID: resolved.project.id,
-      observationCurrent: () => observationCurrent(),
-      foreign: () => {
-        request.log.error({ workspaceId: workspaceID }, "Mission RPC returned a foreign project snapshot")
-        reply.code(502)
-        return unavailable("plugin-unavailable")
-      },
-      observe: async (snapshot, requests) => {
-        const displayCurrent = await lifetime.wait(displayCapture)
-        const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [
-          ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
-        ]))
-        observationCurrent = () => {
-            if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
-              || deps.workspaceManager.get(workspaceID) !== workspace
-              || !sameLocation(deps.workspaceManager.getServiceLocation(workspaceID) ?? { directory: "" }, ownedLocation)) return false
-            try { connection.assertCurrent(); return true } catch { return false }
-          }
-        return projectMissionActivity({
-          client, snapshot, workspaceID, onRequests: requests, cache: deps.activityCache,
-          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
-        })
-      },
-    })
+    try {
+      return await read({
+        rpc: missionRpc(client), call: { location, ...options }, projectID,
+        observationCurrent: () => observationCurrent(),
+        foreign: () => {
+          forgetPluginProject(client, ownedLocation.directory)
+          request.log.error({ workspaceId: workspaceID }, "Mission RPC returned a foreign project snapshot")
+          reply.code(502)
+          return unavailable("plugin-unavailable")
+        },
+        observe: async (snapshot, requests) => {
+          const displayCurrent = await lifetime.wait(displayCapture)
+          const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [
+            ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
+          ]))
+          observationCurrent = () => {
+              if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
+                || deps.workspaceManager.get(workspaceID) !== workspace
+                || !sameLocation(deps.workspaceManager.getServiceLocation(workspaceID) ?? { directory: "" }, ownedLocation)) return false
+              try { connection.assertCurrent(); return true } catch { return false }
+            }
+          return projectMissionActivity({
+            client, snapshot, workspaceID, onRequests: requests, cache: deps.activityCache,
+            ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager), isCurrent: observationCurrent,
+          })
+        },
+      })
+    } catch (error) {
+      if (fromCache) {
+        forgetPluginProject(client, ownedLocation.directory)
+        if (isRpcFailure(error)) {
+          const inventory = await client.plugin.list({ location }, options).catch(() => undefined)
+          const plugin = inventory?.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
+          if (plugin?.state.status === "failed") return unavailable("plugin-failed")
+        }
+      }
+      throw error
+    }
   } catch (error) {
+    if (activeClient) forgetPluginProject(activeClient, ownedLocation.directory)
     request.log.warn({ err: error, workspaceId: workspaceID }, "Mission plugin snapshot is unavailable")
     return unavailable(isRpcFailure(error) ? "plugin-unavailable" : "workspace-unavailable")
   } finally { lifetime.dispose() }

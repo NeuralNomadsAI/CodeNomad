@@ -5,16 +5,26 @@ import { registerImagesConversationRoute } from "./images-conversation"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import type { ExcludeTarget, GitExclusion } from "../../workspaces/design-git-exclude"
 import { brokerIdentities } from "./rpc-broker-test-fixture"
+import { SessionPermissionModes } from "../../permissions/session-mode"
+import type { PermissionRule } from "@opencode/client"
 
 const url = "/api/workspaces/w/images-conversation"
 const model = { providerID: "fixture", id: "chosen" }
-function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; distro?: string; exclusion?: GitExclusion; directory?: string } = {}) {
+function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; distro?: string; exclusion?: GitExclusion;
+  directory?: string; supervised?: boolean } = {}) {
   const calls: any[] = []
   const order: string[] = []
   const excluded: ExcludeTarget[] = []
   const app = Fastify()
   const fence = new WorktreeDeletionFence()
+  const confirmed: PermissionRule[][] = []
+  const permissionModes = options.supervised ? new SessionPermissionModes({
+    getRawConfigOwner: () => ({ settings: { newConversationPermissions: "supervised" } }),
+    getPrivateSessionPermissionState: () => ({}),
+    setPrivateSessionPermissionBlock: (_key, block) => { if (block) confirmed.push(block) },
+  }) : undefined
   registerImagesConversationRoute(app, {
+    permissionModes,
     worktreeDeletionFence: fence,
     excludeDesignFolder: async target => { excluded.push(target); return options.exclusion ?? "excluded" },
     workspaceManager: {
@@ -27,6 +37,9 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
             if (options.directory === "") throw new Error("location not found")
             return { directory: options.directory ?? "/owned/repo", project: { id: "p" } }
           } },
+          config: { get: async () => [] },
+          session: { get: async () => ({ id: "ses_images", time: { created: 100 }, location: { directory: "/owned/repo" },
+            permissions: calls.at(-1)?.input.permissions }) },
           rpc: { call: async (input: unknown, opts: any) => {
             assert(opts.signal instanceof AbortSignal)
             order.push("rpc")
@@ -47,7 +60,7 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
       getHostPathForServicePath: async (_id: string, servicePath: string) => `\\\\wsl.localhost\\Ubuntu${servicePath.replaceAll("/", "\\")}`,
     },
   })
-  return { app, calls, excluded, fence, order }
+  return { app, calls, excluded, fence, order, confirmed }
 }
 
 test("an unowned directory or unknown workspace never reaches OpenCode", async () => {
@@ -96,6 +109,21 @@ test("a WSL location excludes through the owned distro and the host translation"
     assert.equal(excluded[0]!.distro, "Ubuntu")
     assert.equal(await excluded[0]!.toHost("/owned/repo/.git/info/exclude"), "\\\\wsl.localhost\\Ubuntu\\owned\\repo\\.git\\info\\exclude")
   } finally { await app.close() }
+})
+
+test("passes the backend's default to the native creation and records it only for a new Images root", async () => {
+  for (const created of [true, false]) {
+    const { app, calls, confirmed } = fixture({ supervised: true, output: { status: "found", sessionID: "ses_images", created } })
+    try {
+      const response = await app.inject({ method: "POST", url, payload: { directory: "/owned/repo", mode: "open" } })
+      assert.equal(response.json().created, created)
+      const block = [{ action: "edit", resource: "*", effect: "ask" }, { action: "shell", resource: "*", effect: "ask" }]
+      assert.deepEqual(calls[0].input.permissions, block)
+      assert.deepEqual(confirmed, created ? [block] : [])
+      assert.equal((await app.inject({ method: "POST", url,
+        payload: { directory: "/owned/repo", mode: "new", permissions: block } })).statusCode, 400)
+    } finally { await app.close() }
+  }
 })
 
 test("lookup, absent and unknown results never touch Git", async () => {

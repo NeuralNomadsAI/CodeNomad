@@ -13,15 +13,17 @@ it("defines built-in tabs and status sections without a plugin loading layer", a
     const render = () => undefined as any
     const summary = () => undefined as any
     const module = createCoreRightPanelModule({ renderFilesTab: render, renderStatusTab: render })
-    const sections = createCoreStatusSectionManifest({ renderTokens: render, renderTokensSummary: summary, renderYoloModeSection: render,
+    const sections = createCoreStatusSectionManifest({ renderTokens: render, renderTokensSummary: summary, renderPermissions: render,
+      renderPermissionsSummary: summary, renderPermissionsInfo: render,
       renderProviderUsage: render, renderBackgroundProcesses: render, renderMcpStatus: render, renderPluginStatus: render })
     assert.deepEqual(module.tabs?.map(entry => entry.id), ["files", "status"])
     assert.equal(module.tabs?.find(entry => entry.id === "status")?.alwaysVisible, true)
-    assert.deepEqual(sections.statusSections?.map(entry => entry.id), ["tokens", "yolo-mode", "provider-usage", "background-processes", "mcp", "plugins"])
+    assert.deepEqual(sections.statusSections?.map(entry => entry.id), ["tokens", "permissions", "provider-usage", "background-processes", "mcp", "plugins"])
     assert.equal(module.tabs?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => entry.render === render), true)
     assert.equal(sections.statusSections?.every(entry => typeof entry.renderInfo === "function"), true)
     assert.equal(sections.statusSections?.find(entry => entry.id === "tokens")?.renderStatus, summary)
     assert.equal(sections.statusSections?.filter(entry => entry.id !== "tokens").every(entry => !entry.renderStatus), true)
+    assert.equal(sections.statusSections?.find(entry => entry.id === "permissions")?.renderSummary, summary)
   } finally { hooks.deregister() }
 })

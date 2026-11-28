@@ -24,9 +24,6 @@ export async function missionToolInspection(control: MissionControl, sessionID: 
   if (catalog !== undefined) Object.assign(response, { catalog })
   const read = input.content
   if (read) {
-    if (!result.mission && result.schedule?.document && read.kind === "inspection") {
-      return inspectionContent(result.schedule.document.id, read, inspectionContentValue(result, read))
-    }
     if (!result.mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
     let value: unknown
     if (read.kind === "task" && (MISSION_TASK_VIEW_FIELDS as readonly string[]).includes(read.field)) {

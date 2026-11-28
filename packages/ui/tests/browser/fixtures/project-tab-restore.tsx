@@ -1,15 +1,15 @@
 import { createEffect, For, Show } from "solid-js"
 import { render } from "solid-js/web"
-import { initializeClientState } from "../../../src/stores/client-state"
+import { initializeClientState, setRestorePreviousStateEnabled } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { useAppSessionRestore } from "../../../src/lib/hooks/use-app-session-restore"
-import { activeAppTabId, appTabs, ensureActiveAppTab, selectAppTab } from "../../../src/stores/app-tabs"
+import { activeAppTabId, appTabs, ensureActiveAppTab, getSidecarAppTabId, selectAppTab, setAppTabOrder } from "../../../src/stores/app-tabs"
 import { appSessionRestoreGateActive } from "../../../src/stores/app-session-restore-gate"
-import { activeInstanceId, createInstance, instances, updateInstance } from "../../../src/stores/instances"
+import { activeInstanceId, createInstance, instances, refreshWorkspaceList, updateInstance } from "../../../src/stores/instances"
 import { closeInstanceTab, selectInstanceTab } from "../../../src/stores/app-tabs"
 import { canContinueOpenCodeSetup, continueOpenCodeSetup, openOpenCodeSetup, refreshOpenCodeSetup, runOpenCodeSetup } from "../../../src/stores/opencode-setup"
 import { serverEvents } from "../../../src/lib/server-events"
-import { activeSessionId } from "../../../src/stores/session-state"
+import { activeSessionId, getSessionDraftPromptsForInstance, setSessionDraftPrompt } from "../../../src/stores/session-state"
 import { sessions, getSessionListIds, getSessionThreads, loading } from "../../../src/stores/session-state"
 import SessionList from "../../../src/components/session-list"
 import { reloadWorktrees } from "../../../src/stores/worktrees"
@@ -24,6 +24,9 @@ import { openSessionPreview, getSessionPreview, restoreSessionPreview } from "..
 import { updateMissionProjectView } from "../../../src/stores/mission-view-state"
 import { moveAppTab } from "../../../src/stores/app-tabs"
 import { savedSessionBrowser } from "../../../src/stores/session-browser-persistence"
+import { getToastHistory } from "../../../src/lib/notifications"
+import { openSidecarTab } from "../../../src/stores/sidecars"
+import { remoteRestoreTabs } from "../../../src/stores/remote-restore-tabs"
 
 ;(window as any).tabViews = {
   ids: () => appTabs().filter(tab => tab.kind === "instance").map(tab => tab.instance.id),
@@ -32,6 +35,25 @@ import { savedSessionBrowser } from "../../../src/stores/session-browser-persist
   mission: (id: string) => updateMissionProjectView(id, { selected: "mission-b", reader: { kind: "playbook", missionId: "debug" } }),
   reorder: (a: string, b: string) => moveAppTab(`instance:${a}`, `instance:${b}`, "before"),
   close: closeInstanceTab,
+  openDuplicateSidecars: async () => {
+    const first = await openSidecarTab("demo", { activate: false })
+    const second = await openSidecarTab("demo", { activate: false })
+    const ids = [first, second].map(tab => getSidecarAppTabId(tab.token))
+    setAppTabOrder([...appTabs().filter(tab => tab.kind === "instance").map(tab => tab.id), ...ids])
+    selectAppTab(ids[1])
+    return ids
+  },
+  active: activeAppTabId,
+  disableRestore: () => setRestorePreviousStateEnabled(false),
+  draft: (id: string) => getSessionDraftPromptsForInstance(id).same,
+  writeDraft: (id: string, text: string) => setSessionDraftPrompt(id, "same", text),
+  temporary: (id: string) => instances().get(id)?.temporary,
+  refresh: () => refreshWorkspaceList(),
+  retry: () => remoteRestoreTabs()[0].retry(),
+  remove: (id: string) => (serverEvents as any).dispatch({
+    type: "workspace.stopped", workspaceId: id, reason: "deleted", temporaryRetained: true,
+  }),
+  noticeCount: () => getToastHistory().length,
   saved: savedSessionBrowser,
 }
 
@@ -85,9 +107,11 @@ function Fixture() {
     <For each={appTabs()}>{tab => <button
       role="tab"
       aria-selected={activeAppTabId() === tab.id}
+      data-tab-kind={tab.kind}
+      data-app-tab-id={tab.id}
       data-session-selection={tab.kind === "instance" ? activeSessionId().get(tab.instance.id) : undefined}
       onClick={() => selectAppTab(tab.id)}
-     >{tab.kind === "instance" ? tab.instance.folder : tab.sidecarTab.sidecarId}
+     >{tab.kind === "instance" ? tab.instance.folder : tab.kind === "sidecar" ? tab.sidecarTab.sidecarId : tab.kind === "remote-restore" ? tab.snapshot.folder : ""}
        {location.search.includes("git") && tab.kind === "instance" ? <GitPanel instanceId={tab.instance.id} /> : null}
      </button>}</For>
     <Show when={location.search.includes("catalog")}><ConfigProvider><I18nProvider><ThemeProvider>

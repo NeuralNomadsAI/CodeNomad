@@ -92,6 +92,42 @@ fn captures_do_not_wait_for_disk_and_latest_geometry_is_flushed() {
 }
 
 #[test]
+fn new_window_publishes_focus_and_latest_geometry_captured_while_fifo_waits() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = Arc::new(ClientState::initialize_at(directory.path()).unwrap());
+    let first = state.active_window_id().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let fifo = crate::client_state::IpcQueue::new();
+    let (release, hold) = mpsc::channel();
+    fifo.enqueue(Box::new(move || hold.recv_timeout(TIMEOUT * 2).unwrap()))
+        .unwrap();
+    state.admit_new_window_capture(id.clone());
+    let writing = Arc::clone(&state);
+    let new_id = id.clone();
+    let (done, published) = mpsc::channel();
+    fifo.enqueue(Box::new(move || {
+        done.send(writing.add_window(new_id)).unwrap();
+    }))
+    .unwrap();
+
+    assert!(capture(&state, &id, 10));
+    assert!(state.capture_active_window(id.clone()));
+    // The separate geometry flush can run even while the FIFO is still held.
+    state.flush().unwrap();
+    assert_eq!(read_state(&state)["activeWindowId"], first);
+    assert!(read_state(&state)["windows"].get(&id).is_none());
+    assert!(capture(&state, &id, 20));
+    assert!(state.queue_window_capture(&id, None, true, false, 1.0));
+    release.send(()).unwrap();
+    assert!(published.recv_timeout(TIMEOUT).unwrap().unwrap());
+
+    let saved = read_state(&state);
+    assert_eq!(saved["activeWindowId"], id);
+    assert_eq!(saved["windows"][&id]["window"]["bounds"], json!(bounds(20)));
+    assert_eq!(saved["windows"][&id]["window"]["maximized"], true);
+}
+
+#[test]
 fn native_getters_run_without_any_client_state_lock() {
     let directory = tempfile::tempdir().unwrap();
     let state = ClientState::initialize_at(directory.path()).unwrap();
@@ -350,6 +386,54 @@ fn release_retries_a_failed_flush_even_after_captures_were_merged() {
         read_state(&state)["windows"][&id]["window"]["bounds"],
         json!(bounds(42))
     );
+}
+
+#[test]
+fn final_publication_failure_after_fifo_barrier_retains_ownership_and_allows_retry() {
+    for fail_after_rename in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let fail = Arc::new(AtomicBool::new(false));
+        let writer_fail = fail.clone();
+        let state = ClientState::initialize_at_with_writer(
+            directory.path(),
+            Arc::new(move |path, bytes, valid| {
+                if !writer_fail.swap(false, Ordering::SeqCst) {
+                    return crate::client_state::write_atomically(path, bytes, valid);
+                }
+                if fail_after_rename {
+                    crate::client_state::write_atomically_with_sync(path, bytes, valid, |_| {
+                        Err("final sync failed".into())
+                    })
+                } else {
+                    Err("final write failed".into())
+                }
+            }),
+        ).unwrap();
+        let id = state.active_window_id().unwrap();
+        let queue = crate::client_state::IpcQueue::new();
+        assert!(capture(&state, &id, 42)); // No worker wakeup; the final drain must write it.
+        let deadline = || std::time::Instant::now() + TIMEOUT;
+        assert!(queue.seal_and_drain_until(deadline()));
+        fail.store(true, Ordering::SeqCst);
+        let error = state.prepare_ownership_release().unwrap_err();
+        assert!(error.contains(if fail_after_rename { "final sync failed" } else { "final write failed" }));
+        assert!(state.is_primary());
+        assert!(!capture(&state, &id, 60));
+        assert!(queue.enqueue(Box::new(|| {})).is_err());
+
+        state.resume_window_captures();
+        queue.reopen();
+        assert!(capture(&state, &id, 60));
+        let (done, flushed) = mpsc::channel();
+        state.window_flush.schedule(move || done.send(()).unwrap()).unwrap();
+        flushed.recv_timeout(TIMEOUT).unwrap();
+        queue.enqueue(Box::new(|| {})).unwrap();
+        assert!(queue.seal_and_drain_until(deadline()));
+        state.prepare_ownership_release().unwrap();
+        state.finish_ownership_release();
+        assert_eq!(read_state(&state)["windows"][&id]["window"]["bounds"], json!(bounds(60)));
+        assert!(ClientState::initialize_at(directory.path()).unwrap().is_primary());
+    }
 }
 
 #[test]

@@ -19,12 +19,12 @@ Las asignaciones se guardan en la configuración de interfaz de CodeNomad y afec
 
 ## Valores predeterminados del renderer {#renderer-defaults}
 
-`Mod` significa `Ctrl` en Windows/Linux y `Cmd` en macOS. Son valores predeterminados, no garantías de que el sistema operativo/anfitrión nativo entregue la tecla. El ámbito importa: la misma tecla puede ejecutar una acción distinta en la página de inicio, el editor o la búsqueda.
+`Mod` significa `Ctrl` en Windows/Linux y `Cmd` en macOS. Son valores predeterminados, no garantías de que el sistema operativo/anfitrión nativo entregue la tecla. El ámbito importa: la misma tecla puede ejecutar una acción distinta en una pestaña vacía, el editor o la búsqueda.
 
 | Acción | Valor predeterminado |
 | --- | --- |
 | Abrir paleta de comandos | `Mod+Shift+P` |
-| Nueva instancia / Buscar una carpeta en la página de inicio | `Mod+N` |
+| Nueva instancia / Abrir una pestaña vacía | `Mod+N` |
 | Cerrar pestaña de la aplicación | `Mod+W` |
 | Pestaña anterior / siguiente de la aplicación | `Mod+[` / `Mod+]` |
 | Pestaña 1–9 de la aplicación | `Mod+1` a `Mod+9` |
@@ -73,3 +73,5 @@ Las ventanas normales del navegador también conservan sus atajos. Si una asigna
 Los atajos de la fila de dígitos y los corchetes usan las posiciones físicas de las teclas para grabar, ejecutar y comprobar conflictos, incluidas las distribuciones AZERTY/QWERTZ. Las demás teclas usan sus valores lógicos. Graba con el teclado que quieras usar y comprueba después el resultado mostrado.
 
 Durante la composición IME, la entrada de texto tiene prioridad. El historial de entradas y las acciones de Escape también dependen del foco, el estado del selector/shell y la operación actual; no supongas que cada ArrowUp o Escape es una acción global incondicional. En el escritorio, enviar mueve el foco a la conversación para que las flechas, las teclas de página y Espacio la desplacen; escribir un carácter vuelve al editor con ese carácter, y **Enfocar entrada** vuelve a él antes de usar el historial de entradas.
+
+[Nueva instancia](projects.md#new-instance-launcher).

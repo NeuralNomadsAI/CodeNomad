@@ -5,6 +5,8 @@ import { sdkManager } from "../lib/sdk-manager"
 import { addInstance } from "./instances"
 import { createHistorySessionLabels } from "./history-search-sessions"
 import { destroyOpenCodeData, getOpenCodeInstanceGeneration } from "./opencode-data"
+import { ServerEvents, backendEvents } from "../lib/server-events"
+import { registerLocalBackendFixture } from "../../tests/contracts/local-backend-fixture"
 
 const instanceId = "history-labels"
 const reads: string[] = []
@@ -88,5 +90,35 @@ test("only a missing session stays unavailable; transient failures retry", async
     assert.deepEqual(labels.get("flaky"), { title: "Title flaky", directory: "/repo" })
     assert.equal(labels.get("missing"), null)
     dispose()
+  })
+})
+
+test("attachment replacement drops delayed labels and revalidates retained demand", async t => {
+  const backendId = "history_labels_remote", instanceId = `${backendId}~ws`
+  registerLocalBackendFixture(t, backendId)
+  const events = new ServerEvents({ api: { connectEvents: () => ({ close() {} } as EventSource), sendClientConnectionPong: async () => {} },
+    auth: { check: async () => {}, onRestored: () => () => false } })
+  let detach = backendEvents.attach(backendId, events)
+  t.after(() => { detach(); events.dispose() })
+  let release!: (value: unknown) => void, reads = 0
+  const remoteClient: any = { session: { get: () => ++reads === 1
+    ? new Promise(resolve => { release = resolve }) : Promise.resolve({ title: "Replacement" }) } }
+  const key = `${instanceId}:/workspaces/ws/instance`
+  ;(sdkManager as any).clients.set(key, remoteClient)
+  t.after(() => (sdkManager as any).clients.delete(key))
+  await createRoot(async dispose => {
+    try {
+      const labels = createHistorySessionLabels(() => instanceId)
+      labels.request(["same"])
+      detach()
+      detach = backendEvents.attach(backendId, events)
+      release({ title: "Retired" })
+      await settle()
+      assert.equal(labels.get("same"), undefined)
+      labels.request(["same"])
+      await settle()
+      assert.equal(reads, 2)
+      assert.equal(labels.get("same")?.title, "Replacement")
+    } finally { dispose() }
   })
 })

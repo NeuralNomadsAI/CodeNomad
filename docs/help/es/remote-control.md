@@ -9,15 +9,31 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 3. En **Conectar otro dispositivo**, escanea el código QR o elige **Copiar enlace** y abre ese enlace de un solo uso en el dispositivo previsto.
 4. Conserva los datos del sitio del navegador emparejado. Vuelve a abrir la dirección del túnel para reconectar mientras el backend esté en ejecución.
 
-El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
+El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Apagar el backend cancela el enlace de emparejamiento pendiente; detener y los fallos del túnel cancelan un enlace del túnel.
 
-Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad** en su página de inicio, pega el enlace en **URL del servidor** y elige **Conectar**. Un enlace de emparejamiento abre su ventana incluso desde **Guardar**, porque abrirlo consume el código. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
+En otro CodeNomad de escritorio, pega el enlace de emparejamiento en **Configuración → Servidores → Dirección o enlace del servidor**.
+
+Para volver a emparejarlo, pega el nuevo enlace en el formulario de conexión del servidor o del proyecto.
+
+## Emparejar por HTTPS directo {#direct-https}
+
+Cuando el túnel está bloqueado pero el backend es accesible por HTTPS de confianza, por ejemplo tras un proxy inverso con un certificado real, los dispositivos pueden emparejarse en esa dirección. Se admiten las direcciones HTTPS propias de este backend y los orígenes HTTPS de `CODENOMAD_ALLOWED_ORIGINS` (consulta [Orígenes permitidos](remote-access.md#upgrading)); los nombres de bucle local y HTTP sin cifrar nunca emparejan. No hace falta iniciar el control remoto.
+
+1. En el equipo anfitrión, abre **Configuración → Acceso remoto → Control remoto**.
+2. En **Emparejamiento HTTPS directo**, elige la **Dirección HTTPS** si hay varias y luego **Crear enlace de emparejamiento HTTPS**.
+3. Abre el enlace en el dispositivo, como un enlace del túnel. Puedes pulsarlo desde otra página.
+
+El enlace sigue las mismas reglas de cinco minutos y un solo uso, y reemplaza cualquier enlace sin usar; los códigos erróneos repetidos se limitan. Un proxy inverso debe terminar TLS de confianza, pasar las cabeceras `Host` y `Origin` originales y llegar al backend por bucle local o una red protegida.
+
+Ese dispositivo se conecta solo por su dirección HTTPS, nunca por el túnel, y **Dispositivos emparejados** muestra esa dirección bajo su nombre. Detener el control remoto no cancela el enlace ni desconecta estos dispositivos; **Revocar**, 30 días sin uso, el límite de 32 dispositivos o quitar la dirección de la configuración terminan su acceso. Un navegador que presenta una credencial de dispositivo revocada o caducada en esa dirección no puede recurrir a la contraseña del servidor: vuelve a emparejarlo o borra los datos del sitio para iniciar sesión con la contraseña.
+
+Consulta las [funciones disponibles](#remote-surface), incluida la excepción de HTTPS directo para el contenido de SideCar. El emparejamiento no concede privilegios de bucle local, ni siquiera a través de un proxy en el anfitrión.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
 2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
-3. Elige **Revocar** para un dispositivo que ya no deba conectarse.
+3. Elige **Revocar** para un dispositivo que ya no deba conectarse. Si aparece **Revocación pendiente**, vuelve a seleccionar **Revocar** antes de reiniciar el anfitrión.
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
 
@@ -28,7 +44,7 @@ Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener c
 ### Volver a emparejar sin perder tu lugar {#re-pair}
 
 1. Si el cliente muestra **Vincular de nuevo este dispositivo**, deja abierta esa página.
-2. En el anfitrión, elige **Crear nuevo enlace de emparejamiento** y ábrelo en el **mismo navegador/perfil del cliente**. Para un servidor de escritorio guardado, reconecta usando el enlace nuevo para reutilizar el almacenamiento de su ventana remota existente.
+2. En el anfitrión, crea un enlace para la conexión original: **Crear nuevo enlace de emparejamiento** para el túnel, o selecciona la **Dirección HTTPS** original en **Emparejamiento HTTPS directo** y elige **Crear enlace de emparejamiento HTTPS**. Ábrelo en el **mismo navegador/perfil del cliente**. Una ventana remota independiente reutiliza su almacenamiento.
 3. Vuelve a la página en espera y elige **Comprobar conexión**; también vuelve a comprobarla cuando la página recupera el foco.
 
 La recuperación conserva la página abierta y los borradores; no repite una acción fallida. Comprueba si un envío, respuesta o eliminación surtió efecto antes de reintentarlo. Una contraseña de acceso directo no puede recuperar el emparejamiento de Control remoto.
@@ -39,7 +55,7 @@ La recuperación conserva la página abierta y los borradores; no repite una acc
 | --- | --- |
 | Iniciar control remoto | Conecta este backend y recuerda la elección para inicios futuros. |
 | Cerrar el navegador remoto | No detiene el backend anfitrión ni revoca el dispositivo. |
-| Detener control remoto | Desconecta el acceso y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
+| Detener control remoto | Desconecta el acceso por el túnel y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
 | Apagado del backend / se cierra la última ventana de escritorio y la aplicación termina | Control remoto queda sin conexión. El servicio compartido de OpenCode puede seguir ejecutándose, pero no puede servir esta interfaz mediante un backend detenido. |
 | Iniciar después de dejar Control remoto activado | Reconecta en segundo plano sin emitir un enlace de emparejamiento nuevo. Las instalaciones donde nunca se inició no se activan solas. |
 
@@ -54,13 +70,15 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | Interfaz autenticada normal, espacios de trabajo, conversaciones y SSE | Disponible para un dispositivo emparejado. |
 | Inicio/cierre de sesión con contraseña, cambios de contraseña, inicialización local por token | No disponible; se requieren credenciales de dispositivo incluso si la autenticación directa está desactivada. |
 | Estado de Control remoto | Legible para un dispositivo emparejado; la gestión no está disponible. Iniciar/Detener, crear emparejamientos, la lista de dispositivos y la revocación permanecen en la vía de acceso del anfitrión. |
-| Gestión de ventanas remotas/servidores de escritorio y rutas proxy | No disponible (`/api/remote-servers/`, `/api/remote-proxy/`). |
-| **Proxy de contenido** de SideCar | Requiere loopback (`/sidecars/`), al igual que los WebSockets de SideCar. Las API de registro `/api/sidecars` están disponibles para dispositivos emparejados y clientes directos de LAN autenticados. |
-| Contenido de vistas previas web | Disponible mientras **Vistas previas web** esté activado (valor predeterminado) en **Configuración → Acceso remoto → Control remoto** en el equipo anfitrión. Cada dirección de vista previa abre su página sin emparejamiento, así que mantenla privada. Desactivar el interruptor detiene las vistas previas servidas y sus WebSockets; los dispositivos emparejados ocultan **Abrir vista previa web** al recargar. |
+| Servidores guardados y relé del backend | Los clientes remotos autenticados pueden usar/administrar todos los servidores guardados en el anfitrión si la función y sus capacidades lo permiten. Las nuevas contraseñas o enlaces de emparejamiento requieren Control remoto o HTTPS. Consulta [servidores guardados](remote-access.md#saved-servers). |
+| Ventanas remotas de escritorio y su proxy | Solo en el anfitrión (`/api/remote-proxy/`). |
+| Contenido y WebSockets de SideCar (`/sidecars/`) | No disponibles a través del túnel. Usa el bucle local o activa el [acceso HTTPS directo a SideCars](browser-sidecars.md#register-sidecar) en el anfitrión. |
+| Registro de SideCar (`/api/sidecars`) | Disponible para dispositivos emparejados y clientes directos autenticados. |
+| Contenido de vistas previas web | [Abrir el navegador de una sesión](browser-sidecars.md#session-browser) |
 | Puente de automatización | No disponible (`/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
-| Actualizaciones de conexión a WebSocket | Disponibles solo para vistas previas web. |
+| Actualizaciones de conexión a WebSocket | Disponibles para vistas previas web y, en dispositivos emparejados, para [conversaciones de voz en directo](voice.md#conversation). |
 
-Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservados al anfitrión y la gestión de Control remoto (`/api/remote-control/`). El acceso directo por LAN también requiere loopback para estas operaciones; consulta [Actualizar](remote-access.md#upgrading). Las vistas previas web de Control remoto usan un token de capacidad en su dirección y siguen disponibles mientras estén activadas en el anfitrión; mantén privada esa dirección.
+Usa una conexión loopback en el anfitrión para los proxies/WebSockets reservados al anfitrión y la gestión de Control remoto (`/api/remote-control/`). El acceso directo por LAN también requiere loopback para estas operaciones; consulta [Orígenes permitidos](remote-access.md#upgrading).
 
 ## Relé y privacidad {#relay-privacy}
 

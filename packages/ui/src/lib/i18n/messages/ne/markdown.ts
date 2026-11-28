@@ -13,4 +13,7 @@ export const markdownMessages = {
 
   "markdown.link.previewOpens": "वेब पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
   "markdown.link.fileOpens": "फाइल पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
+  "markdown.link.pathOpens": "फाइल पूर्वावलोकनले देखाउन सक्छ भने त्यहीँ खुल्छ, नत्र तपाईंको प्रणालीमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई तपाईंको प्रणालीमा खोल्छ।",
+  "markdown.link.systemOpens": "तपाईंको प्रणालीमा खुल्छ।",
+  "markdown.link.openMissing": "फेला परेन: {path}",
 } as const

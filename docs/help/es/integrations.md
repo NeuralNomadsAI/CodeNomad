@@ -47,7 +47,7 @@ Una actualización de paquete cambia ese paquete en la caché compartida de Open
 3. Mantén **Global**, salvo que el plugin deba ejecutarse solo para este proyecto, y elige **Añadir**.
 4. La nueva fila muestra **Instalando** hasta que OpenCode la notifica.
 
-Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Global** o **Quitar de Proyecto**. Solo se elimina la declaración del archivo de configuración de ese ámbito; sus reglas de activación **Global**/**Proyecto** siguen como reglas y la caché de paquetes de OpenCode se conserva.
+Para quitar un plugin, abre el menú junto a su nombre y elige **Quitar de Global** o **Quitar de Proyecto**. Se eliminan su declaración y sus reglas de activación del archivo de configuración de ese ámbito, salvo una regla de desactivación mientras quede otra declaración del plugin y una regla de activación que una declaración anterior aún define. Una regla de activación que perdería su definición también se elimina de la configuración de este proyecto, porque si no OpenCode descargaría un paquete del registro con ese nombre; si está en un archivo que CodeNomad no edita, se rechaza la acción. La caché de paquetes de OpenCode se conserva. Las reglas de un plugin que OpenCode no pudo identificar (desactivado, o que falló antes de cargar) quedan en una fila propia cuyo menú ofrece la misma acción.
 
 El código del plugin se ejecuta con tus permisos dentro de OpenCode. Una entrada de **Proyecto** se ejecuta cada vez que esa carpeta se abre en OpenCode, y los paquetes con partes para la aplicación de escritorio de OpenCode solo las cargan desde **Global**; la información emergente lo indica cuando ese paquete se declara en otro sitio. Aquí se rechazan las rutas locales, las variables de configuración y los ID de plugin: declara los plugins locales en el archivo de configuración. Se rechaza un paquete ya declarado en una configuración que se aplica a esta Location, sea cual sea su versión, rango o forma.
 
@@ -82,7 +82,7 @@ El menú **…** de la fila empieza por el estado de la conexión, por ejemplo *
 
 La instalación desde el catálogo, la instalación o actualización de la parte de la aplicación y la eliminación requieren confirmación. **Cancelar** recibe el foco primero; la acción de confirmación se habilita tras 600 ms. La activación, las actualizaciones de plugins, la vinculación y la desvinculación se ejecutan directamente.
 
-Al quitar un plugin se muestra una advertencia con su nombre y ámbito exacto. **Cancelar** recibe el foco; **Quitar de Global/Proyecto** se habilita tras 600 ms y exige una acción explícita. Puede interrumpir la disponibilidad y las conexiones de las conversaciones que lo usan; Global también puede afectar a otros proyectos. Solo se quita la declaración confirmada; se conservan reglas, caché, archivos de la aplicación y pistas guardadas de conexión. Si cambia la configuración, selecciona y confirma de nuevo.
+Al quitar un plugin se muestra una advertencia con su nombre y ámbito exacto. **Cancelar** recibe el foco; **Quitar de Global/Proyecto** se habilita tras 600 ms y exige una acción explícita. Puede interrumpir la disponibilidad y las conexiones de las conversaciones que lo usan; Global también puede afectar a otros proyectos. Solo se quitan la declaración confirmada y las reglas de activación descritas arriba; se conservan caché, archivos de la aplicación y pistas guardadas de conexión. Si cambia la configuración, selecciona y confirma de nuevo.
 
 ## Instalar o actualizar la integración de la aplicación {#application-installation}
 

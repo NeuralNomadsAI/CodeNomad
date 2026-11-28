@@ -55,7 +55,7 @@ For precise limits, see [browser previews and SideCars](browser-sidecars.md), [R
 | --- | --- |
 | Project tab / workspace / instance | A CodeNomad connection to an explicitly opened folder; multiple tabs can use the shared service. |
 | Conversation / session | Native OpenCode history and execution associated with its directory. |
-| Family | A conversation and its recursive subsessions; relevant to moves, activity, Yolo and Mission controls. |
+| Family | A conversation and its recursive subsessions; relevant to moves, activity and Mission controls. |
 | Worktree | An owned repository checkout selected for browsing or session placement. Browsing it does not move a conversation. |
 | Location | OpenCode's directory-scoped native runtime context; CodeNomad never unloads it when a project closes. |
 | CodeNomad backend | The server providing workspace, Git, authentication and client connectivity. Its account and environment determine backend filesystem access. |
@@ -72,7 +72,7 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 | Install or serve the workspace | [Install](install.md), [Server reference](server.md), [Network and TLS](remote-access.md) |
 | Work across checkouts and conversations | [Projects](projects.md), [Conversations](conversations.md), [Files](files.md) |
 | Find history or safely clean it up | [History](history.md) |
-| Answer native questions and permissions | [Permissions](permissions.md) |
+| Set conversation permissions or answer requests | [Permission modes](permissions.md#conversation-mode), [Questions and permissions](permissions.md) |
 | Coordinate bounded or scheduled work | [Missions](missions.md) |
 | Configure execution and integrations | [OpenCode](opencode.md), [Providers](providers.md), [Integrations](integrations.md) |
 | Connect another device | [Remote Control](remote-control.md), [Security](security.md), [Mobile](mobile.md) |
@@ -85,8 +85,9 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 The Status panel exposes the active session's provider usage and native background Shells. Conversation status and child activity identify working, compacting and input-waiting sessions. Monitoring a background Shell is distinct from sending a composer Shell request or using a separately hosted terminal SideCar.
 
 1. Open **Status → Background Shells** for the selected conversation's Location (or the open workspace when no conversation is selected).
-2. Only running commands explicitly moved to the background are listed, one per row. Hover a row for the shell, directory and PID; use its **View output** icon for the native output.
-3. Use the row’s **Stop and remove** icon and confirm the target.
+2. Running commands explicitly moved to the background appear on a single line with a discreet status indicator; long commands are truncated. Click the command, or focus it and press Enter or Space, to open its output window.
+3. Hover or focus the command, or long-press it on a touch screen, for its full command and status, plus the folder, shell, PID, exit code and start/end dates when available. Press Escape or tap outside to close these details.
+4. The trash button sits to the right, outside the command field. For a running shell, choose **Stop and remove** and confirm; if a finished entry is still shown, choose **Remove** and confirm. The trash button acts on the shell without opening its output.
 
 Removing a running Shell stops that process; closing its output window does not.
 

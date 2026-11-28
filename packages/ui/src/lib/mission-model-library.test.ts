@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
-  MAX_MISSION_MODELS, missionRecordedBrief, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, saveMissionModelRecord,
+  MAX_MISSION_MODELS, missionRecordedBrief, normalizeMissionModels, parseMissionModel, removeMissionModelRecord, sameMissionModel, saveMissionModelRecord,
   type UserMissionModel,
 } from "./mission-model-library"
 
@@ -179,5 +179,26 @@ describe("immutable Mission model library edits", () => {
     assert.notEqual(brief.profiles, profiles, "profiles are copied, not shared with the snapshot")
     assert.deepEqual(parseMissionModel({ ...model(), ...brief }).notes, "  keep verbatim\n")
     assert.deepEqual(missionRecordedBrief({ template: "wayfinder" }, { objective: "Historical", notes: "" }), { objective: "Historical", notes: "", template: "wayfinder" })
+  })
+
+  it("compares saved configuration records by value regardless of profile role key order", () => {
+    const base = model(1, {
+      template: "compare", notes: "  keep\n", taskMode: "independent",
+      profiles: { coordinator: execution, roles: { "model-a": execution, "model-b": { agent: "other" } } },
+    })
+    const reordered = model(1, {
+      template: "compare", notes: "  keep\n", taskMode: "independent",
+      profiles: { coordinator: { ...execution }, roles: { "model-b": { agent: "other" }, "model-a": { ...execution } } },
+    })
+    assert.equal(sameMissionModel(base, reordered), true)
+    assert.equal(sameMissionModel(undefined, undefined), true)
+    assert.equal(sameMissionModel(base, undefined), false)
+    assert.equal(sameMissionModel(base, { ...base, id: model(2).id }), false)
+    assert.equal(sameMissionModel(base, { ...base, name: "Renamed" }), false)
+    assert.equal(sameMissionModel(base, { ...base, objective: "Changed" }), false)
+    assert.equal(sameMissionModel(base, { ...base, notes: "keep" }), false)
+    assert.equal(sameMissionModel(base, { ...base, template: "custom", profiles: undefined }), false)
+    assert.equal(sameMissionModel(base, { ...base, taskMode: "native" }), false)
+    assert.equal(sameMissionModel(base, { ...base, profiles: { coordinator: execution, roles: { "model-a": execution } } }), false)
   })
 })

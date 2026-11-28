@@ -9,9 +9,10 @@ import type {
 } from "../api-types"
 import type { Logger } from "../logger"
 import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
-import { admitRemoteUpgrade, type RemoteGateDeps } from "./gate"
+import { admitRemoteUpgrade, admitRemoteVoiceUpgrade, type RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
 import type { RemoteControlOwnerLease } from "./owner-lease"
+import { isLiveVoiceRoute, refuseVoiceUpgrade } from "../speech/live-voice-gateway"
 
 type OpenTunnel = (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
 
@@ -21,6 +22,7 @@ interface ManagerOptions {
   router: () => ((request: IncomingMessage, response: ServerResponse) => void) | null
   /** Proxies an admitted web preview WebSocket upgrade; false when no preview path matched. */
   previewUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer) => boolean) | null
+  voiceUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer, deviceId: string) => void) | null
   /** Whether a web preview capability token is live. */
   hasPreview?: (token: string) => boolean
   logger: Logger
@@ -29,6 +31,8 @@ interface ManagerOptions {
   openTunnel?: OpenTunnel
   /** Restricts resuming at launch to one backend per config directory. */
   lease?: RemoteControlOwnerLease
+  /** Verified direct HTTPS origins (`direct-https.ts`) that pair and admit browser devices. */
+  directHttpsOrigins?: () => readonly string[]
   /** Administrator policy: no tunnel, pairing or launch resume; paired devices stay revocable. */
   disabledByAdministrator?: boolean
 }
@@ -37,6 +41,10 @@ export const REMOTE_CONTROL_DISABLED = "Remote Control is disabled by the admini
 
 export class RemoteControlManager {
   private readonly ingress: RemoteIngress
+  // Sockets of tunnel-authorized devices, including server devices on the direct listener.
+  private readonly deviceSockets = new Map<Socket, Set<string>>()
+  // Sockets of browser devices admitted on a verified direct HTTPS origin: independent of the tunnel.
+  private readonly directDeviceSockets = new Map<Socket, Set<string>>()
   private tunnel: RemoteTunnel | null = null
   private starting: Promise<RemoteTunnel> | null = null
   // Incremented by every stop, so a start still provisioning cannot outlive it.
@@ -45,6 +53,7 @@ export class RemoteControlManager {
   private enabled = false
   private error: string | undefined
   private lastConnectedAt: string | undefined
+  private readonly previewInvalidations = new Set<(deviceId?: string, tunnelOnly?: boolean) => void>()
 
   constructor(private readonly options: ManagerOptions) {
     this.ingress = new RemoteIngress((request, response) => {
@@ -52,8 +61,16 @@ export class RemoteControlManager {
       if (route) route(request, response)
       else response.writeHead(503).end()
     }, (request, socket, head) => {
+      if (isLiveVoiceRoute(request.url)) {
+        const device = admitRemoteVoiceUpgrade(request, this.gate())
+        const upgrade = options.voiceUpgrade?.()
+        if (!device) refuseVoiceUpgrade(socket, "403 Forbidden")
+        else if (!upgrade) refuseVoiceUpgrade(socket, "404 Not Found")
+        else upgrade(request, socket, head, device.id)
+        return "voice"
+      }
       const upgrade = admitRemoteUpgrade(request, this.gate()) ? options.previewUpgrade?.() : null
-      return upgrade ? upgrade(request, socket, head) : false
+      return upgrade?.(request, socket, head) ? "preview" : false
     })
   }
 
@@ -73,10 +90,15 @@ export class RemoteControlManager {
       previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
-      pairedDevices: this.options.registry.list().length,
+      pairedDevices: this.options.registry.pairedCount(),
       ...(this.lastConnectedAt ? { lastConnectedAt: this.lastConnectedAt } : {}),
       ...(this.error ? { error: this.error } : {}),
+      ...(this.directHttpsOrigins().length ? { directOrigins: this.directHttpsOrigins() } : {}),
     }
+  }
+
+  directHttpsOrigins(): string[] {
+    return [...(this.options.directHttpsOrigins?.() ?? [])]
   }
 
   async start(): Promise<RemoteControlStartResponse> {
@@ -121,12 +143,28 @@ export class RemoteControlManager {
     return this.pairingFor(this.tunnel)
   }
 
-  exchangePairing(code: string, userAgent: string | undefined): { device: RemoteControlDevice; token: string } | null {
+  exchangePairing(code: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
     if (!this.enabled || !this.tunnel) return null
-    const paired = this.options.registry.exchange(code, deviceNameFromUserAgent(userAgent))
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`)
     if (!paired) return null
     // A device replaced at the limit loses its live connections, as on revocation.
-    if (paired.evictedId) this.ingress.disconnectDevice(paired.evictedId)
+    if (paired.evictedId) this.disconnectDevice(paired.evictedId)
+    return { device: paired.device, token: paired.token }
+  }
+
+  /** A code for one verified direct HTTPS origin; the tunnel need not run. */
+  createDirectPairing(origin: string): RemoteControlPairing {
+    if (this.options.disabledByAdministrator) throw new Error(REMOTE_CONTROL_DISABLED)
+    if (!this.directHttpsOrigins().includes(origin)) throw new Error("This origin cannot pair devices")
+    return pairingFromCode(origin, this.options.registry.createPairing(origin))
+  }
+
+  exchangeDirectPairing(code: string, origin: string, userAgent: string | undefined, serverHostName?: string): { device: RemoteControlDevice; token: string } | null {
+    if (this.options.disabledByAdministrator) return null
+    if (!this.directHttpsOrigins().includes(origin)) return null
+    const paired = this.options.registry.exchange(code, serverHostName === undefined ? deviceNameFromUserAgent(userAgent) : `CodeNomad · ${serverHostName}`, origin)
+    if (!paired) return null
+    if (paired.evictedId) this.disconnectDevice(paired.evictedId)
     return { device: paired.device, token: paired.token }
   }
 
@@ -134,16 +172,44 @@ export class RemoteControlManager {
     return this.options.registry.list()
   }
 
-  /** A paired device remains a live principal only while Remote Control is connected and it is not revoked or expired. */
+  /**
+   * A paired device remains a live principal only while it is not revoked or expired and
+   * its channel is available: the connected tunnel, or its still-verified direct HTTPS origin.
+   */
   isDeviceAuthorized(id: string): boolean {
+    if (this.options.disabledByAdministrator) return false
     return this.enabled && this.tunnel !== null && this.options.registry.isPaired(id)
+      || this.directHttpsOrigins().some((origin) => this.options.registry.isPaired(id, origin))
+  }
+
+  isPreviewDeviceAuthorized(id: string, host: string, ingress: boolean): boolean {
+    if (this.options.disabledByAdministrator || !this.previewsAllowed()) return false
+    if (ingress) return this.enabled && this.tunnel?.hostname === host && this.options.registry.isPaired(id)
+    const origin = `https://${host}`
+    return this.directHttpsOrigins().includes(origin) && this.options.registry.isPaired(id, origin)
+  }
+
+  onPreviewDeviceInvalidated(id: string, ingress: boolean, invalidate: () => void): () => void {
+    const listener = (deviceId?: string, tunnelOnly?: boolean) => {
+      if ((!tunnelOnly || ingress) && (deviceId === undefined || deviceId === id)) invalidate()
+    }
+    this.previewInvalidations.add(listener)
+    return () => { this.previewInvalidations.delete(listener) }
+  }
+
+  private invalidatePreviews(deviceId?: string, tunnelOnly?: boolean) {
+    for (const invalidate of this.previewInvalidations) {
+      try { invalidate(deviceId, tunnelOnly) } catch { /* Continue notifying other owners. */ }
+    }
   }
 
   revokeDevice(id: string): boolean {
-    const revoked = this.options.registry.revoke(id)
-    // Revocation also ends live HTTP and SSE connections already admitted.
-    this.ingress.disconnectDevice(id)
-    return revoked
+    try {
+      return this.options.registry.revoke(id)
+    } finally {
+      // In-memory revocation still applies if the registry cannot be saved.
+      this.disconnectDevice(id)
+    }
   }
 
   previewsAllowed(): boolean {
@@ -153,22 +219,31 @@ export class RemoteControlManager {
   /** The host's choice; turning previews off also closes their live WebSockets. */
   setPreviewsAllowed(allowed: boolean): RemoteControlStatus {
     this.options.registry.setPreviewsAllowed(allowed)
-    if (!allowed) this.ingress.disconnectUpgrades()
+    if (!allowed) {
+      this.invalidatePreviews()
+      this.ingress.disconnectPreviews()
+    }
     return this.status()
   }
 
   gate(): RemoteGateDeps {
     return {
       publicHost: () => (this.enabled ? this.tunnel?.hostname ?? null : null),
-      authenticate: (token) => this.options.registry.authenticate(token),
-      assignDevice: (socket, deviceId) => this.ingress.assignDevice(socket, deviceId),
+      authenticate: (token) => this.enabled && this.tunnel ? this.options.registry.authenticate(token) : null,
+      assignDevice: (socket, deviceId) => trackSocket(this.deviceSockets, socket, deviceId),
       servesPreview: (token) => this.options.registry.previewsAllowed() && this.options.hasPreview?.(token) === true,
+      directHttpsOrigins: () => this.directHttpsOrigins(),
+      authenticateDirect: (token, origin) => !this.options.disabledByAdministrator && this.directHttpsOrigins().includes(origin) ? this.options.registry.authenticate(token, origin) : null,
+      assignDirectDevice: (socket, deviceId) => trackSocket(this.directDeviceSockets, socket, deviceId),
     }
   }
 
   shutdown(): Promise<void> {
     this.enabled = false
+    this.invalidatePreviews()
     this.generation += 1
+    for (const socket of this.directDeviceSockets.keys()) socket.destroy()
+    this.directDeviceSockets.clear()
     return this.release()
   }
 
@@ -211,6 +286,7 @@ export class RemoteControlManager {
         this.enabled = false
         this.options.registry.cancelPairing()
         this.options.lease?.release()
+        this.disconnectDevices()
         void this.ingress.stop()
         this.options.logger.warn({ err: error }, "Remote Control tunnel stopped")
       })
@@ -233,10 +309,36 @@ export class RemoteControlManager {
     this.options.lease?.release()
     const tunnel = this.tunnel
     this.tunnel = null
+    this.disconnectDevices()
     await Promise.allSettled([tunnel?.close(), this.ingress.stop()])
+  }
+
+  private disconnectDevice(id: string): void {
+    this.invalidatePreviews(id)
+    for (const sockets of [this.deviceSockets, this.directDeviceSockets]) {
+      for (const [socket, devices] of sockets) {
+        if (devices.has(id)) socket.destroy()
+      }
+    }
+  }
+
+  private disconnectDevices(): void {
+    this.invalidatePreviews(undefined, true)
+    for (const socket of this.deviceSockets.keys()) socket.destroy()
+    this.deviceSockets.clear()
   }
 
   private pairingFor(tunnel: RemoteTunnel): RemoteControlPairing {
     return pairingFromCode(tunnel.url, this.options.registry.createPairing())
   }
+}
+
+function trackSocket(sockets: Map<Socket, Set<string>>, socket: Socket, deviceId: string): void {
+  let devices = sockets.get(socket)
+  if (!devices) {
+    devices = new Set()
+    sockets.set(socket, devices)
+    socket.once("close", () => sockets.delete(socket))
+  }
+  devices.add(deviceId)
 }

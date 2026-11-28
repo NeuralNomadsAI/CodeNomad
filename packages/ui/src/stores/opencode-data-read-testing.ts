@@ -1,3 +1,4 @@
+import assert from "node:assert/strict"
 import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { getRootClient } from "./opencode-client.ts"
@@ -75,4 +76,12 @@ export async function settleSync(sync: Promise<unknown>, reads: () => number): P
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Awaits the frame lane's reduction of buffered content deltas. */
+export async function settleDeltas(done: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 500 && !done(); turn += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+  assert.ok(done(), "buffered content deltas did not reduce")
 }

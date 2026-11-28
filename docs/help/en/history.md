@@ -40,7 +40,9 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 | Delete session | Session row **Delete session**, or selected-session delete | Recursively deletes the native conversation and its descendant subsessions/history after confirmation; no undo |
 | Scrub Sessions | Command palette | Broader session deletion, not a display or context-size setting |
 
-**Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content. Drag across its eye or chevron buttons to set several rows at once: the first button you drag out of toggles, and every button you cross in the same column takes its new state. The conversation updates when you release the button.
+**Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Choosing another preset keeps those rows: choose **Custom** again to return to them. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**, or **Show … more** when much remains, which may take several steps. Revealing either is display-only and does not recover deleted content. Drag across its eye or chevron buttons to set several rows at once: the first button you drag out of toggles, and every button you cross in the same column takes its new state. The conversation updates when you release the button.
+
+In **Tool groups**, turn off the eye to show each call on its own, or use the chevron to open groups by default. Each tool type still has its own visibility setting. **Everything** opens groups by default; the other presets keep them collapsed.
 
 ## Compact a session {#compact-session}
 
@@ -66,8 +68,9 @@ Deleting a parent session also deletes its descendant subsessions and their hist
 
 1. Prefer a specific row's **Delete session** when you know exactly which conversation should go.
 2. For broader maintenance, run **Scrub Sessions** and read the **Deep Clean Sessions** confirmation.
-3. Confirm only if empty sessions, completed subagent sessions and unused forks may be removed.
 
-Scrub operates on the current project's known session candidates and can remove more than blank main sessions. It is not an archive operation and has no undo. Do not use it merely to hide a busy sidebar. The independent **Auto-cleanup blank sessions** preference is narrower: it checks that a session is genuinely empty rather than treating an unloaded transcript as empty.
+Both cleanup modes remove only verified empty, inactive sessions without children. Favorites and their ancestors are kept across folders.
+
+If a conversation disappears during cleanup, look for its unsent text and attachments in the project’s new-conversation composer. Use **Switch draft** to open a saved draft without replacing the current one. This also works when you reopen the project.
 
 Deletion removes conversations, not Git commits or a rollback of filesystem/external effects. If cleanup only partly succeeds, already deleted sessions stay deleted. Review the remaining list and errors before retrying. See [Conversations](conversations.md) for forks/undo and [Projects](projects.md) for deleting temporary folders or worktrees.

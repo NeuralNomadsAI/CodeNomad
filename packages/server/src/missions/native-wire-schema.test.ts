@@ -7,10 +7,22 @@ import { taskExecutionModeSchema, taskExecutionModeRpcSchema } from "./native-wi
 import { parseExecutionMode } from "./task-execution-mode"
 import { parseNativeBinding } from "./native-report-provenance"
 import { MISSION_BRIEFING_RESPONSES_MAX, missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
-import { scheduleToolWire } from "./schedule-tool"
+import { missionProgramWire } from "./program-tool"
 import { projectReadWire } from "./project-read-tool"
 import { projectControlWire, projectConfigureWire, projectDeleteWire } from "./project-control-tool"
-import { missionSettingsWire } from "./settings-tool"
+import { missionSettingsInput, missionSettingsWire } from "./settings-tool"
+
+test("Missions settings advertises a portable tool schema and still rejects mixed scopes", () => {
+  assert.equal(Reflect.get(missionSettingsWire, "type"), "object")
+  for (const key of ["oneOf", "anyOf", "allOf"]) assert.equal(Object.hasOwn(missionSettingsWire, key), false, key)
+  const expectation = "a".repeat(64)
+  assert.equal(missionSettingsInput.safeParse({ scope: "configurations", action: "read" }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "preferences", action: "read", field: "missionDeleteSessions" }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", expectation, depth: null }).success, true)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", expectation, depth: 2, deleteSessions: true }).success, false)
+  assert.equal(missionSettingsInput.safeParse({ scope: "preferences", action: "read" }).success, false)
+  assert.equal(missionSettingsInput.safeParse({ scope: "depth", action: "save", depth: 2 }).success, false)
+})
 
 test("Missions native RPC schemas avoid unsupported not and pattern keywords", () => {
   const visit = (value: unknown, path = "rpc") => {
@@ -22,18 +34,15 @@ test("Missions native RPC schemas avoid unsupported not and pattern keywords", (
     }
   }
   visit(CODENOMAD_MISSIONS_RPC)
-  visit(scheduleToolWire, "mission.schedule")
+  visit(missionProgramWire, "mission.program")
   visit(missionSettingsWire, "mission.settings")
   visit(projectReadWire, "mission.inspect.project")
   for (const wire of [projectControlWire, projectConfigureWire, projectDeleteWire]) visit(wire, "mission.project-controls")
 })
 
 test("every Missions RPC schema converts through the native schema representation", () => {
-  for (const schema of [projectControlWire, projectConfigureWire, projectDeleteWire, missionSettingsWire])
+  for (const schema of [projectControlWire, projectConfigureWire, projectDeleteWire, missionSettingsWire, missionProgramWire])
     assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({ dialect: "draft-2020-12", schema, definitions: {} }))
-  assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
-    dialect: "draft-2020-12", schema: scheduleToolWire, definitions: {},
-  }), "mission.schedule")
   assert.doesNotThrow(() => SchemaRepresentation.fromJsonSchemaDocument({
     dialect: "draft-2020-12", schema: projectReadWire, definitions: {},
   }), "mission.inspect.project")

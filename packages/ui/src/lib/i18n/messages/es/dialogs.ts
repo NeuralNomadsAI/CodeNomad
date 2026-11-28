@@ -1,4 +1,12 @@
 export const dialogMessages = {
+  "remoteRestore.absent": "Servidor no encontrado",
+  "remoteRestore.confirmChange": "¿Cambiar esta conexión al servidor? Las pestañas guardadas en otras ventanas podrían dejar de estar disponibles.",
+  "remoteRestore.idle": "En espera",
+  "remoteRestore.admitting": "Conectando…",
+  "remoteRestore.compatible": "Proyecto no disponible",
+  "remoteRestore.refused": "Servidor incompatible",
+  "remoteRestore.unreachable": "Servidor no disponible",
+  "remoteRestore.inUse": "Cierra las pestañas de este servidor y vuelve a abrir Configuración desde otro proyecto antes de cambiar su dirección.",
   "authRecovery.title": "Volver a iniciar sesión en CodeNomad",
   "authRecovery.pairing": "En el equipo anfitrión, abre Configuración → Acceso remoto, crea un enlace de vinculación, ábrelo en este dispositivo y comprueba la conexión.",
   "authRecovery.pairingTitle": "Vincular de nuevo este dispositivo",

@@ -1,12 +1,13 @@
-import { createRoot } from "solid-js"
+import { createEffect, createRoot, on } from "solid-js"
 import { useAppSessionCapture } from "../../../src/lib/hooks/use-app-session-capture"
 import { initializeClientState, loadedRestorableSession, flushClientState, clientStateIsPrimary } from "../../../src/stores/client-state"
 import { decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { addInstance } from "../../../src/stores/instances"
 import { attachInstanceTab, getInstanceAppTabId } from "../../../src/stores/app-tabs"
 import {
-  sessions, setSessions, withSession, setSessionDraftPrompt, onSessionDraftHydrated, getSessionDraftPrompt,
+  sessions, setSessions, withSession, setSessionExpanded, setSessionStatus, setSessionDraftPrompt, onSessionDraftHydrated, getSessionDraftPrompt,
 } from "../../../src/stores/session-state"
+import { removeSessionRuntimeState } from "../../../src/stores/session-api"
 import { captureSessionCatalog } from "../../../src/stores/session-catalog-persistence"
 import { hydrateSeenInterruptions } from "../../../src/stores/session-interruption-seen"
 import { addAttachment } from "../../../src/stores/attachments"
@@ -29,6 +30,9 @@ for (const id of ids) {
 }
 let hydrated = 0
 onSessionDraftHydrated(() => { hydrated++ })
+// Captures, independent of whether their content needs a native write.
+let captures = 0
+createRoot(() => createEffect(on(loadedRestorableSession, () => { captures++ }, { defer: true })))
 let dispose!: () => void
 const capture = createRoot(cleanup => { dispose = cleanup; return useAppSessionCapture() })
 capture.start({ activeTabIndex: 0, tabs: ids.map(id => ({
@@ -37,23 +41,28 @@ capture.start({ activeTabIndex: 0, tabs: ids.map(id => ({
 })) })
 ids.forEach((id, index) => capture.recordRestoredTab(index, getInstanceAppTabId(id)))
 await capture.ready
+const draftInput = document.createElement("textarea")
+draftInput.id = "close-draft"
+draftInput.oninput = () => setSessionDraftPrompt("first", "parent", draftInput.value)
+document.body.append(draftInput)
 ;(window as any).fixture = {
   hydrated: () => hydrated,
+  captures: () => captures,
   state: loadedRestorableSession,
   flushStore: flushClientState,
   primary: clientStateIsPrimary,
   draftValue: (id: string, sessionId: string) => getSessionDraftPrompt(id, sessionId),
   catalog: () => captureSessionCatalog([...sessions().get("first")!.values()]),
   appear: () => setSessions(previous => {
-    const rows = previous.get("first")!
+    const rows = new Map(previous.get("first"))
     rows.set("missing", { ...structuredClone(rows.get("parent")!), id: "missing" })
-    return new Map(previous)
+    return new Map(previous).set("first", rows)
   }),
   rename: (from: string, to: string) => setSessions(previous => {
-    const rows = previous.get("first")!, row = rows.get(from)!
+    const rows = new Map(previous.get("first")), row = rows.get(from)!
     rows.delete(from)
     rows.set(to, { ...row, id: to })
-    return new Map(previous)
+    return new Map(previous).set("first", rows)
   }),
   mutate(path: string, value: unknown) {
     withSession("first", "parent", row => {
@@ -82,10 +91,15 @@ await capture.ready
     })
   },
   draft: (value: string) => setSessionDraftPrompt("first", "parent", value),
+  editWhileClosing: () => setSessionDraftPrompt("second", "parent", "store edit during close"),
+  expand: () => setSessionExpanded("first", "parent", true),
+  settleChild: () => setSessionStatus("second", "child", "idle", { force: true }),
+  deleteFirstChild: () => removeSessionRuntimeState("first", "child", "observation"),
   attach: () => addAttachment("first", "parent", createFileAttachment("/synthetic/note.txt", "note.txt")),
   remove: () => setSessions(previous => {
-    previous.get("second")!.delete("child")
-    return new Map(previous)
+    const rows = new Map(previous.get("second"))
+    rows.delete("child")
+    return new Map(previous).set("second", rows)
   }),
   decode: (payload: any) => decodeClientSnapshotV2(payload.snapshot, 1, async key => payload.partitions[key] ?? null),
   dispose,

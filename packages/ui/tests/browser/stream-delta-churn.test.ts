@@ -33,9 +33,6 @@ async function withPage(run: (page: Page) => Promise<void>, actions = false) {
   await page.route("**/*", route => {
     const request = new URL(route.request().url())
     if (request.hostname !== "127.0.0.1") return route.abort()
-    if (request.pathname === "/workspaces/stream-delta-fixture/yolo/sessions/active" && route.request().method() === "GET") {
-      return route.fulfill({ json: { enabled: false } })
-    }
     if (request.pathname.endsWith("/speech/capabilities")) return route.fulfill({ json: {
       available: speechAvailable, configured: true, provider: "fixture", supportsStt: false, supportsTts: true,
       supportsStreamingTts: true, ttsFormats: ["mp3"], streamingTtsFormats: ["mp3"], ttsConfigured: true,

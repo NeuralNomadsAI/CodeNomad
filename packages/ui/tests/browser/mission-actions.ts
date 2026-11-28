@@ -121,7 +121,7 @@ export async function showSelection(page: Page): Promise<Locator> {
 /** The selected item's icon toolbar, mounted in the header's selection line. */
 export const missionToolbar = (page: Page) => missionPicker(page).locator(".mission-picker-selection-actions .mission-action-bar")
 
-/** A button of the selected item's icon toolbar (Play/Pause, Stop, Run now, Summary, Open conversation, Delete). */
+/** A button of the selected item's icon toolbar (Play/Pause, Stop, Summary, Open conversation, Delete). */
 export const missionToolbarAction = (page: Page, label: string) =>
   missionToolbar(page).getByRole("button", { name: label, exact: true })
 

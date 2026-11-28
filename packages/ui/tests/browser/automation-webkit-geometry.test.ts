@@ -16,6 +16,7 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
     const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
     const source = readFileSync(new URL("../../../server/src/automation/page/webkit/read.generated.js", import.meta.url), "utf8")
     let inputs = 0
+    let expectedDocument: string
     const read = async (operation: PageOperation) => {
       if (operation.op === "pointer") {
         inputs++
@@ -26,7 +27,12 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
         return {}
       }
       if (operation.op === "wheel") { inputs++; await page.mouse.wheel(operation.event.deltaX, operation.event.deltaY); return {} }
-      return page.evaluate(({ source, operation }) => JSON.parse(new Function("request", source)(JSON.stringify(operation))).result, { source, operation })
+      const request = operation.op === "checkpoint" ? operation : { ...operation, expectedDocument }
+      const { document, result } = await page.evaluate(({ source, request }) =>
+        JSON.parse(new Function("request", source)(JSON.stringify(request))), { source, request })
+      if (operation.op === "checkpoint") expectedDocument = document
+      else assert.equal(document, expectedDocument)
+      return result
     }
     const session = { driver: nativeDriver({ driver: "webkit", contractVersion: 1 }, read, async () => {}), markAutomation: false, checkpoint: async () => {} }
     for (const transform of ["rotate(180deg)", "scale(-1,1)", "rotate(31deg) skewX(12deg)", "translate(13px,9px) scale(0.8,1.1)", "ancestor", "nested", "top-level"]) {
@@ -53,6 +59,7 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
         while (doc.querySelector("iframe")) doc = doc.querySelector("iframe")!.contentDocument!
         return { ...doc.body.dataset }
       })
+      await read({ op: "checkpoint" })
       const nodes = (await read({ op: "tree" })).nodes
       const target = nodes.find((n: any) => n.name === "Target" && n.role === "button").node
       const other = nodes.find((n: any) => n.name === "Other" && n.role === "button").node
@@ -67,7 +74,7 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
       await performAction(session, { kind: "hover", ref: "target", backendNodeId: target })
       await performAction(session, { kind: "drag", ref: "target", backendNodeId: target, to: { ref: "other", backendNodeId: other } })
       assert.equal((await state()).up, "other", transform)
-      await performAction(session, { kind: "scroll", target: { ref: "target", backendNodeId: target }, direction: "down", amount: 20 })
+      await performAction(session, { kind: "scroll", target: { ref: "target", backendNodeId: target }, delta: { x: 0, y: 20 } })
       await page.waitForTimeout(100)
       assert.equal((await state()).wheel, "true", transform)
       console.log(JSON.stringify({ transform, reportedHit: "target", receives: null, clicked, drag: "other", wheel: "trusted" }))
@@ -75,10 +82,11 @@ test("WebKit affine frame aiming agrees with native input, including reflected a
     for (const transform of ["perspective(400px) rotateY(30deg)", "scale(0)"]) {
       await page.setContent(`<div style="height:2000px"></div><iframe style="transform:${transform}" srcdoc="<button>Target</button>"></iframe>`)
       await page.waitForFunction(() => document.querySelector("iframe")!.contentDocument!.querySelector("button"))
+      await read({ op: "checkpoint" })
       const target = (await read({ op: "tree" })).nodes.find((n: any) => n.name === "Target").node
       const before = inputs
       for (const kind of ["click", "hover", "scroll", "drag"] as const) {
-        const action = kind === "scroll" ? { kind, target: { ref: "target", backendNodeId: target }, direction: "down" as const, amount: 20 }
+        const action = kind === "scroll" ? { kind, target: { ref: "target", backendNodeId: target }, delta: { x: 0, y: 20 } }
           : kind === "drag" ? { kind, ref: "target", backendNodeId: target, to: { ref: "target", backendNodeId: target } }
           : { kind, ref: "target", backendNodeId: target }
         await assert.rejects(performAction(session, action), PageDriverUnsupportedError)

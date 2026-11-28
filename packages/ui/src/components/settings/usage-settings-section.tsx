@@ -2,8 +2,10 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack }
 import { RefreshCw } from "lucide-solid"
 import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
-import { serverApi } from "../../lib/api-client"
-import { serverEvents } from "../../lib/server-events"
+import { backendOf } from "../../lib/backend-client"
+import { parseInstanceKey } from "../../lib/backend-identity"
+import { captureBackendOperation } from "../../lib/backend-operation"
+import { backendEvents as serverEvents } from "../../lib/server-events"
 import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../../lib/event-refresh-scheduler"
@@ -28,15 +30,19 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     let count = selected ?? 30, disposed = false, revision = 0, invalidation = 0, restore = true, connected = true
     let periodKnown = selected !== undefined, freshEpoch = -1
     let controller: AbortController | undefined
+    const operation = captureBackendOperation(id, undefined, () => !disposed)
     setDays(count); setSnapshot(undefined); setError(false); setBusy(false); setStale(true)
-    if (!id) return
-    const current = (epoch: number) => !disposed && untrack(visible) && epoch === revision
+    if (!id || !operation.current()) return
+    let api: ReturnType<typeof backendOf>["api"]
+    try { api = backendOf(id).api } catch { setError(true); return }
+    const { workspaceId } = parseInstanceKey(id)
+    const current = (epoch: number) => operation.current() && untrack(visible) && epoch === revision
     const load = async () => {
-      if (disposed || !untrack(visible) || !connected) return
+      if (!operation.current() || !untrack(visible) || !connected) return
       controller?.abort()
       const epoch = ++revision, observed = invalidation
       controller = new AbortController()
-      const signal = controller.signal
+      const signal = AbortSignal.any([controller.signal, operation.signal])
       let verified: Pick<ServiceUsageSnapshot, "owner" | "identity" | "connection"> | undefined
       setBusy(true)
       // These are independent reads: optional discovery/restoration never gates
@@ -48,13 +54,13 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
           || identity && previous.identity && identity !== previous.identity
           || !previous.identity && connection && previous.connection && connection !== previous.connection)) setSnapshot(undefined)
       }
-      void serverApi.getServiceUsageOwner(id, signal).then(value => {
+      void api.getServiceUsageOwner(workspaceId, signal).then(value => {
         if (!current(epoch) || freshEpoch === epoch) return
         verify(value.owner, value.identity, value.connection)
         verified = value
       }).catch(() => {})
       if (restore) {
-        void serverApi.getCachedServiceUsage(id, timezone, selected, signal).then(cached => {
+        void api.getCachedServiceUsage(workspaceId, timezone, selected, signal).then(cached => {
           if (!current(epoch)) return
           if (freshEpoch === epoch) {
             const fresh = untrack(snapshot)
@@ -77,7 +83,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       }
       const to = Date.now()
       try {
-        const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
+        const next = await api.getServiceUsage(workspaceId, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
         if (current(epoch)) {
           if (verified?.owner && next.owner && verified.owner !== next.owner
             || verified?.identity && next.identity && verified.identity !== next.identity) {
@@ -95,6 +101,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     }
     const scheduler = createEventRefreshScheduler(load)
     const invalidate = (urgency: RefreshUrgency = "urgent") => {
+      if (!operation.current()) return
       invalidation++; setStale(true)
       if (untrack(visible) && connected) scheduler.schedule("stats", urgency)
     }
@@ -118,8 +125,8 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       connectionStatus = key; connected = payload.status === "connected"; revoke()
       if (payload.status === "connected") invalidate()
     })
-    const reconnect = serverEvents.onOpen(() => { connected = true; revoke(); invalidate() })
-    const transport = serverEvents.onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
+    const reconnect = serverEvents.forInstance(() => id).onOpen(() => { connected = true; revoke(); invalidate() })
+    const transport = serverEvents.forInstance(() => id).onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
     createEffect(() => {
       if (visible()) invalidate()
       else { revision++; controller?.abort(); scheduler.cancel("stats"); setBusy(false); setStale(true) }
@@ -144,7 +151,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
         </select></label>
         <button class="window-icon-button disabled:cursor-not-allowed" type="button" disabled={busy()} onClick={() => refresh()}
           aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")}>
-          <RefreshCw class={`w-4 h-4 ${busy() ? "animate-spin" : ""}`} aria-hidden="true" />
+          <span class="inline-flex" classList={{ "animate-spin": busy() }}><RefreshCw class="w-4 h-4" aria-hidden="true" /></span>
         </button>
       </div>
       <Show when={busy() && !snapshot()}><p role="status">{t("settings.usage.loading")}</p></Show>

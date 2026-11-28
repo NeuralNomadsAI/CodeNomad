@@ -11,6 +11,13 @@ describe("sanitizeConfigOwner server speech", () => {
     assert.equal((result.speech as any).hasApiKey, true)
   })
 
+  it("removes malformed and blank credentials without echoing their contents", () => {
+    const result = sanitizeConfigOwner("server", {
+      speech: { apiKey: ["fixture-secret"], stt: { apiKey: "  " }, tts: { apiKey: { value: "fixture-secret" } } },
+    })
+    assert.deepEqual(result.speech, { hasApiKey: false, stt: { hasApiKey: false }, tts: { hasApiKey: false } })
+  })
+
   it("strips stt.apiKey and sets stt.hasApiKey when separateProviders is true", () => {
     const result = sanitizeConfigOwner("server", {
       speech: {

@@ -1,5 +1,6 @@
 import type { LocationRef } from "@opencode/client"
 import { listen } from "@tauri-apps/api/event"
+import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost, runtimeEnv } from "../runtime-env"
 import type { SettingsSectionId } from "../../stores/settings-screen"
@@ -7,14 +8,16 @@ import { getLogger } from "../logger"
 import { normalizeOpenerStartupStateResult, type OpenerStartupStateResult, type StartupStateCommand } from "./startup-state-command"
 
 const sections = new Set<SettingsSectionId>([
-  "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
+  "general", "chat", "hotkeys", "notifications", "speech", "remote", "servers", "opencode",
   "providers", "missions", "usage", "sidecars", "config-files", "advanced", "info",
 ])
 
 export interface NativePreferencesRequest {
   section: SettingsSectionId
   scrollTop?: number
+  /** Qualified instanceKey: backend identity plus its workspace record; local keys stay unchanged. */
   instanceId?: string
+  serverId?: string
   /** Opened folder on the CodeNomad backend host, separate from the native Location (WSL/worktrees). */
   workspacePath?: string
   location?: LocationRef
@@ -30,6 +33,7 @@ export function normalizeNativePreferencesRequest(value: unknown): NativePrefere
     section: candidate.section as SettingsSectionId,
     ...(Number.isSafeInteger(candidate.scrollTop) && (candidate.scrollTop as number) >= 0 && (candidate.scrollTop as number) <= 10_000_000 ? { scrollTop: candidate.scrollTop as number } : {}),
     ...(typeof candidate.instanceId === "string" && candidate.instanceId ? { instanceId: candidate.instanceId } : {}),
+    ...(typeof candidate.serverId === "string" && candidate.serverId && candidate.serverId.length <= 512 ? { serverId: candidate.serverId } : {}),
     ...(typeof candidate.workspacePath === "string" && candidate.workspacePath && candidate.workspacePath.length <= 32768 && !candidate.workspacePath.includes("\0")
       ? { workspacePath: candidate.workspacePath } : {}),
     ...(location && typeof location === "object" && typeof (location as LocationRef).directory === "string"
@@ -58,7 +62,7 @@ export async function openNativePreferences(request: NativePreferencesRequest, t
   if (runtimeEnv.host === "electron") {
     const open = window.electronAPI?.openPreferences
     if (!open) throw new Error("Native Preferences is unavailable")
-    await open(request.section, { instanceId: request.instanceId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
+    await open(request.section, { instanceId: request.instanceId, serverId: request.serverId, workspacePath: request.workspacePath, location: request.location }, toggle, resume)
     return
   }
   if (runtimeEnv.host === "tauri") {
@@ -86,15 +90,16 @@ export async function acceptNativePreferencesRequest(request: NativePreferencesR
 
 export async function onNativePreferencesFlushRequested(flush: (generation?: number) => Promise<void>): Promise<() => void> {
   if (isElectronHost()) {
-    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flush
+    const flushBeforeShutdown = () => flush()
+    window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ = flushBeforeShutdown
     return () => {
-      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flush) {
+      if (window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__ === flushBeforeShutdown) {
         delete window.__CODENOMAD_FLUSH_CLIENT_STATE_BEFORE_NATIVE_SHUTDOWN__
       }
     }
   }
   if (isTauriHost()) {
-    return listen<{ generation: number }>("client-state:flush-requested", event => {
+    return getCurrentWebview().listen<{ generation: number }>("client-state:flush-requested", event => {
       void flush(event.payload.generation).catch(error => getLogger("actions").warn("Preferences shutdown flush failed", error))
     })
   }

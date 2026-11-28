@@ -145,6 +145,21 @@ the unavailable-preview fallback.
 Saves ask before overwriting external changes; read/write errors preserve the
 draft, and explicit refresh asks before discarding edits.
 
+With previous-state restoration enabled, the desktop profile retains up to 32
+file drafts within 256 KiB of encoded data, independently of window snapshots.
+Browser tabs retain drafts in a separate session-storage item. Their key includes the backend,
+installation, project folder and available native project ID, checkout path and
+relative file path. On reopening a file,
+the reader compares its SHA-256 fingerprint with the stored baseline and reports
+a mismatch alongside the retained draft. Only explicit Save admits a file write.
+Local desktop close, quit and reload wait for draft persistence. A refused update
+keeps the reader available so the user can save or discard their edits. A text
+file stays read-only while its draft identity is unavailable; Refresh retries it.
+The desktop host serializes draft reads and changes. Discard releases the
+requesting window's copy; a renderer that read or wrote the draft keeps its
+stored copy until navigation or actual window destruction, including while
+workspace release delays a closing window.
+
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work
 uses the worker's foreground queue. Commit metadata and parent IDs share one Git
@@ -159,6 +174,16 @@ insertion into the composer remain available.
 
 ## Backend boundaries
 
+The tree, file reader/editor, search, Git readers/mutations and worktree actions
+use `backendOf(instanceId).api`; HTTP receives the raw workspace id and the
+backend's physical directory. Listed-directory watches and filesystem events
+belong to that same backend. Image previews retain that backend's returned
+base64 bytes. Missing owners fail without a local fallback. Native open/reveal,
+terminal and editor actions are local-backend-only in both desktop hosts; the
+shared workspace-target adapter refuses a remote instance before IPC. Native
+folder selection/drop stays with local project creation; device attachments
+transfer their bytes rather than resolving a backend path on the desktop.
+
 Listings register their watch before reading the directory, because native
 filesystem events miss some browsed folders; this path needs no initialized
 OpenCode client. Each `workspace.filesChanged` batch carries the workspace ID and
@@ -172,14 +197,32 @@ opaque device/inode identity distinct from mtime.
 
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed
   `directory`, validates it through the manager's worktree ownership,
-  and uses the bounded filesystem content reader (5 MiB, base64). This also works
-  for the explicitly opened directory in Git-degraded mode.
+  and uses the bounded filesystem content reader (5 MiB, base64). It returns a
+  quoted lowercase SHA-256 `version` over the file bytes and emits the same value
+  as `ETag`. This also works for the explicitly opened directory in Git-degraded
+  mode.
 - `/api/workspaces/:id/worktrees/:slug/git-history` returns up to 50 commits plus
   a continuation flag. Later pages retain their original HEAD hash.
 - `PUT /api/workspaces/:id/files/content` accepts the exact browsed `directory`
   alongside the relative path, checks current ownership and the deletion fence,
-  and uses the shared filesystem writer. It never redirects a linked-worktree
-  edit to the root checkout.
+  and uses the shared filesystem writer (`versioned-file.ts`). It never redirects
+  a linked-worktree edit to the root checkout. Callers may supply either a
+  non-empty `expectedVersion` in the JSON body or an `If-Match` header (both
+  together or an empty selector return 400; omitting both remains accepted). Under
+  canonical-path and physical-identity locks (`file-access.ts`), conditional saves
+  verify the current file handle's bytes before writing and return
+  `409 { error: "File changed on disk" }` when missing or different. Existing
+  single-link files stage to a sibling temporary file, re-verify target and parent
+  identity, and publish via `rename` (preserving POSIX mode and ownership where
+  permitted; Node.js `fs` does not copy POSIX ACLs, xattrs or NTFS alternate
+  streams across `rename`); hardlinks (`nlink > 1`), non-writable parent
+  directories, rename limitations, and unpreservable POSIX ownership fall back to
+  a verified in-place write on the open handle. New files stage to a temporary file and publish
+  atomically with no-clobber `link` (or an exclusive `wx` create-and-write
+  fallback when hard links are unavailable). Successful saves return `204` with
+  the new `ETag`. The Solid editor forwards `expectedVersion` and maps save-time
+  `409` and `file_too_large`/`413` rejections to localized alerts while keeping
+  the draft.
 - `/git-history/:commit` returns the message and files; an optional `path` returns
   before/after text against the first parent (empty for a root commit).
 - Commit IDs are full SHA-1/SHA-256 hashes. Files must belong to the commit's
@@ -189,6 +232,10 @@ opaque device/inode identity distinct from mtime.
 
 ## Validation
 
+- `lib/backend-files-routing.test.ts`: real HTTP backends and Files/Git consumers,
+  including commit selection and session-family moves; literal local/remote wire
+  encoding and search defaults; all four native workspace targets refuse remote
+  instances before Electron or Tauri IPC. The UI unit CI runs this contract.
 - `workspaces/file-watches.test.ts`: real host file operations, replacement,
   physical containment, bounded handles and disposal/admission fencing.
 - `tests/browser/file-preview-panel.test.ts`: the real instance shell keeps the
@@ -205,6 +252,10 @@ opaque device/inode identity distinct from mtime.
   reread only changed visible directories, while explicit writes remain immediate.
 - `server/routes/files-history.test.ts`: real temporary root/linked repositories,
   route ownership, file bounds, history/diff and directory-only reading.
+- `server/routes/workspace-file-version.test.ts`: preview `version`/`ETag`,
+  `expectedVersion`/`If-Match` 204/409/400 contracts, alias serialization,
+  staging-failure isolation, in-place hardlink preservation, read-only refusal,
+  oversized saves and `If-Match` relay forwarding.
 - `workspaces/git-history.test.ts`: root/merge/rename/delete/binary/gitlink cases
   and snapshot pagination across a new HEAD.
 - `workspaces/git-init.test.ts` and `server/routes/git-init.test.ts`: exact-folder
@@ -249,7 +300,7 @@ opaque device/inode identity distinct from mtime.
 
 ## Agent conventions
 
-- Workspace text is editable in the central file reader (including Markdown source), with Save and Ctrl/Cmd+S. Keep dirty drafts in `components/workspace-file-editor.ts`, scoped by instance/directory/path; invalidation must not replace them. Saves reread for external-change confirmation and pass the exact owned directory through the deletion-fenced filesystem write route. Images, binary content and historical diffs are read-only.
+- Workspace text is editable in the central file reader (including Markdown source), with Save and Ctrl/Cmd+S. Keep dirty drafts in `components/workspace-file-editor.ts` and persist them through the client-state owner's separate draft store; invalidation must not replace them. Saves reread for external-change confirmation and pass the exact owned directory through the deletion-fenced filesystem write route. Images, binary content and historical diffs are read-only.
 - Files row selection never opens the central preview implicitly. All three modes reuse `FileRowActions` with a pinned eye using the shared `icon-toggle` active state; secondary actions use whole-row overflow measurements. Keep selection beneath the entire row including controls and rollover in `styles/panels/control-hover.css`. Changes keeps staged/unstaged disclosures with commit actions at the top of the staged section. Git image readers use exact bounded HEAD/index/worktree or parent/commit bytes, never current-file substitutes for historical content.
 - The Files panel combines Workspace, Changes and Commits in one compact switch, initially on Workspace. Its lazy worktree tree preserves expanded folders while switching modes; tree styles live in `styles/panels/workspace-tree.css`, Git navigation in `styles/panels/git-history.css`, row actions in `styles/panels/file-row-actions.css`. Workspace secondary actions are folder-specific (open, terminal, copy path) and file-specific (open, reveal, copy path). Changes rows carry explicit stage/unstage actions and drag between staged/unstaged drop zones. An identical status refresh publishes nothing and changed ones reuse unchanged item objects (`reuseUnchanged`); each section initially renders `GIT_CHANGE_ROW_LIMIT` rows plus sticky current/previewed/bulk-selected rows (kept until the worktree changes or the file leaves the loaded inventory; a hidden-mode discard keeps them; focus never pins), with an in-place Show more (`git-change-window.ts`). Mounted row cost grows with cumulative reveals and sticky pins. A focused row that unmounts hands focus only to its replacement, the nearest surviving row/Show more or the section header (without scrolling), never the commit box or `<body>` (`git-change-row-focus.ts`), ranges span rendered rows only and row state uses `createSelector`. File/diff readers close with a trailing X; the unified/split switch shows the current layout with Columns/Rows iconography. All three modes are cache-first: directory listings, git status and commit history revalidate lazily on filesystem invalidation, mode activation or explicit refresh, never on every focus or expand. `components/files-preview-view.tsx` chooses the central editable Workspace reader or shared read-only diff reader above the composer. The Advanced "Hide whitespace-only changes" preference (`hideDiffWhitespaceChanges`, default on, set only in Advanced settings) mainly removes unstaged files that Git's own `diff --numstat -z --ignore-all-space` omits entirely (whitespace incl. CRLF, inner spacing and a removed/added final newline such as `"x\n"` → `"x"`) from the Changes list, its counts and every selection/bulk/drag action: the status route runs that single extra bounded worker query only when `?hideWhitespace=1` is requested, starts it after the ordinary unstaged numstat resolves, keys its singleflight by the option and fails open. Hide only paths absent from the `-w` output: any listed record, including `0 0` (worktree mode changes, unmerged paths, or every whitespace-only file on older Git), stays visible; skip entries whose staged side is unmerged regardless of record order. Never flag untracked, binary, added/deleted/renamed or staged changes: staged rows (including a staged chmod) are never filtered out; beyond the row bound they stay counted and revealable. Toggling refreshes the visible list and discards reads made under the other option. As a secondary effect, Changes and Commits diffs map it to Monaco's native `ignoreTrimWhitespace` (diff reads ignore the option; staging/commits keep exact content), and `file-viewer/diff-whitespace.ts` mirrors Monaco's model (BOM strip, line split, space/tab trim, empty-side whole-file change) in linear time so the reader is never silently blank: factual, setting-independent notes for whitespace-only files (never advice to change the setting: Monaco 0.52 never draws same-length trailing-whitespace swaps in either mode) and for line-ending/BOM-only files, which Monaco never draws either. Do not replicate Monaco's diff loops to predict what it draws. Worktree browsing never checks out a branch or moves a session. Historical reads use bounded worker Git commands behind existing worktree ownership checks. Workspace previews use the bounded directory-authorized preview route; Monaco tokenizers ship locally.
 - A known non-repository (Git available, `isGitRepo: false`) keeps Changes/Commits reachable, without Git reads, showing an explicit unconfirmed "Initialize Git" button (`right-panel/useGitInit.ts`); in no-Git directory-only mode (unknown repository status) Changes/Commits keep their Git views, whose reads report `git_required`. `POST /api/workspaces/:id/git-init` accepts only the explicitly opened folder (realpath match), refuses directory-only mode and existing/ancestor repositories, holds its deletion fence, verifies native `location.get`'s project directory is that exact folder (never a parent), then sends one native `vcs.init` with provider `git` (`workspaces/git-init.ts`); 501 `VcsInitNotSupportedError` becomes `git_init_unsupported`. Never replay: success and any failure only invalidate/re-read the inventory, git status, filesystem caches, then project metadata before sessions (the native project ID changes, sessions follow it). The `codenomad.git-availability` advisory depends only on the Git executable. Validate with `server/routes/git-init.test.ts`, `workspaces/git-init.test.ts`, `tests/browser/git-init.test.ts` and the isolated `scripts/test-git-init-native.mjs`.

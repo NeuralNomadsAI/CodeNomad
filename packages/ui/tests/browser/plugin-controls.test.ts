@@ -397,7 +397,9 @@ test("unproven and third-party no-ID local failures retain ordinary native-path 
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => { (window as any).fixture.ordinaryLocalFailure(); (window as any).fixture.show() })
     await page.locator('[data-local-path="/thirdparty/plugin.ts"]').waitFor()
-    assert.equal(await page.locator(".plugin-control-row").count(), 2)
+    // The unidentified declarations naming those paths keep their own rows; a raw path never merges them.
+    assert.equal(await page.locator(".plugin-control-row[data-local-path]").count(), 2)
+    assert.equal(await page.locator(".plugin-control-row[data-source-target]").count(), 2)
     assert.equal(await page.locator(".plugin-system-attention").count(), 0)
     assert.equal(await page.locator('.plugin-control-row input[type="checkbox"]').count(), 0)
     for (const path of ["/thirdparty/plugin.ts", "/daemon/plugins/codenomad-design.js"]) {
@@ -409,6 +411,30 @@ test("unproven and third-party no-ID local failures retain ordinary native-path 
     }
   } finally { await page.close() }
 })
+
+for (const [scope, selector, exempt] of [
+  ["global", "codenomad.missions", true],
+  ["global", "codenomad.*", false],
+  ["project", "codenomad.missions", false],
+] as const) {
+  test(`Missions warning exemption: ${scope} ${selector}`, async () => {
+    const page = await browser.newPage()
+    try {
+      await page.goto(url)
+      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.evaluate(({ scope, selector }) => {
+        const fixture = (window as any).fixture
+        fixture.disabledMissions(scope, selector)
+        fixture.show()
+      }, { scope, selector })
+      await page.getByRole("button", { name: "Refresh plugin controls", exact: true }).waitFor()
+      await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>(".plugin-controls-header button")?.disabled)
+      const warning = page.getByRole("status", { name: "CodeNomad plugins need attention", exact: true })
+      if (exempt) assert.equal(await warning.count(), 0)
+      else await warning.getByRole("button", { name: `Re-enable codenomad.missions in ${scope === "global" ? "Global" : "Project"}`, exact: true }).waitFor({ timeout: 4500 })
+    } finally { await page.close() }
+  })
+}
 
 for (const [ruleScope, expectedScope, writable] of [
   ["global", "global", ["global", "project"]],

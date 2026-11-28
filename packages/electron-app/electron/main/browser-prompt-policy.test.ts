@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { readFileSync } from "node:fs"
 import vm from "node:vm"
+import { createRequire } from "node:module"
 import { createBrowserPromptHandler, validPromptRequest } from "./browser-prompt-policy"
 import type { BrowserWindow, IpcMainEvent, WebContents } from "electron"
 
@@ -10,9 +11,12 @@ test("preview preload exposes only standard prompt and can send only its dedicat
   const calls: unknown[][] = []
   const source = readFileSync(new URL("../preload/browser-prompt.cjs", import.meta.url), "utf8")
   vm.runInNewContext(source, { require: (name: string) => {
+    if (name.endsWith("remote-preview-guards.cjs")) return createRequire(import.meta.url)(name)
     assert.equal(name, "electron")
     return { contextBridge: {
-      executeInMainWorld: ({ func }: { func: Function }) => vm.runInNewContext(`(${func.toString()})()`, { window: page }),
+      executeInMainWorld: ({ func }: { func: Function }) => vm.runInNewContext(`(${func.toString()})()`, {
+        window: page, location: { href: "https://example.com/" }, origin: "https://example.com", document: { referrer: "" },
+      }),
       exposeInMainWorld: (key: string, value: unknown) => { assert.equal(key, "prompt"); page[key] = value },
     }, ipcRenderer: { sendSync: (...args: unknown[]) => { calls.push(args); return "answer" } } }
   } })

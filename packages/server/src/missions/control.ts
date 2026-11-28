@@ -5,7 +5,10 @@ import { isSessionNotFoundError, type JsonValue, type SessionMetadata } from "@o
 import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
 import { missionToolInspection, type MissionToolInspectInput } from "./tool-inspection"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
-import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
+import { readMissionContent, readMissionContentValue, type MissionContentRequest, type MissionContentResult } from "./mission-content"
+import { missionPanelHeader, attachPanelHeaderDocument } from "./mission-panel-header"
+import { contentDigest } from "./content-digest"
+import { decodeJournalDisplay, decodeJournalTaskWindow, namedWindowBody, verifiedWindowBody } from "./journal-display"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import { compactMissionMap, missionTaskPage } from "./mission-compact-map"
 import { missionCreationChoices, sameMissionCreationChoices, parseMissionCreationSelection, missionCreationSelection, type MissionCreationMetadata } from "./creation-defaults"
@@ -30,6 +33,7 @@ import {
 import { COMPLETED_FINAL_ONLY, buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
+import { truncateMissionText } from "./truncate-text"
 import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
@@ -40,7 +44,7 @@ const BACKEND_ACTION_UNAVAILABLE = "This action is unavailable here: it needs th
 /** An empty result is not proof that nothing runs: only canonical assignments are recognized. */
 export const NO_TASK_CONVERSATION = "No conversation carrying this task's canonical assignment was found among the coordinator's direct children; a conversation launched with another prompt is not visible here."
 import { runMissionExclusive } from "./exclusive"
-import { matchesExecution, sameExecution } from "./execution"
+import { matchesExecution, sameExecution, type MissionExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
 import { missionRecoveryControlError } from "./recovery-error"
@@ -52,13 +56,9 @@ import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { consumeAutomaticStart, type AutomaticStart } from "./automatic-start"
-import { recoveredPreparation, preparationResult, scheduledPreparationResult, type PreparationResult } from "./preparation-result"
-import { missionPreparationCreation, normalizedPreparationOptions, samePreparationOptions } from "./preparation-input"
-import { assertScheduledPreparation, recoveredScheduledPreparation } from "./scheduled-preparation"
+import { recoveredPreparation, preparationResult, type PreparationResult } from "./preparation-result"
+import { assertSamePreparation, missionPreparationCreation, normalizedPreparationOptions, samePreparationOptions } from "./preparation-input"
 import { missionPreparationIdentity } from "./preparation-identity"
-import { missionScheduleID } from "./mission-schedule-contract"
-import { missionScheduleView } from "./mission-schedule-view"
-import { readMissionSchedulePage } from "./mission-schedule-list"
 import { missionIsRunning, missionPausedInstruction, type MissionLifecycleInput } from "./lifecycle-model"
 import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
 import { compareModelError, freezeCompareProfiles, parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
@@ -73,7 +73,6 @@ import { prepareMissionOneTimeDocument, prepareMissionOneTimeControl, acknowledg
   missionOneTimeStartText, type MissionDocumentAccess } from "./mission-document-one-time"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 import { finishMissionDocumentDeletion, prepareMissionDocumentDeletion } from "./mission-document-deletion"
-import { configureMissionPreparation, type MissionPreparationNative, type MissionPreparationRequest } from "./mission-preparation"
 import { nativeDocumentID } from "./launch-policy"
 export { MissionControlError } from "./control-error"
 import type {
@@ -138,8 +137,12 @@ export class MissionControl {
   }
 
   async snapshot(): Promise<MissionSnapshot> {
-    const snapshot = await this.journal.snapshot()
-    if (this.options.documentReads && snapshot.missions.length) await projectMissionDocuments(this.options.documentReads, snapshot.missions)
+    return this.projectSnapshot(await this.journal.snapshot())
+  }
+
+  private async projectSnapshot<T extends MissionSnapshot & Pick<Awaited<ReturnType<MissionJournal["snapshot"]>>, "otherDocuments">>(snapshot: T): Promise<T> {
+    if (this.options.documentReads && (snapshot.missions.length || snapshot.otherDocuments?.length))
+      await projectMissionDocuments(this.options.documentReads, [...snapshot.missions, ...snapshot.otherDocuments ?? []])
     return snapshot
   }
 
@@ -169,7 +172,7 @@ export class MissionControl {
     })
     const missions: MissionMap[] = []
     for (const missionID of ids) {
-      const { mission } = await this.journal.missionView(missionID)
+      const { mission } = await this.journal.missionProjection(missionID)
       if (!mission) continue
       if (controlUnavailable) mission.controlUnavailable = true
       if (notificationUnavailable) mission.notificationUnavailable = true
@@ -190,8 +193,8 @@ export class MissionControl {
     const include = [...new Set(input.include ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
     const hinted = await this.journal.readHints(hints => ({ ids: [...new Set([...hints.openIDs(), ...include])],
       aggregate: hints.aggregate(), cleanups: hints.cleanups(), summaries: hints.summaries() }))
-    const views = new Map<string, MissionView>()
-    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionView(missionID))
+    const views = new Map<string, Omit<MissionView, "events">>()
+    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionProjection(missionID))
     const damage = projectDamage(hinted.aggregate, [...views.values()])
     const known = new Set(hinted.summaries.map(summary => summary.id))
     const fresh = (missionID: string) => views.get(missionID)?.mission
@@ -242,35 +245,102 @@ export class MissionControl {
       })
     }
     const missionID = request.source === "tasks" ? request.task.missionID : request.missionID
-    const view = await this.journal.missionView(missionID)
-    // These are this range's already-observed facts, independent of project hints and
-    // of which field the caller reads. A damaged reconstruction cannot establish absence.
-    const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
-      notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
-    if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
-      || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
-    const mission = view.mission
-    if (request.source === "mission" && this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
-    if (request.source === "mission" && mission.document?.dormant) return { available: false, reason: "mission-not-found" }
-    return projectMissionPanel(mission, request, damage)
+    const projectID = this.options.project.id
+    const firstTasks = request.source === "tasks" && request.task.offset === 0
+    const pins = request.source === "tasks" && request.task.ids && !request.task.keys && request.task.offset === undefined
+      && request.task.attention === undefined ? JSON.stringify([request.task.ids, request.task.reportIds ?? []]) : undefined
+    if (request.source === "tasks" && (firstTasks || pins)) {
+      const stored = await this.journal.readDisplay(missionID, undefined, firstTasks ? "tasks" : "pins")
+      const window = stored && decodeJournalTaskWindow(stored.value, projectID, missionID)
+      if (window && window.pinSelection === pins) {
+        if (request.task.order !== undefined && request.task.order !== window.page.taskPage.order)
+          return { available: false, reason: "changed" }
+        return missionPanelPage({ ...base, missionID, revision: window.revision, discardedEvents: 0,
+          controlUnavailable: false, notificationUnavailable: false, cleanupUnavailable: false }, [window.page], request.cursor)
+      }
+    }
+    const headerOnly = request.source === "mission" && request.header === true
+    if (headerOnly) {
+      const stored = await this.journal.readDisplay(missionID)
+      const display = stored && decodeJournalDisplay(stored.value, this.options.project.id, missionID)
+      if (display) {
+        const binding: Pick<MissionMap, "id" | "coordinatorSessionId" | "document"> = {
+          id: missionID, coordinatorSessionId: display.coordinator,
+        }
+        if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [binding])
+        if (binding.document?.dormant) return { available: false, reason: "mission-not-found" }
+        return missionPanelPage({ ...base, missionID, revision: display.revision, ...display.damage, header: true },
+          [attachPanelHeaderDocument(display.header, binding.document)], request.cursor)
+      }
+    }
+    return this.journal.readProjection(missionID, async (view, provenance): Promise<MissionPanelPageResult> => {
+      // A damaged reconstruction cannot establish absence. Use only this range,
+      // independent of display hints and of the field being requested.
+      const damage = { discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
+        notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable) }
+      if (!view.mission) return { available: false, reason: damage.discardedEvents || damage.controlUnavailable
+        || damage.notificationUnavailable || damage.cleanupUnavailable ? "damaged" : "mission-not-found" }
+      const mission = { ...view.mission }
+      if (request.source === "mission") {
+        if (this.options.documentReads) await projectMissionDocuments(this.options.documentReads, [mission])
+        if (mission.document?.dormant) return { available: false, reason: "mission-not-found" }
+      }
+      if (headerOnly) {
+        const header = missionPanelHeader({ ...mission, document: undefined })
+        if (provenance && !Object.values(damage).some(Boolean)) {
+          await this.journal.saveDisplay(missionID, provenance.digest, JSON.stringify({
+            header, damage, revision: mission.revision, coordinator: mission.coordinatorSessionId, sources: provenance.sources,
+          }))
+        }
+        return missionPanelPage({ ...base, missionID, revision: mission.revision, ...damage, header: true },
+          [attachPanelHeaderDocument(header, mission.document)], request.cursor)
+      }
+      if (request.source === "tasks" && (firstTasks || pins) && provenance && !Object.values(damage).some(Boolean)) {
+        const page = missionTaskPage(mission, request.task)
+        if (request.task.order !== undefined && request.task.order !== page.taskPage.order) return { available: false, reason: "changed" }
+        const scopeSources = (keys: string[], sources: ReadonlyMap<string, string>) =>
+          Object.fromEntries(keys.flatMap(key => {
+            const id = sources.get(key)
+            return id ? [[key, id]] : []
+          }))
+        const panelPins = pins ? missionPanelHeader(mission).tasks : undefined
+        if (!panelPins || pins === JSON.stringify([panelPins.pins, panelPins.reportPins])) {
+          await this.journal.saveDisplay(missionID, provenance.digest, JSON.stringify({
+            projectID, missionID, revision: mission.revision, page, pinSelection: pins,
+            taskSources: scopeSources(page.tasks.map(task => task.key), provenance.taskSources),
+            reportSources: scopeSources(page.reports.map(report => report.id), provenance.reportSources),
+          }), firstTasks ? "tasks" : "pins")
+        }
+        return missionPanelPage({ ...base, missionID, revision: mission.revision, ...damage }, [page], request.cursor)
+      }
+      return projectMissionPanel(mission, request, damage)
+    })
   }
 
   /** One mission's range for display reconciliation, its map compact, with its own
    * cleanups and the hints' project damage flags (read-mostly: never a write's authority). */
   async mission(missionID: string): Promise<MissionRead> {
     const aggregate = await this.journal.readHints(hints => hints.aggregate())
-    const view = await this.journal.missionView(missionID)
-    const damage = projectDamage(aggregate, [view])
-    if (this.options.documentReads && view.mission) await projectMissionDocuments(this.options.documentReads, [view.mission])
+    const { mission, cleanups, damage } = await this.journal.readProjection(missionID, view => {
+      const damage = projectDamage(aggregate, [view])
+      return { mission: view.mission && compactMissionMap(stampDamage(view.mission, damage)), cleanups: view.cleanups, damage }
+    })
+    if (this.options.documentReads && mission) await projectMissionDocuments(this.options.documentReads, [mission])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      ...(view.mission && !view.mission.document?.dormant ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
+      ...(mission && !mission.document?.dormant ? { mission } : {}), cleanups: cleanups ?? [], ...damage }
+  }
+
+  /** The Mission's map when it keeps its coordinator active with `/goal`, from this journal's own
+   * projection: a Mission without the option costs no copy. */
+  coordinatorGoalMission(missionID: string): Promise<MissionMap | undefined> {
+    return this.journal.readProjection(missionID, view => view.mission?.coordinatorGoal ? view.mission : undefined)
   }
 
   /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
    * order or tasks by key, ID or report, from one read of its range alone; refused once
    * the order `request.order` names has changed (read-mostly: never a write's authority). */
   async tasks(request: MissionTaskRequest & { missionID: string }): Promise<MissionTaskPageResult> {
-    const { mission } = await this.journal.missionView(request.missionID)
+    const { mission } = await this.journal.missionProjection(request.missionID)
     const base = { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, missionID: request.missionID }
     if (!mission) return { ...base, refused: "mission-not-found" }
     const page = missionTaskPage(mission, request)
@@ -282,8 +352,43 @@ export class MissionControl {
    * mission's range alone, never the index or another range (read-mostly: never a
    * write's authority). */
   async content(request: MissionContentRequest): Promise<MissionContentResult> {
-    const { mission, events } = await this.journal.missionView(request.missionID)
-    return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    if ((request.kind === "task" && request.field === "brief")
+      || (request.kind === "report" && ["summary", "evidence", "next", "artifact"].includes(request.field))) {
+      const projectID = this.options.project.id
+      const decode = (value: string) => decodeJournalTaskWindow(value, projectID, request.missionID)
+      for (const slot of ["tasks", "pins"] as const) {
+        const stored = await this.journal.readDisplay(request.missionID, value => {
+          const window = decode(value)
+          return window ? namedWindowBody(window, request)?.id : undefined
+        }, slot)
+        const window = stored && decode(stored.value)
+        if (window && stored.event) {
+          const body = verifiedWindowBody(window, request, stored.event)
+          if (body) return readMissionContentValue(projectID, request, window.revision, body.value)
+        }
+      }
+    }
+    if (request.kind === "mission" && (request.field === "objective" || request.field === "notes")) {
+      const field = request.field, projectID = this.options.project.id
+      const stored = await this.journal.readDisplay(request.missionID,
+        value => decodeJournalDisplay(value, projectID, request.missionID)?.sources[field])
+      const display = stored && decodeJournalDisplay(stored.value, projectID, request.missionID)
+      const event = stored?.event
+      const text = event && (event.type === "mission.created" || event.type === "mission.updated"
+        || event.type === "mission.prepared" || event.type === "mission.revised") ? event[field] : undefined
+      const descriptor = display?.bodies[field]
+      if (display && descriptor && typeof text === "string" && text.length === descriptor.characters && contentDigest(text) === descriptor.digest)
+        return readMissionContentValue(projectID, request, display.revision, text)
+    }
+    if (request.kind === "change") {
+      if (request.field === "objective") {
+        const selected = await this.journal.changeObjective(request.missionID, request.change)
+        if (selected) return readMissionContentValue(this.options.project.id, request, selected.revision, selected.value)
+      }
+      const { mission, events } = await this.journal.missionView(request.missionID)
+      return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
+    }
+    return this.journal.readProjection(request.missionID, ({ mission }) => readMissionContent(this.options.project.id, request, mission))
   }
 
   /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
@@ -371,7 +476,8 @@ export class MissionControl {
   briefing(sessionID: string, raw: MissionBriefingRequest): Promise<{ mission: MissionMap }> {
     const request = parseMissionBriefingRequest(raw)
     return this.mutate(async () => {
-      const caller = await this.ownedRootSession(sessionID), snapshot = await this.snapshot()
+      const caller = await this.ownedRootSession(sessionID)
+      const snapshot = await this.projectSnapshot(await this.journal.snapshot(request.missionID))
       if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable)
         throw new MissionControlError("Damaged Mission journal", "invalid-journal")
       const mission = this.selectMission(snapshot, sessionID, request.missionID)
@@ -414,10 +520,9 @@ export class MissionControl {
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
       this.assertActive()
       const createdAt = this.timestamp(snapshot)
-      await this.journal.append({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
+      const saved = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id, type: "mission.briefed", missionID: mission.id,
         projectID: mission.projectID, actorSessionID: sessionID, createdAt,
-        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } })
-      const saved = await this.snapshot()
+        briefing: { ...content, id, basedOnUpdatedAt: mission.updatedAt, createdAt } }))
       await this.emitChanged(mission.id, saved)
       return { mission: this.requireMission(saved, mission.id) }
     })
@@ -438,11 +543,12 @@ export class MissionControl {
       if (!event || event.type !== "mission.created" || event.requestID !== input.requestID
         || event.objective !== input.objective || event.title !== input.title || event.notes !== input.notes
         || event.template !== input.template || Boolean(event.prepared) !== Boolean(input.prepared)
+        || Boolean(event.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || !sameMissionProfiles(event.profiles, input.profiles) || (event.taskMode ?? "native") !== (input.taskMode ?? "native")
         || !isDeepStrictEqual(event.preparedBy, input.preparedBy) || !isDeepStrictEqual(event.creationDefaults, input.creationDefaults)
         || input.coordinatorSessionID !== undefined && event.coordinator.sessionID !== input.coordinatorSessionID
         || !input.expectedCoordinatorLocation || !sameLocation(event.coordinator.location, input.expectedCoordinatorLocation)) return result
-      const read = await this.journal.missionView(missionID)
+      const read = await this.journal.missionProjection(missionID)
       if (!read.mission) return result
       if (this.options.documents) {
         const doc = await requireMissionOneTimeDocument(this.options.documents, missionID, event.coordinator.sessionID, input)
@@ -495,10 +601,19 @@ export class MissionControl {
     return { ...input, profiles: saved.profiles, taskMode: saved.taskMode, creationDefaults: saved }
   }
 
-  private coordinatorProfileMismatch(input: { creationDefaults?: MissionCreationMetadata }): MissionControlError {
-    return new MissionControlError(input.creationDefaults?.origins.coordinator === "preference"
-      ? "Coordinator differs from the profile selected by Missions preferences. Pass profiles.coordinator (for example {}) to override that preference."
-      : "Coordinator does not have the requested native profile", "invalid-execution")
+  /** A conversation chosen to coordinate takes the coordinator's agent and model. One that cannot be changed keeps its own
+   * and coordinates all the same: a chosen conversation is never refused for what it runs. */
+  private async adoptCoordinatorProfile(session: NativeMissionSession, selected: MissionExecution | undefined): Promise<NativeMissionSession> {
+    const sessions = this.options.sessions
+    try {
+      if (selected?.agent && selected.agent !== session.agent) await sessions.switchAgent?.({ sessionID: session.id, agent: selected.agent })
+      if (selected?.model && !matchesExecution({ model: selected.model }, session)) await sessions.switchModel?.({ sessionID: session.id, model: selected.model })
+    } catch { /* It coordinates as it is. */ }
+    return this.ownedRootSession(session.id)
+  }
+
+  private coordinatorProfileMismatch(): MissionControlError {
+    return new MissionControlError("Coordinator does not have the requested native profile", "invalid-execution")
   }
 
   private sameCreationChoices(saved: Pick<MissionMap, "profiles" | "taskMode" | "creationDefaults">, input: MissionStartInput,
@@ -543,6 +658,7 @@ export class MissionControl {
         || !isDeepStrictEqual(existingEvent.preparedBy, input.preparedBy)
         || !isDeepStrictEqual(existingEvent.creationDefaults, input.creationDefaults)
         || Boolean(existingEvent.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(existingEvent.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
@@ -566,8 +682,6 @@ export class MissionControl {
       && mission.actors.some(actor => actor.sessionId === suppliedCoordinator.id)))) {
       throw new MissionControlError("Coordinator session already belongs to an active mission", "already-member")
     }
-    if (suppliedCoordinator && !matchesExecution(input.profiles?.coordinator, suppliedCoordinator))
-      throw this.coordinatorProfileMismatch(input)
     if (suppliedCoordinator && input.expectedCoordinatorLocation && !sameLocation(suppliedCoordinator.location, input.expectedCoordinatorLocation))
       throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
 
@@ -591,6 +705,7 @@ export class MissionControl {
           location: this.options.project.location,
           metadata: this.metadata(missionID, "coordinator", { role: "coordinator" }),
           ...input.profiles?.coordinator,
+          ...(input.permissions ? { permissions: input.permissions } : {}),
         })
       }
       this.assertOwnedRoot(coordinator)
@@ -606,9 +721,9 @@ export class MissionControl {
       }
     }
 
-    if (!matchesExecution(input.profiles?.coordinator, coordinator)) {
-      throw this.coordinatorProfileMismatch(input)
-    }
+    if (suppliedCoordinator) {
+      if (!matchesExecution(input.profiles?.coordinator, coordinator)) coordinator = await this.adoptCoordinatorProfile(coordinator, input.profiles?.coordinator)
+    } else if (!matchesExecution(input.profiles?.coordinator, coordinator)) throw this.coordinatorProfileMismatch()
     const createdAt = this.timestamp(snapshot)
     this.assertActive()
     await this.journal.append({
@@ -629,6 +744,7 @@ export class MissionControl {
       ...(input.prepared === undefined ? {} : { prepared: input.prepared }),
       ...(input.preparedBy === undefined ? {} : { preparedBy: { ...input.preparedBy } }),
       ...(input.startOnCreation === undefined ? {} : { startOnCreation: input.startOnCreation }),
+      ...(input.coordinatorGoal ? { coordinatorGoal: true } : {}),
       coordinator: { sessionID: coordinator.id, title: coordinator.title ?? "Mission coordinator", location: coordinator.location },
       createdAt,
     })
@@ -645,15 +761,6 @@ export class MissionControl {
         if (mission.document) await requireMissionOneTimeDocument(this.options.documents, mission.id, mission.coordinatorSessionId)
       }
       return this.updateCurrent(input)
-    })
-  }
-
-  configurePreparation(input: MissionPreparationRequest, native: MissionPreparationNative, current: () => true,
-    admitted?: (document: import("./mission-document").MissionDocument) => void) {
-    return this.mutate(() => {
-      if (!this.options.documents) throw new Error("Mission preparation document unavailable")
-      return this.options.documents(store => configureMissionPreparation(this.journal, store, this.options.sessions, native,
-        structuredClone(input), () => { this.assertActive(); return current() }, this.options.now?.() ?? Date.now(), admitted))
     })
   }
 
@@ -970,7 +1077,7 @@ export class MissionControl {
     let input = normalizeTaskDeclaration(raw)
     return this.mutate(async () => {
       await this.ownedRootSession(sessionID)
-      let snapshot = await this.snapshot()
+      let snapshot = await this.projectSnapshot(await this.journal.snapshot(input.missionID))
       if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
         throw new MissionControlError("Damaged Mission journal cannot authorize task declarations", "invalid-journal")
       }
@@ -1012,12 +1119,11 @@ export class MissionControl {
         if (!actor || !sameLocation(coordinator.location, actor.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
         this.assertActive()
         if (this.options.documents && mission.document) await markMissionDocumentTaskCreation(this.options.documents, mission.id, () => { this.assertActive(); return true })
-        await this.journal.append({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
+        snapshot = await this.projectSnapshot(await this.journal.appendWithSnapshot({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `task-${input.taskKey}-created`),
           type: "task.created", missionID: mission.id, projectID: mission.projectID,
           task: { id: `tsk_${stableToken(`${mission.id}\0${input.taskKey}`, 24)}`, key: input.taskKey,
             title: input.title, brief: input.brief, role: input.role, blockedBy: input.blockedBy,
-            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) })
-        snapshot = await this.snapshot()
+            execution: input.execution, executionMode: input.executionMode }, createdAt: this.timestamp(snapshot) }))
         mission = this.requireMission(snapshot, mission.id)
         task = mission.tasks.find(task => task.key === input.taskKey)
         if (!task || !sameExecutionMode(task.executionMode, input.executionMode)) throw new MissionControlError("Task declaration was not accepted", "invalid-journal")
@@ -1135,7 +1241,7 @@ export class MissionControl {
       catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Coordinator moved from its admitted creation location", "foreign-session")
-      if (!matchesExecution(input.start.profiles?.coordinator, fresh)) throw this.coordinatorProfileMismatch(resolved)
+      if (!matchesExecution(input.start.profiles?.coordinator, fresh)) await this.adoptCoordinatorProfile(fresh, input.start.profiles?.coordinator)
       const event: MissionEvent = {
         version: MISSION_SCHEMA_VERSION,
         id: this.eventID(missionID, "created"),
@@ -1148,6 +1254,7 @@ export class MissionControl {
         notes: input.start.notes,
         template: input.start.template,
         taskMode: input.start.taskMode,
+        ...(input.start.coordinatorGoal ? { coordinatorGoal: true } : {}),
         ...(input.start.profiles === undefined ? {} : { profiles: input.start.profiles }),
         ...(resolved.creationDefaults === undefined ? {} : { creationDefaults: resolved.creationDefaults }),
         coordinator: {
@@ -1168,12 +1275,6 @@ export class MissionControl {
     const read = await this.hintedSelection(sessionID, input.missionID)
     const mission = input.missionID ? read.missions.some(item => item.id === input.missionID)
       ? this.visibleMission(read, sessionID, input.missionID) : undefined : this.membership(read, sessionID)
-    if (!mission && input.missionID && this.options.documents) {
-      const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(input.missionID!))
-      if (doc && !("deletedAt" in doc))
-        return { mission: null, actor: null, templates: missionRecipeCatalog(), schedule: missionScheduleView(doc),
-          ...(doc.creation?.creationDefaults ? { selection: doc.creation.creationDefaults } : {}) }
-    }
     if (!mission && input.missionID) this.visibleMission(read, sessionID, input.missionID)
     return mission ? this.inspection(mission, sessionID) : {
       mission: null,
@@ -1185,21 +1286,9 @@ export class MissionControl {
   /** Project missions, newest first, without task or report text. */
   async listMissions(sessionID: string) {
     const caller = await this.ownedSession(sessionID)
-    const missions: Array<ReturnType<typeof missionListEntry> | { missionID: string; title: string; relation: "prepared" | "project"; kind: "schedule" | "one-time";
-      template: MissionMap["template"]; status: string; revision: number; createdAt: number }> = this.options.storage.isolated
-        ? (await this.snapshot()).missions.map(mission => missionListEntry(mission, missionRelation(mission, sessionID) ?? "project"))
-        : await this.journal.readHints(hints => hints.toolSummaries(sessionID))
-    if (this.options.documents) {
-      let after: string | undefined
-      do {
-        const page = await readMissionSchedulePage(this.options.storage, this.options.project, { after })
-        for (const doc of page.schedules) if (!missions.some(item => item.missionID === doc.id))
-          missions.push({ missionID: doc.id, title: doc.configuration.title,
-            relation: doc.creation?.author?.coordinatorSessionID === sessionID ? "prepared" : "project", kind: doc.kind,
-            template: doc.configuration.template, status: doc.state, revision: doc.revision, createdAt: doc.createdAt })
-        after = page.next
-      } while (after)
-    }
+    const missions = this.options.storage.isolated
+      ? (await this.snapshot()).missions.map(mission => missionListEntry(mission, missionRelation(mission, sessionID) ?? "project"))
+      : await this.journal.readHints(hints => hints.toolSummaries(sessionID))
     const fresh = await this.ownedSession(sessionID)
     this.assertActive()
     if (!sameLocation(caller.location, fresh.location)) throw new MissionControlError("Caller moved while listing Missions", "foreign-session")
@@ -1207,9 +1296,7 @@ export class MissionControl {
   }
 
   /** Separate creation through the editor's pipeline; recovered replies only observe. */
-  prepare(sessionID: string, input: MissionPrepareRequest & { launch?: undefined }): Promise<{ mission: MissionMap; preparation: PreparationResult }>
-  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }>
-  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
+  prepare(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     input = structuredClone(input)
     // Serialize identity lookup with creation for this author's exact request;
     // unrelated requests and project mutations keep their own lanes.
@@ -1217,13 +1304,14 @@ export class MissionControl {
       () => this.prepareCurrent(sessionID, input))
   }
 
-  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission?: MissionMap; preparation: PreparationResult }> {
+  private async prepareCurrent(sessionID: string, input: MissionPrepareRequest): Promise<{ mission: MissionMap; preparation: PreparationResult }> {
     const caller = await this.ownedSession(sessionID)
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
     const originalInput = structuredClone(input)
-    const scheduling = normalizedPreparationOptions(input)
-    if (scheduling.coordinatorSessionID && scheduling.kind !== "schedule") throw missionRecoveryControlError("prepare-refused")
+    // A launch that repeats or names an event is a programmed Mission; a prepared Mission takes a new coordinator.
+    const options = normalizedPreparationOptions(input)
+    if (options.kind === "schedule" || options.coordinatorSessionID) throw missionRecoveryControlError("prepare-refused")
     const snapshot = await this.snapshot()
     const currentSource = await missionPreparationSource(snapshot, caller, id => this.ownedSession(id))
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
@@ -1234,42 +1322,14 @@ export class MissionControl {
     const requestID = identity.requestID
     const source = identity.sourceMissionID ? { id: identity.sourceMissionID } : undefined
     // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
-    const intentID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
-    const scheduleID = missionScheduleID(this.options.project.id, this.options.project.canonical, requestID)
-    const missionID = scheduling.kind === "schedule" ? scheduleID : intentID
+    const intentID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`, missionID = intentID
     const author = { coordinatorSessionID: sessionID, ...(source ? { missionID: source.id } : {}) }
     if (this.options.documents) {
-      const saved = await (this.options.documentReads ?? this.options.documents)(async store => {
-        const other = await store.read(scheduling.kind === "schedule" ? intentID : scheduleID)
-        if (other) throw missionRecoveryControlError("prepare-conflict")
-        return store.read(missionID)
-      })
+      const saved = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
       if (saved) {
         if ("deletedAt" in saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
-        if (saved.creation?.author) assertScheduledPreparation(saved, author, requestID, originalInput)
-        else if (scheduling.kind === "schedule" || !samePreparationOptions({}, originalInput))
-          throw missionRecoveryControlError("prepare-conflict")
-        if (scheduling.kind === "schedule") {
-          // Native observation alone cannot settle the backend's retained
-          // physical permit. Its exact receipt path is read-only on recovery.
-          try {
-            const result = await sendPreparation(sessionID, { ...input, requestID, observeOnly: true,
-              profiles: saved.configuration.profiles, taskMode: saved.configuration.taskMode,
-              ...(saved.creation?.creationDefaults ? { creationDefaults: saved.creation.creationDefaults } : {}),
-              ...(source ? { missionID: source.id } : {}) })
-            const fresh = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
-            if (!fresh || "deletedAt" in fresh) throw new Error("Mission preparation receipt unavailable")
-            assertScheduledPreparation(fresh, author, requestID, originalInput)
-            const preparation = scheduledPreparationResult(result, missionScheduleView(fresh), requestID)
-            if (preparation.outcome !== "uncertain") await this.creationIntents.settled(intentID)
-            return { preparation }
-          } catch {
-            const recovered = recoveredScheduledPreparation(saved)
-            return { preparation: { outcome: "uncertain", phase: saved.creation?.automaticStart?.attempted ? "start" : "creation",
-              requestID: saved.creation?.automaticStart?.attempted ? saved.creation.automaticStart.requestID : requestID,
-              missionID, target: recovered.target } }
-          }
-        }
+        if (saved.creation?.author) assertSamePreparation(saved, author, requestID, originalInput)
+        else if (!samePreparationOptions({}, originalInput)) throw missionRecoveryControlError("prepare-conflict")
       }
     }
     const uncertain = () => Object.assign(missionRecoveryControlError("prepare-uncertain"), {
@@ -1282,6 +1342,7 @@ export class MissionControl {
         || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
         || !sameChoices
         || Boolean(created.startOnCreation) !== Boolean(input.startOnCreation)
+        || Boolean(created.coordinatorGoal) !== Boolean(input.coordinatorGoal)
         || created.preparedBy?.missionID !== source?.id || created.preparedBy?.coordinatorSessionID !== sessionID) {
         throw missionRecoveryControlError("prepare-conflict")
       }
@@ -1338,19 +1399,6 @@ export class MissionControl {
       ? { outcome: "prepared" as const, acknowledgement: (result as { mission: unknown; acknowledgement?: unknown }).acknowledgement,
         target: { kind: "one-time" as const, mission: (result as { mission: MissionMap }).mission } }
       : result as PreparationResult
-    if (scheduling.kind === "schedule" && this.options.documents) {
-      const doc = await (this.options.documentReads ?? this.options.documents)(store => store.read(missionID))
-      if (!doc && !retained && !retainedDocument && returned?.outcome === "refused" && returned.phase === "creation"
-        && !returned.target && typeof returned.code === "string" && /^[a-z0-9-]{1,80}$/.test(returned.code)) {
-        await this.creationIntents.settled(intentID)
-        return { preparation: { outcome: "refused", phase: "creation", code: returned.code } }
-      }
-      if (!doc || "deletedAt" in doc || returned?.target?.kind !== "schedule" || returned.target.document.document?.id !== missionID) throw uncertain()
-      assertScheduledPreparation(doc, author, requestID, originalInput)
-      const preparation = scheduledPreparationResult(returned, missionScheduleView(doc), requestID)
-      await this.creationIntents.settled(intentID)
-      return { preparation }
-    }
     const returnedID = returned?.target?.kind === "one-time" ? returned.target.mission.id : undefined
     const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
     if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source?.id) {
@@ -1645,7 +1693,8 @@ export class MissionControl {
         throw new MissionControlError("Every mission task must be complete before a green finish", "open-tasks")
       }
       try {
-        validateMissionCompletionPolicy({ template: mission.template, outcome: input.outcome, tasks: mission.tasks })
+        validateMissionCompletionPolicy({ template: mission.template, outcome: input.outcome, tasks: mission.tasks,
+          artifact: input.artifact, evidence: input.evidence })
       } catch (error) {
         throw new MissionControlError(error instanceof Error ? error.message : "Mission completion policy failed", "invalid-role-policy")
       }
@@ -1893,7 +1942,7 @@ export class MissionControl {
     }
     return {
       sessionID: missionTaskSessionID(mission.id, task.id, this.options.now?.() ?? Date.now()),
-      title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),
+      title: truncateMissionText(`Mission · ${task.role}: ${task.title}`, 160),
       location: (await this.ownedRootSession(coordinatorID)).location,
       managed: true,
     }
@@ -1905,7 +1954,8 @@ export class MissionControl {
     // when a late root is now readable. GET existence cannot settle an ACK loss.
     if (ownsCreation && this.options.createManagedRoot) {
       this.assertActive()
-      return this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      const created = await this.options.createManagedRoot(mission.coordinatorSessionId, { missionID: mission.id, taskKey: task.key })
+      if (created) return created
     }
     if (actor.managed && !ownsCreation) {
       // managed is immutable cleanup provenance, not a create permit for every
@@ -1991,7 +2041,7 @@ export class MissionControl {
       createdAt: Math.max(report.createdAt + 1, this.timestamp(snapshot)),
     })
     // Only the change event's revision, which is the mission's own.
-    const { mission: updated } = await this.journal.missionView(mission.id)
+    const { mission: updated } = await this.journal.missionProjection(mission.id)
     await this.notifyChanged(mission.id, updated?.revision ?? 0)
   }
 
@@ -2106,9 +2156,9 @@ export class MissionControl {
     return `msg_${stableToken(purpose, 28)}`
   }
 
-  private timestamp(snapshot: MissionSnapshot): number {
+  private timestamp(snapshot: MissionSnapshot & { latestUpdatedAt?: number }): number {
     const now = this.options.now?.() ?? Date.now()
-    const latest = snapshot.missions.reduce((value, mission) => Math.max(value, mission.updatedAt), 0)
+    const latest = snapshot.latestUpdatedAt ?? snapshot.missions.reduce((value, mission) => Math.max(value, mission.updatedAt), 0)
     this.lastTimestamp = Math.max(now, latest + 1, this.lastTimestamp + 1)
     return this.lastTimestamp
   }
@@ -2139,7 +2189,7 @@ type ProjectDamage = Pick<MissionSnapshot, "controlUnavailable" | "notificationU
 /** The hints' project damage flags, plus those of ranges just read (fresher than
  * their hints), set only when true as a snapshot sets them. */
 function projectDamage(aggregate: { controlUnavailable: boolean; notificationUnavailable: boolean; cleanupUnavailable: boolean },
-  views: readonly MissionView[]): ProjectDamage {
+  views: readonly Omit<MissionView, "events">[]): ProjectDamage {
   const flag = (key: keyof ProjectDamage) => aggregate[key] || views.some(view => view[key]) ? { [key]: true } : {}
   return { ...flag("controlUnavailable"), ...flag("notificationUnavailable"), ...flag("cleanupUnavailable") }
 }

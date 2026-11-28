@@ -22,7 +22,7 @@ function harness() {
   const logs: string[] = []
   const app = Fastify({ logger: { stream: { write: (text: string) => { logs.push(text) } } } })
   const workspace = {} as NonNullable<ReturnType<UsageRouteDeps["workspaceManager"]["get"]>>
-  const client = OpenCode.make({ baseUrl: "http://isolated-native.invalid", fetch: async (input) => {
+  const nativeFetch: typeof fetch = async (input) => {
     const url = new URL(String(input)); state.nativeCalls.push(url.pathname)
     if (state.fail) throw new Error("secret-refresh Authorization secret-token")
     if (url.pathname === "/api/experimental/session/stats") {
@@ -52,8 +52,10 @@ function harness() {
       .filter(entry => state.consoleConnected || entry.integrationID !== "opencode") },
     { status: state.oldEndpoint ? 404 : 200 })
     return Response.json({}, { status: 404 })
-  } })
-  const connection = { client, assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
+  }
+  const client = OpenCode.make({ baseUrl: "http://isolated-native.invalid", fetch: nativeFetch })
+  const connection = { endpoint: { url: "http://isolated-native.invalid" }, fetch: nativeFetch, client,
+    assertCurrent: () => { if (state.stale) throw new Error("stale connection") } } as ServiceConnection
   const manager: UsageRouteDeps["workspaceManager"] = {
     get: id => id === "instance" && !state.evicted ? workspace : undefined,
     getSharedServiceConnection: async () => connection,

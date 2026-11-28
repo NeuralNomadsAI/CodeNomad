@@ -5,6 +5,7 @@ import { getLogger } from "../logger"
 import { isStartupStateCommand, type StartupStateCommand, type StartupStateSnapshot } from "./startup-state-command"
 import { clearWebSessionClientState, loadWebSessionClientState, saveWebSessionClientState,
   setWebSessionRestoreEnabled } from "../web-session-client-state"
+import type { WorkspaceFileDraft } from "../../stores/workspace-file-drafts-codec"
 const LEGACY_WEB_KEYS = ["codenomad-client-snapshot-v1", "codenomad-client-restore-enabled-v1"]
 export type NativeClientStateLoadResult = {
   isPrimary: boolean
@@ -13,6 +14,7 @@ export type NativeClientStateLoadResult = {
   partitionProtocolVersion?: 1
   /** A browser tab's sessionStorage state: its layout values stay in shared localStorage. */
   webSession?: true
+  recreateWebRecords?: true
 }
 export type NativeClientStatePartitionCommit = {
   protocolVersion: 1
@@ -34,10 +36,23 @@ function dispatchNative<T>(electronOperation: (api: ElectronAPI | undefined) => 
   if (isElectronHost()) return electronOperation(electronApi())
   if (isTauriHost()) return invoke<T>(command, { accessToken, ...args })
 }
+async function tauriDocumentChallenge(): Promise<string | undefined> {
+  const challenge = (window as Window & { __CODENOMAD_CLIENT_STATE_DOCUMENT__?: Promise<string> }).__CODENOMAD_CLIENT_STATE_DOCUMENT__
+  if (!challenge) return undefined
+  let timeout: number | undefined
+  try {
+    return await Promise.race([challenge, new Promise<never>((_, reject) => {
+      timeout = window.setTimeout(() => reject(new Error("Native client state document challenge unavailable")), 15_000)
+    })])
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
 async function claimNativeClientStateAccess(): Promise<boolean> {
   if (!isLocalWindow()) return false
   try {
-    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken), "client_state_claim_access")
+    const result = await dispatchNative<boolean | void>((api) => api?.claimClientStateAccess?.(accessToken),
+      "client_state_claim_access", isTauriHost() ? { documentChallenge: await tauriDocumentChallenge() } : {})
     nativeAccessClaimed = isTauriHost() || result === true
   } catch (error) {
     nativeAccessClaimed = false
@@ -87,6 +102,19 @@ export const commitNativeClientStatePartitions = (payload: NativeClientStatePart
 export const loadNativeClientStatePartition = async (key: string): Promise<string | null> => {
   if (!nativeAccessClaimed) return null
   return await dispatchNative((api) => api?.loadClientStatePartition?.(accessToken, key), "client_state_load_partition", { key }) ?? null
+}
+export function loadNativeFileDrafts(key?: string): Promise<WorkspaceFileDraft[]> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.loadFileDrafts?.(accessToken, key), "client_state_load_file_drafts", { key })
+}
+export type FileDraftChange = {
+  key: string
+  draft: Omit<WorkspaceFileDraft, "key"> | null
+  expected: Omit<WorkspaceFileDraft, "key"> | null
+}
+export function saveNativeFileDraft(change: FileDraftChange): Promise<boolean> | undefined {
+  if (!nativeAccessClaimed) return
+  return dispatchNative(api => api?.saveFileDraft?.(accessToken, change), "client_state_save_file_draft", { change })
 }
 export const setNativeRestoreEnabled = (enabled: boolean): Promise<boolean> => persistClientState(
   () => setWebSessionRestoreEnabled(enabled),

@@ -7,10 +7,11 @@ import { useI18n } from "../lib/i18n"
 import { nativeSelectListOpen } from "../lib/native-select-open"
 import { showToastNotification } from "../lib/notifications"
 import { afterSweep, toggleSweepGroup } from "../lib/toggle-sweep"
-import { useConfig, type Preferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../stores/preferences"
+import { useConfig, type Preferences, type ToolCallExpansionPresetSelection, type VisibilityPreference } from "../stores/preferences"
 import { getMessageContentIcon } from "./message-content-icons"
 import {
   TRANSCRIPT_PRESETS,
+  transcriptCustomAvailable,
   transcriptPreset,
   transcriptPresetPatch,
   transcriptVisibility,
@@ -35,6 +36,7 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
   type RowRequest = { mode: VisibilityPreference }
   const [requested, setRequested] = createSignal<ReadonlyMap<string, RowRequest>>(new Map())
   const preset = createMemo(() => transcriptPreset(preferences()))
+  const customAvailable = () => transcriptCustomAvailable(preferences())
   const presetLabel = (value: string) => t(`settings.behavior.expansionPreset.${value}.title`)
   // Changes save in order, each built from the preferences the previous one saved, so
   // quick successive toggles (a drag sweep across rows) all apply.
@@ -102,11 +104,10 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
                 const select = event.currentTarget, value = select.value
                 // The saved preference drives the shown value, including refused or failed changes.
                 select.value = preset()
-                if (value !== "custom") void save(() => transcriptPresetPatch(value as ToolCallExpansionPreset))
+                void save(() => transcriptPresetPatch(value as ToolCallExpansionPresetSelection, preferences()))
               }}>
               <For each={TRANSCRIPT_PRESETS}>{(value) => <option value={value}>{presetLabel(value)}</option>}</For>
-              {/* Custom only names manual changes; it is not a choice. */}
-              <option value="custom" disabled hidden={preset() !== "custom"}>{presetLabel("custom")}</option>
+              <option value="custom" disabled={!customAvailable()} hidden={!customAvailable()}>{presetLabel("custom")}</option>
             </select>
           </div>
           <div class="window-body transcript-filters-list">
@@ -114,7 +115,9 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
               const mode = () => requested().get(row.key)?.mode ?? transcriptVisibility(preferences(), row)
               let previousVisible: VisibilityPreference = "collapsed"
               const setMode = (value: VisibilityPreference) => requestMode(row, value)
-              const visibilityLabel = () => t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
+              const visibilityLabel = () => row.kind === "toolGroups"
+                ? t(mode() === "hidden" ? "transcriptFilters.toolGroups.enable" : "transcriptFilters.toolGroups.disable")
+                : t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
               const expansionLabel = () => t(mode() === "expanded" ? "transcriptFilters.collapse" : "transcriptFilters.expand", { name: row.label })
               return (
                 <div class="transcript-filter-row" role="group" aria-label={row.label}>

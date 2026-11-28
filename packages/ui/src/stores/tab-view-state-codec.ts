@@ -14,8 +14,6 @@ export interface RestorableBrowserPreview extends RestorableTabPreview { targetU
 export const SESSION_BROWSER_STATE_KEY = "opencode-session-browser-state-v1"
 export interface RestorableTabMissionView {
   selected?: string
-  selectedRecurrence?: string
-  selectedScheduled?: string
   selectedTask?: MissionTaskSelectionKey
   reader?: MissionReaderTarget
   expanded?: readonly string[]
@@ -79,36 +77,22 @@ function normalizeMissionView(value: unknown): RestorableTabMissionView | undefi
   const result: RestorableTabMissionView = {}
   if (record(value.disclosures)) result.disclosures = Object.fromEntries(Object.entries(value.disclosures)
     .filter((entry): entry is [string, boolean] => /^[a-zA-Z0-9_-]{11}$/.test(entry[0]) && typeof entry[1] === "boolean").slice(-160))
-  for (const key of ["selected", "selectedRecurrence", "selectedScheduled"] as const) {
-    if (id(value[key])) result[key] = value[key]
-  }
+  if (id(value.selected)) result.selected = value.selected
   if (record(value.selectedTask) && id(value.selectedTask.missionId) && id(value.selectedTask.taskId)) {
     result.selectedTask = { missionId: value.selectedTask.missionId, taskId: value.selectedTask.taskId }
   }
   if (Array.isArray(value.expanded)) result.expanded = value.expanded.filter(id).slice(-30)
   const r = value.reader
   if (!record(r) || !id(r.missionId)
-    || !["overview", "task", "report", "change", "recurrence", "playbook"].includes(String(r.kind))
+    || !["overview", "task", "report", "change", "playbook"].includes(String(r.kind))
     || (r.itemId !== undefined && !id(r.itemId))
-    || (r.kind === "recurrence" && (!id(r.instanceId) || !id(r.projectID)))
     || (r.taskMode !== undefined && r.taskMode !== "native" && r.taskMode !== "independent")
-    || (r.scheduleOwner !== undefined && r.scheduleOwner !== "scheduled")) return result
+    // A reader of a schedule's passage names a Mission the project does not list.
+    || r.recurrence !== undefined) return result
   if (r.kind === "playbook" && !Object.prototype.hasOwnProperty.call(missionProfileRoles, r.missionId)) return result
   const reader: MissionReaderTarget = { missionId: r.missionId, kind: r.kind as MissionReaderTarget["kind"] }
-  for (const key of ["itemId", "instanceId", "projectID"] as const) if (id(r[key])) reader[key] = r[key]
+  if (id(r.itemId)) reader.itemId = r.itemId
   if (r.taskMode === "native" || r.taskMode === "independent") reader.taskMode = r.taskMode
-  if (r.scheduleOwner === "scheduled") reader.scheduleOwner = r.scheduleOwner
-  if (r.recurrence !== undefined) {
-    const recurrence = r.recurrence
-    if (!record(recurrence) || !["instanceId", "projectID", "scheduleID", "passageID"].every(key => id(recurrence[key]))
-      || (recurrence.owner !== undefined && recurrence.owner !== "daily" && recurrence.owner !== "scheduled")
-      || r.kind === "playbook") return result
-    reader.recurrence = {
-      instanceId: recurrence.instanceId as string, projectID: recurrence.projectID as string,
-      scheduleID: recurrence.scheduleID as string, passageID: recurrence.passageID as string,
-      ...(recurrence.owner === undefined ? {} : { owner: recurrence.owner }),
-    }
-  }
   result.reader = reader
   return result
 }

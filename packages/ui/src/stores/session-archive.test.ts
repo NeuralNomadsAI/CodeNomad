@@ -8,6 +8,7 @@ import { setSessionArchived } from "./session-archive"
 import { handleNativeSessionEvent } from "./session-events"
 import { activeSessionId, sessions, setActiveSession, setSessions } from "./session-state"
 import { ensureWorktreesLoaded } from "./worktrees"
+import { backendEvents } from "../lib/server-events"
 
 const originalWorktrees = serverApi.fetchWorktrees
 serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [] })
@@ -72,16 +73,39 @@ test("a late archive acknowledgement cannot refresh a replacement connection", a
   assert.equal(f.current()?.time.archived, undefined)
 })
 
+test("a late archive acknowledgement cannot refresh a replacement attachment on the same client", async t => {
+  const f = await fixture(t)
+  let controller = new AbortController()
+  t.mock.method(backendEvents, "signalForInstance", () => controller.signal)
+  let entered!: () => void, release!: () => void
+  const ready = new Promise<void>(resolve => { entered = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let signal: AbortSignal | undefined
+  f.client.session.update = async (_input: unknown, options: { signal: AbortSignal }) => {
+    signal = options.signal; entered(); await gate
+  }
+  const pending = setSessionArchived(f.id, "session", true)
+  await ready
+  controller.abort(); controller = new AbortController()
+  release(); await pending
+  assert.equal(signal?.aborted, true)
+  assert.equal(f.lists.length, 0)
+  assert.equal(f.current()?.time.archived, undefined)
+})
+
 test("native archive events fence metadata reads started before the event", async t => {
   const f = await fixture(t), stale = f.info()
+  let reads = 0
   let entered!: () => void, release!: (value: unknown) => void
   const ready = new Promise<void>(resolve => { entered = resolve })
-  f.client.session.get = () => { entered(); return new Promise(resolve => { release = resolve }) }
+  f.client.session.get = () => { reads++; entered(); return new Promise(resolve => { release = resolve }) }
   const event = (type: string, created: number) => ({ id: `evt_${crypto.randomUUID()}`, type, created,
     location: { directory: "/work" }, data: { sessionID: "session" }, durable: { aggregateID: "session", seq: created, version: 1 } })
   handleNativeSessionEvent(f.id, event("session.forked", 2) as any)
   await ready
+  handleNativeSessionEvent(f.id, event("session.forked", 2.5) as any)
   handleNativeSessionEvent(f.id, event("session.archived", 3) as any)
+  assert.equal(reads, 1, "equivalent native metadata demand shares the in-flight request")
   release(stale)
   await new Promise(resolve => setTimeout(resolve, 10))
   assert.equal(f.current()?.time.archived, 3)

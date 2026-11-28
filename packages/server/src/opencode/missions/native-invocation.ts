@@ -1,18 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks"
 import { Effect } from "effect"
 
-// Match the native decision evidence read bound (native-human-evidence.ts).
+// One deadline for a whole human-gate call: acquisition and its nested reads.
 export const NATIVE_HUMAN_ANSWER_TIMEOUT_MS = 10_000
 type Runner = <A, E>(effect: Effect.Effect<A, E>) => Promise<A>
-/** Interrupt and join the native operation before its invocation can retire. */
-export function abortableNativeEffect<A, E, R>(effect: Effect.Effect<A, E, R>, signal: AbortSignal) {
-  return Effect.raceFirst(Effect.suspend(() => { signal.throwIfAborted(); return effect }), Effect.callback<never, Error>(resume => {
-    const abort = () => resume(Effect.fail(new Error("Native Mission invocation cancelled")))
-    signal.addEventListener("abort", abort, { once: true })
-    if (signal.aborted) abort()
-    return Effect.sync(() => signal.removeEventListener("abort", abort))
-  }))
-}
 const track = <A>(pending: Set<Promise<unknown>>, promise: Promise<A>) => {
   pending.add(promise)
   void promise.then(() => pending.delete(promise), () => pending.delete(promise))
@@ -62,5 +53,5 @@ export function nativeInvocation(timeoutMs = NATIVE_HUMAN_ANSWER_TIMEOUT_MS) {
     })()
     return track(invocation.pending, done)
   }
-  return { capture, check }
+  return { capture, check, active: () => local.getStore()?.active === true }
 }

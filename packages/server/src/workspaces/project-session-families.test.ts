@@ -32,14 +32,12 @@ function clientHarness(initial: SessionInfo[], options: {
   failMove?: (sessionId: string, call: number) => boolean
   visibilityDelayGets?: number
   workspaceID?: string
-  carrier?: string
 } = {}) {
   const sessions = new Map(initial.map((value) => [value.id, structuredClone(value)]))
   const moveCalls: string[] = []
   let moveCall = 0
   const pending = new Map<string, { location: SessionInfo["location"]; remaining: number }>()
   const client = {
-    rpc: () => ({ scheduleCarrierRead: async ({ sessionID }: { sessionID: string }) => ({ owned: sessionID === options.carrier }) }),
     location: {
       get: async ({ location }: { location?: { directory?: string } }) => ({
         directory: location?.directory ?? ROOT,
@@ -68,8 +66,19 @@ function clientHarness(initial: SessionInfo[], options: {
         moveCalls.push(sessionID)
         if (options.failMove?.(sessionID, moveCall)) throw new Error(`move failed: ${sessionID}`)
         const location = readInternalLocationContext(requestOptions?.headers["x-codenomad-location"]) ?? { directory }
-        if (options.visibilityDelayGets) pending.set(sessionID, { location, remaining: options.visibilityDelayGets })
-        else sessions.get(sessionID)!.location = location
+        const apply = (id: string) => {
+          const current = sessions.get(id)!
+          const previous = current.location
+          if (options.visibilityDelayGets) pending.set(id, { location, remaining: options.visibilityDelayGets })
+          else current.location = location
+          for (const child of sessions.values()) {
+            const childLoc = readLocationRef(child.location), prevLoc = readLocationRef(previous)
+            if (child.parentID === id && childLoc.directory === prevLoc.directory && childLoc.workspaceID === prevLoc.workspaceID) {
+              apply(child.id)
+            }
+          }
+        }
+        apply(sessionID)
       },
     },
   } as unknown as OpenCodeClient
@@ -77,13 +86,13 @@ function clientHarness(initial: SessionInfo[], options: {
 }
 
 describe("project session families", () => {
-  it("refuses an unmarked carrier in a family before moving any member or removing its worktree", async () => {
-    const h = clientHarness([session("ordinary", undefined, WORKTREE), session("carrier", "ordinary", WORKTREE)], { carrier: "carrier" })
+  it("refuses a carrier in a family before moving any member or removing its worktree", async () => {
+    const h = clientHarness([session("ordinary", undefined, WORKTREE), { ...session("carrier", "ordinary", WORKTREE), title: "Mission schedule carrier" }])
     await assert.rejects(moveProjectSessionFamily({ client: h.client, projectLocation: { directory: ROOT },
       sessionId: "ordinary", targetDirectory: ROOT }), (error: unknown) => error instanceof ProjectSessionError && error.statusCode === 403)
     await assert.rejects(removeProjectWorktree({ client: h.client, projectLocation: { directory: ROOT },
       targetDirectory: WORKTREE, rootDirectory: ROOT, isTargetRegistered: async () => true,
-      remove: async () => { assert.fail("carrier worktree must remain") } }), /owned schedule controls/)
+      remove: async () => { assert.fail("carrier worktree must remain") } }), /not ordinary session input/)
     assert.deepEqual(h.moveCalls, [])
   })
   it("loads the complete paginated project inventory", async () => {
@@ -142,7 +151,7 @@ describe("project session families", () => {
     assert.throws(() => resolveSessionFamilies([session("child", "missing")]), /missing parent/)
   })
 
-  it("moves a complete family to the target", async () => {
+  it("moves a complete family to the target with one native move on the root", async () => {
     const harness = clientHarness([session("root"), session("child", "root")])
     const moved = await moveProjectSessionFamily({
       client: harness.client,
@@ -151,6 +160,7 @@ describe("project session families", () => {
       targetDirectory: WORKTREE,
     })
     assert.deepEqual(moved.sessionIds, ["root", "child"])
+    assert.deepEqual(harness.moveCalls, ["root"])
     assert.ok([...harness.sessions.values()].every(({ location }) => location.directory === WORKTREE))
   })
 
@@ -184,8 +194,9 @@ describe("project session families", () => {
     assert.equal(harness.sessions.get("root")?.location.directory, WORKTREE)
   })
 
-  it("rolls back transaction-owned moves after partial failure", async () => {
-    const harness = clientHarness([session("root"), session("child", "root")], {
+  it("rolls back transaction-owned moves after partial failure across split locations", async () => {
+    const OTHER = "/repo/.codenomad/worktrees/other"
+    const harness = clientHarness([session("root", undefined, ROOT), session("child", "root", OTHER)], {
       failMove: (id, call) => id === "child" && call === 2,
     })
     await assert.rejects(() => moveProjectSessionFamily({
@@ -196,6 +207,7 @@ describe("project session families", () => {
     }), /move failed/)
     assert.deepEqual(harness.moveCalls, ["root", "child", "root"])
     assert.equal(harness.sessions.get("root")?.location.directory, ROOT)
+    assert.equal(harness.sessions.get("child")?.location.directory, OTHER)
   })
 
   it("blocks deletion while an attached session is active", async () => {
@@ -248,8 +260,9 @@ describe("project session families", () => {
   })
 
   it("rolls back when a family member becomes active during evacuation", async () => {
+    const OTHER = "/repo/.codenomad/worktrees/other"
     let harness: ReturnType<typeof clientHarness>
-    harness = clientHarness([session("root", undefined, WORKTREE), session("child", "root", WORKTREE)], {
+    harness = clientHarness([session("root", undefined, WORKTREE), session("child", "root", OTHER)], {
       active: () => harness.moveCalls.includes("root") ? ["child"] : [],
     })
     await assert.rejects(() => removeProjectWorktree({
@@ -264,10 +277,11 @@ describe("project session families", () => {
   })
 
   it("rolls back from session state when inventory visibility is stale", async () => {
-    const harness = clientHarness([session("root"), session("child", "root")], {
+    const OTHER = "/repo/.codenomad/worktrees/other"
+    const harness = clientHarness([session("root", undefined, ROOT), session("child", "root", OTHER)], {
       failMove: (id, call) => id === "child" && call === 2,
     })
-    const stale = [session("root"), session("child", "root")]
+    const stale = [session("root", undefined, ROOT), session("child", "root", OTHER)]
     ;(harness.client.session.list as any) = async () => ({ data: structuredClone(stale), cursor: {} })
     await assert.rejects(() => moveProjectSessionFamily({
       client: harness.client,

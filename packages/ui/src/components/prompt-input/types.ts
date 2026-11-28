@@ -30,7 +30,8 @@ export interface PromptInputProps {
   interruptionExpanded?: boolean
 
   // Phone/tablet layouts should keep the expanded prompt more compact.
-  onSend: (prompt: string, attachments: Attachment[], delivery: PromptDelivery, restoredPayload?: SessionInboxUserPayload) => Promise<void>
+  onSend: (prompt: string, attachments: Attachment[], delivery: PromptDelivery, restoredPayload?: SessionInboxUserPayload,
+    admitDelivery?: () => PromptDelivery) => Promise<void>
   onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean

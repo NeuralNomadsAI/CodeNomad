@@ -82,6 +82,10 @@ impl WindowFlushScheduler {
         state.stopped = true;
         self.stopped.notify_all();
     }
+
+    pub(super) fn resume(&self) {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).stopped = false;
+    }
 }
 
 #[cfg(test)]

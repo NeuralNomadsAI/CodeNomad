@@ -1,6 +1,6 @@
 [package]
 name = "codenomad-tauri"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 license = "MIT"
 
@@ -27,6 +27,7 @@ rustls = { version = "0.23", features = ["ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 regex = "1"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["sync"] }
 anyhow = "1"
 which = "4"
 libc = "0.2"
@@ -51,16 +52,28 @@ tauri = { version = "2.12.5", features = ["test"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
+windows = { version = "0.62.2", features = ["Data_Xml_Dom", "UI_Notifications"] }
 windows-core = "0.62"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Already built through tauri; reads the bundle executable for restarts.
 plist = "1.8"
+# The vendored Wry (already built through tauri) cancels page-opened file panels during agent page leases.
+wry = { version = "0.57.1", default-features = false }
+block2 = "0.6.2"
 objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSBundle"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "objc2-app-kit", "WKWebView", "WKBackForwardList", "WKBackForwardListItem", "WKNavigation"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 open = "5.3"
 webkit2gtk = "2.0.2"
 gtk = "0.18"
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+zbus = "5"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "5", features = ["bus-impl"] }

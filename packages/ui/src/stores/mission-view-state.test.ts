@@ -19,8 +19,7 @@ await initializeClientState()
 const { captureTabViewState, seedTabViewState } = await import("./tab-view-state")
 const { publishInstanceLifecycleAuthority } = await import("./instance-lifecycle-authority")
 for (const [instanceId, value] of JSON.parse(process.env.MISSION_VIEW_STORAGE ?? "[]")) seedTabViewState(instanceId, value)
-const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView,
-  markScheduleSuccessSeen, scheduleSuccessSeen, seedScheduleSuccessSeen } = await import("./mission-view-state")
+const { markMissionsFinishedSeen, seedMissionFinishedSeen, missionDisclosureOpen, missionFinishedSeen, missionProjectView, setMissionDisclosureOpen, updateMissionProjectView } = await import("./mission-view-state")
 const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
 
 // The completions a project lists at the end, with whether each reads as seen.
@@ -80,12 +79,6 @@ async function projectControls() {
 }
 
 if (reload) {
-  if (process.env.MISSION_PASSAGE_CHECK) test("exact passage acknowledgement survives reload without acknowledging a replacement", () => {
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false)
-    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false)
-  })
   if (process.env.MISSION_COLLISION_CHECK) test("legacy collision positives survive reload before the originally viewed row is discovered", () => {
     const { folder, scope, rows } = JSON.parse(process.env.MISSION_COLLISION_CHECK!)
     assert.deepEqual(rows.map((row: ReturnType<typeof completion>) => missionFinishedSeen(scope, row)), [true, false, true, true])
@@ -119,7 +112,7 @@ if (reload) {
   })
   if (process.env.MISSION_OCCURRENCES_CHECK) test("each restored occurrence keeps its reader, selection, tree and disclosures", () => {
     assert.equal(missionProjectView("A").selected, "mission-a")
-    assert.equal(missionProjectView("B").selectedScheduled, "schedule-b")
+    assert.equal(missionProjectView("B").selected, "mission-b")
     assert.deepEqual(missionProjectView("A").selectedTask, { missionId: "mission-a", taskId: "task-a" })
     assert.deepEqual(missionProjectView("A").expanded, ["mission:mission-a"])
     assert.equal(missionProjectView("A").reader?.itemId, "report-a")
@@ -128,28 +121,10 @@ if (reload) {
     assert.equal(missionDisclosureOpen("B", "mission-a", "technical"), true)
   })
 } else {
-  test("schedule success uses exact passage identity, initial history, ownership and captured acknowledgement", () => {
-    seedScheduleSuccessSeen("passages", "daily", "schedule", "A")
-    seedScheduleSuccessSeen("passages", "scheduled", "schedule")
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "A"), true, "historical success on first load is already seen")
-    seedScheduleSuccessSeen("passages", "daily", "schedule", "B")
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false, "refresh never reseeds")
-    const lateA = () => markScheduleSuccessSeen("passages", "daily", "schedule", "A")
-    lateA()
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), false)
-    markScheduleSuccessSeen("passages", "daily", "schedule", "B")
-    lateA()
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "B"), true)
-    assert.equal(scheduleSuccessSeen("passages", "daily", "schedule", "C"), false, "next result recreates unread attention")
-    assert.equal(scheduleSuccessSeen("passages", "scheduled", "schedule", "B"), false, "document formats have distinct scopes")
-    seedScheduleSuccessSeen("other-project", "daily", "schedule")
-    assert.equal(scheduleSuccessSeen("other-project", "daily", "schedule", "A"), false)
-    reloadWith({ MISSION_PASSAGE_CHECK: "1" })
-  })
   test("duplicate project occurrences keep presentation independent across restore and closure", () => {
     updateMissionProjectView("A", { selected: "mission-a", selectedTask: { missionId: "mission-a", taskId: "task-a" },
       expanded: ["mission:mission-a"], reader: { missionId: "mission-a", kind: "report", itemId: "report-a" } })
-    updateMissionProjectView("B", { selectedScheduled: "schedule-b" })
+    updateMissionProjectView("B", { selected: "mission-b" })
     setMissionDisclosureOpen("A", "mission-a", "technical", false)
     assert.equal(missionProjectView("B").reader, undefined)
     assert.equal(missionDisclosureOpen("B", "mission-a", "technical"), true)

@@ -1,6 +1,7 @@
 import { BrowserWindow, type WebContents } from "electron"
 import { randomUUID } from "node:crypto"
 import { nativeMenuLabels } from "./view-menu"
+import { isPrivatePreviewUrl, restrictedBrowserGuest } from "./browser-presentation"
 
 const escape = (text: string) => text.replace(/[&<>"']/g, value => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[value]!)
 const dialogs = new WeakSet<BrowserWindow>()
@@ -10,6 +11,7 @@ export const isBrowserDialog = (window: BrowserWindow) => dialogs.has(window)
 export async function showBrowserDialog(owner: BrowserWindow, origin: string, message: string,
   input: { text: string } | { choices: readonly string[] }, source?: WebContents,
   current: () => boolean = () => !owner.isDestroyed() && !source?.isDestroyed()): Promise<string | null> {
+  if (isPrivatePreviewUrl(origin) || source && restrictedBrowserGuest(source)) return null
   const [{ default: windowCss }, { default: dialogCss }] = await Promise.all([
     import("../../../ui/src/styles/components/window.css?raw"),
     import("../../../ui/src/styles/components/browser-native-dialog.css?raw"),

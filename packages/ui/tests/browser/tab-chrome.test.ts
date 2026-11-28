@@ -102,6 +102,63 @@ async function checkFittingTabs(page: Page, label: string) {
   await page.evaluate(() => (window as any).tabFixture.count(9))
 }
 
+test("the browser brand fits beside project tabs without adding a row", async () => {
+  const page = await browser.newPage({ viewport: { width: 434, height: 800 } })
+  try {
+    await prepare(page)
+    const logo = page.locator(".tab-bar-logo")
+    await logo.waitFor()
+    for (const dir of ["ltr", "rtl"]) {
+      await page.evaluate(dir => { document.dir = dir }, dir)
+      const layout = await logo.evaluate(element => {
+        const bar = element.closest(".tab-bar-instance")!
+        const row = bar.querySelector(".tab-container")!.getBoundingClientRect()
+        const strip = bar.querySelector(".tab-scroll-frame")!.getBoundingClientRect()
+        const brand = element.getBoundingClientRect()
+        return {
+          extraHeight: bar.getBoundingClientRect().height - row.height,
+          overlapsVertically: brand.bottom > strip.top && brand.top < strip.bottom,
+          beside: document.dir === "rtl" ? brand.left >= strip.right : brand.right <= strip.left,
+        }
+      })
+      assert.deepEqual(layout, { extraHeight: 0, overlapsVertically: true, beside: true }, dir)
+    }
+  } finally { await page.close() }
+})
+
+test("focused local and remote tabs keep their name and expose their status as a description", async () => {
+  const page = await browser.newPage()
+  try {
+    const clockStart = new Date("2025-01-01T00:00:00Z")
+    await page.clock.install({ time: clockStart })
+    await page.clock.pauseAt(new Date(+clockStart + 1_000))
+    await prepare(page)
+    const statusPair = (status: string) => page.evaluate(status => (window as any).tabFixture.statusPair(status), status)
+    await statusPair("working")
+    const cdp = await page.context().newCDPSession(page)
+    const focused = async (name: string) => {
+      await page.getByRole("tab", { name: new RegExp(`^${name}`) }).focus()
+      const { root } = await cdp.send("DOM.getDocument")
+      const { nodeId } = await cdp.send("DOM.querySelector", { nodeId: root.nodeId, selector: "button[role=tab]:focus" })
+      const { nodes: [node] } = await cdp.send("Accessibility.getPartialAXTree", { nodeId, fetchRelatives: false })
+      assert.equal(node.role?.value, "tab")
+      assert.equal(node.properties?.find(property => property.name === "focused")?.value.value, true)
+      return { name: node.name?.value, description: node.description?.value }
+    }
+    const names = ["Local status", "Remote status"]
+    const working = []
+    for (const name of names) {
+      const tab = await focused(name)
+      assert.equal(tab.description, "Instance status: Working")
+      working.push(tab.name)
+    }
+    await statusPair("idle")
+    for (const [index, name] of names.entries()) {
+      assert.deepEqual(await focused(name), { name: working[index], description: "Instance status: Idle" })
+    }
+  } finally { await page.close() }
+})
+
 test("real tab strips retain shared scrollbars and flush seams across zoom/DPI/RTL", async () => {
   for (const dpr of [1, 1.25, 1.5, 2]) {
     const page = await browser.newPage({ viewport: { width: 1200, height: 800 }, deviceScaleFactor: dpr })

@@ -1,9 +1,10 @@
 import { z } from "zod"
 import type { FastifyInstance } from "fastify"
-import type { LocationRef, OpenCodeClient } from "@opencode/client"
+import { isSessionNotFoundError, type LocationRef, type OpenCodeClient } from "@opencode/client"
 import type { WorkspaceManager } from "../../workspaces/manager"
-import type { PanelExtensionStore } from "../../panel-extensions/store"
-import type { PanelExtensionPermission, PanelConversationStatus } from "../../panel-extensions/contract"
+import { noteTitle, type PanelExtensionStore, type PanelStoredNote } from "../../panel-extensions/store"
+import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelConversationStatus, type PanelNotesPage } from "../../panel-extensions/contract"
+import { resolveMemoryProjectIdentity } from "../../memory/project-identity"
 import { PanelExtensionError } from "../../panel-extensions/archive"
 import { readPanelImagesStatus } from "../../panel-extensions/images-status"
 import type { ImageSettings } from "../../opencode/image-settings"
@@ -26,9 +27,11 @@ const ROUTE_BUDGET_MS = 19_000, RPC_TIMEOUT_MS = 8_000
 
 export interface PanelExtensionApi4Deps extends ImagesConversationRouteDeps {
   store: PanelExtensionStore
-  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get">
+  workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get" | "getServiceDirectoryForPath" | "list">
   imageSettings: Pick<ImageSettings, "read">
   checkDesignFolderExclusion?: typeof checkDesignFolderExclusion
+  /** Tests only: the agent-memory project identity that files `panel.notes`. */
+  projectIdentity?: typeof resolveMemoryProjectIdentity
   /** Tests only: the whole-route deadline. */
   routeBudgetMs?: number
 }
@@ -44,13 +47,17 @@ interface RouteContext {
   fence(key: string, check: () => Promise<void>): void
   /** A connection the answer was read through, asserted current right before it is sent. */
   pin(connection: { assertCurrent(): void }): void
+  /** A write committed after its own checks: its answer is sent as is, never refused by reads after it. */
+  committed(): void
+  /** The commit has started: from now on its own outcome, not the deadline or the caller's departure, settles the route. */
+  committing(): void
 }
 
-/** `work`, or a rejection as soon as `signal` aborts; a late outcome is dropped. */
-function settle<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+/** `work`, or a rejection as soon as `signal` aborts (unless `committing`); a late outcome is dropped. */
+function settle<T>(signal: AbortSignal, work: () => Promise<T>, committing: () => boolean = () => false): Promise<T> {
   signal.throwIfAborted()
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason)
+    const abort = () => { if (!committing()) reject(signal.reason) }
     signal.addEventListener("abort", abort, { once: true })
     work().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
   })
@@ -83,6 +90,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           if (!workspace || !base || manager.get(input.instanceId) !== workspace || manager.getServiceLocation(input.instanceId) !== base || !display()) throw new Refused(409)
         } }
         // The route settles on the deadline or the caller's departure, whatever its reads still await.
+        let started = false
         return await settle(signal, async () => {
           const entry = permission ? await deps.store.authorize(id, input.digest, permission) : undefined
           const prompts = Boolean(entry && (entry.manifest.permissions as readonly string[]).includes("session.images.prompts"))
@@ -95,8 +103,10 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
             signal.throwIfAborted()
             for (const connection of pinned) connection.assertCurrent()
           }
+          let written = false
           const result = await run(input, { id, signal, prompts, authorize, fence: (key, check) => { if (!fences.has(key)) fences.set(key, check) },
-            pin: connection => { pinned.add(connection) } })
+            pin: connection => { pinned.add(connection) }, committed: () => { written = true }, committing: () => { started = true } })
+          if (written) return result
           // After the last read: Location and session ownership, then consent, then (synchronously,
           // with nothing awaited before the answer) every connection the answer was read through.
           for (const check of fences.values()) { signal.throwIfAborted(); await check() }
@@ -104,7 +114,7 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
           signal.throwIfAborted()
           for (const connection of pinned) connection.assertCurrent()
           return result
-        })
+        }, () => started)
       } catch (error) {
         const code = error instanceof Refused ? error.status : error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
@@ -278,5 +288,128 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   route("preferencesSet", null, { value: z.unknown() }, 16384, async (input, { id }) => {
     if (!manager.get(input.instanceId)) throw new PanelExtensionError("missing")
     return preferences(async () => ({ status: await deps.store.setPreferences(id, input.digest, input.value) }))
+  })
+
+  // panel.notes: one note per session, filed under the agent-memory project identity of the
+  // displayed conversation's Location (else the instance's): worktrees share them, clones when their remote normalizes alike.
+  const projectIdentity = deps.projectIdentity ?? resolveMemoryProjectIdentity
+  /**
+   * Per request: the project identity of a directory this instance owns, or (`anyWindow`, for
+   * titles only) another open window does, as agent memory resolves a session's project; else `undefined`.
+   */
+  const identities = (instanceId: string) => {
+    type Owner = { directory: string; distro?: string }
+    const owners = new Map<string, Promise<Owner | undefined>>(), ids = new Map<string, Promise<string>>()
+    const memo = <T>(cache: Map<string, Promise<T>>, key: string, read: () => Promise<T>) => {
+      let found = cache.get(key)
+      if (!found) { found = read(); cache.set(key, found) }
+      return found
+    }
+    const target = async (workspaceId: string, directory: string): Promise<Owner> => {
+      const owned = await manager.getServiceDirectoryForPath(workspaceId, directory)
+      if (!owned) throw new Error("Not an owner")
+      return { directory: owned, distro: manager.getServiceWslDistro(workspaceId) }
+    }
+    return async (directory: string, anyWindow = false) => {
+      const own = await memo(owners, `own:${directory}`, () => target(instanceId, directory).catch(() => undefined))
+      const owner = own ?? (anyWindow ? await memo(owners, `any:${directory}`, () => Promise.any(manager.list()
+        .filter(workspace => workspace.id !== instanceId).map(workspace => target(workspace.id, directory))).catch(() => undefined)) : undefined)
+      return owner ? memo(ids, `${owner.distro ?? ""}:${owner.directory}`, async () => (await projectIdentity(owner)).id) : undefined
+    }
+  }
+  /** The request's project; a `write` checks its anchor inside the store queue instead of after the answer. */
+  const project = async (context: RouteContext, instanceId: string, sessionID: string | undefined, write = false) => {
+    const connection = await connect(instanceId)
+    context.pin(connection)
+    const client = connection.client
+    const session = sessionID ? await ownedSession(instanceId, client, sessionID, context.signal) : undefined
+    const location = session ? readLocationRef(session.location) : manager.getServiceLocation(instanceId)
+    if (!location) throw new Refused(403)
+    if (!write && session) fenceSession(context, instanceId, client, sessionID!, session.location)
+    else if (!write) fenceLocation(context, instanceId, client, location.directory)
+    // A worktree being deleted (the instance's or a linked one) refuses the answer and any write.
+    const display = await captureDisplayIdentities(deps.worktreeDeletionFence, manager, instanceId, [location.directory])
+    const displayed = () => { if (display && !display()) throw new Refused(409) }
+    if (!write) context.fence(`display:${location.directory}`, async () => displayed())
+    const identityAt = identities(instanceId)
+    const id = await identityAt(location.directory)
+    if (!id) throw new Refused(403)
+    // Read again, uncached, after the last read: a remote change moves the project without moving the session.
+    const sameProject = (directory: string) => async () => { if (await identities(instanceId)(directory) !== id) throw new Refused(409) }
+    if (!write) context.fence(`identity:${location.directory}`, sameProject(location.directory))
+    context.signal.throwIfAborted()
+    // Inside the store queue: the anchor still where it was, then, once the bytes are staged, nothing gone stale.
+    const workspace = manager.get(instanceId), base = manager.getServiceLocation(instanceId)
+    // Synchronous, right before the rename; passing it starts the commit.
+    const final = () => {
+      context.signal.throwIfAborted(); connection.assertCurrent(); displayed()
+      if (manager.get(instanceId) !== workspace || manager.getServiceLocation(instanceId) !== base) throw new Refused(409)
+      context.committing()
+    }
+    // The slow Git identity first, then the session (or Location ownership) as close to the commit as possible.
+    const check = async () => {
+      await sameProject(location.directory)()
+      if (session) {
+        const latest = readLocationRef((await ownedSession(instanceId, client, sessionID!, context.signal)).location)
+        if (JSON.stringify(latest) !== JSON.stringify(location)) throw new Refused(409)
+      } else if (!await manager.ownsLocation(instanceId, { directory: location.directory }, client, { signal: context.signal })) throw new Refused(403)
+      context.signal.throwIfAborted(); connection.assertCurrent(); displayed()
+    }
+    return { id, client, session, guard: { check, final }, identityAt, sameProject }
+  }
+  /** The session, or `undefined` once it is deleted; any other failure fails the request. */
+  const unlessDeleted = <T>(signal: AbortSignal, read: Promise<T>) => read.catch(error => {
+    if (!signal.aborted && isSessionNotFoundError(error)) return undefined
+    throw error
+  })
+  const Revision = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER)
+  const noteOf = (note?: PanelStoredNote) => note ? { text: note.text, revision: note.revision } : null
+  route("notesGet", "panel.notes", { sessionID: Id }, 8192, async (input, context) => {
+    const { id: projectId } = await project(context, input.instanceId, input.sessionID)
+    return { note: noteOf((await deps.store.notes(context.id, input.digest, projectId)).find(note => note.sessionID === input.sessionID)) }
+  })
+  // JSON escapes can grow the text sixfold: the body limit bounds it, the store's UTF-8 measure answers `too-large`.
+  route("notesSet", "panel.notes", { sessionID: Id, text: z.string(), revision: Revision },
+    6 * PANEL_EXTENSION_LIMITS.noteBytes + 8192, async (input, context) => {
+      const { id: projectId, session, guard } = await project(context, input.instanceId, input.sessionID, true)
+      await context.authorize()
+      const result = await deps.store.setNote(context.id, input.digest, projectId, input.sessionID, input.revision, { title: session!.title ?? "", text: input.text }, guard)
+      if (result.status === "saved") context.committed()
+      return result
+    })
+  // A live title only for a session still in this project; a moved one keeps its last written title.
+  route("notesList", "panel.notes", { sessionID: Id.optional(), cursor: z.string().regex(/^\d{1,4}$/).optional() }, 8192, async (input, context) => {
+    const { id: projectId, client, identityAt } = await project(context, input.instanceId, input.sessionID)
+    const all = await deps.store.notes(context.id, input.digest, projectId)
+    const start = Number(input.cursor ?? 0), page = all.slice(start, start + PANEL_EXTENSION_LIMITS.notesPage)
+    const notes = await Promise.all(page.map(async note => {
+      const live = await unlessDeleted(context.signal, client.session.get({ sessionID: note.sessionID }, { signal: bounded(context.signal) }))
+      const here = live && await identityAt(readLocationRef(live.location).directory, true).catch(() => undefined) === projectId
+      return { sessionID: note.sessionID, title: (here && live.title && noteTitle(live.title)) || note.title, text: note.text, revision: note.revision, updated: note.updated, orphan: !live }
+    }))
+    return { notes, cursor: start + page.length < all.length ? String(start + page.length) : null } satisfies PanelNotesPage
+  })
+  route("notesDelete", "panel.notes", { sessionID: Id.optional(), target: Id, revision: Revision.min(1) }, 8192, async (input, context) => {
+    const { id: projectId, guard } = await project(context, input.instanceId, input.sessionID, true)
+    await context.authorize()
+    const result = await deps.store.setNote(context.id, input.digest, projectId, input.target, input.revision, { title: "", text: "" }, guard)
+    if (result.status === "saved") context.committed()
+    return { status: result.status === "saved" ? "deleted" as const : "conflict" as const }
+  })
+  // Only a session with a note in this project, owned by this instance and still in the project, may be shown.
+  route("notesOpen", "panel.notes", { sessionID: Id.optional(), target: Id }, 8192, async (input, context) => {
+    const { id: projectId, client, identityAt, sameProject } = await project(context, input.instanceId, input.sessionID)
+    if (!(await deps.store.notes(context.id, input.digest, projectId)).some(note => note.sessionID === input.target)) return { openable: false }
+    const session = await unlessDeleted(context.signal, ownedSession(input.instanceId, client, input.target, context.signal))
+      .catch(error => { if (error instanceof Refused && error.status === 403) return undefined; throw error })
+    if (!session || await identityAt(readLocationRef(session.location).directory) !== projectId) return { openable: false }
+    const directory = readLocationRef(session.location).directory
+    // The target's worktree too: a session whose worktree is being deleted is never shown.
+    const display = await captureDisplayIdentities(deps.worktreeDeletionFence, manager, input.instanceId, [directory])
+    if (display && !display()) return { openable: false }
+    fenceSession(context, input.instanceId, client, input.target, session.location)
+    context.fence(`identity:${directory}`, sameProject(directory))
+    context.fence(`display:${directory}`, async () => { if (display && !display()) throw new Refused(409) })
+    return { openable: true }
   })
 }

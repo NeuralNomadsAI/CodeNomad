@@ -89,7 +89,7 @@ export function reconcileSessionInterruptionBoundary(instanceId: string, session
 }
 
 /** Saved with the window's session markers, including while recovery is being revalidated. */
-export function captureSeenInterruptions(instanceId: string, sessions: readonly Interruptible[]): Record<string, number> {
+export function captureSeenInterruptions(instanceId: string, sessions: Iterable<Interruptible>): Record<string, number> {
   const entries = seenInterruptions().get(instanceId)
   const result: Record<string, number> = {}
   if (!entries) return result

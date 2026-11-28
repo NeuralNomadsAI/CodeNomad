@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "Разрешено всегда",
   "permissionReceipts.reject": "Отклонено",
   "permissionReceipts.origin.codenomad": "Решение в CodeNomad",
-  "permissionReceipts.origin.yolo": "Автоматически · Yolo",
+  "permissionReceipts.origin.automatic": "Автоматическое решение",
   "permissionReceipts.origin.native": "Нативное решение",
   "permissionReceipts.more": "Загрузить другие решения",
   "permissionReceipts.error": "Не удалось загрузить решения по разрешениям.",

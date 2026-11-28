@@ -10,6 +10,7 @@ interface RouteDeps {
   remotePreviewsAllowed: () => boolean
   /** Whether a non-local request may open SideCars (the host's direct HTTPS opt-in). */
   sidecarsOverDirectHttps?: (request: FastifyRequest) => boolean
+  backendUiCapabilities?: (request: FastifyRequest) => Pick<ServerMeta, "serversUsable" | "serversManageable" | "secretEntryAllowed">
 }
 
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
@@ -17,6 +18,7 @@ export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
     ...buildMetaResponse(deps.serverMeta),
     localRequest: isLocalRequest(request),
     sidecarsAllowed: isLocalRequest(request) || deps.sidecarsOverDirectHttps?.(request) === true,
+    ...deps.backendUiCapabilities?.(request),
     ...(isRemoteRequest(request) && !deps.remotePreviewsAllowed() ? { previewsUnavailable: true as const } : {}),
   }))
 }

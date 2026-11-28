@@ -1,13 +1,17 @@
 import dns from "node:dns"
-import { BlockList, isIP, type LookupFunction, type Server } from "node:net"
+import { BlockList, isIP, type LookupFunction } from "node:net"
 import os from "node:os"
 import { buildConnector } from "undici"
 import { isLoopbackHost, isWildcardHost, normalizeNetworkHost, stripHostBrackets } from "./network-host"
 
-const listeners = new Set<Server>()
+type ProxyListener = {
+  address(): { address: string; port: number } | string | null
+  once(event: "close", listener: () => void): unknown
+}
+const listeners = new Set<ProxyListener>()
 
 /** Track actual bound sockets, including ephemeral ports and sibling HTTP/HTTPS listeners. */
-export function guardProxyListener(server: Server): void {
+export function guardProxyListener(server: ProxyListener): void {
   listeners.add(server)
   server.once("close", () => listeners.delete(server))
 }

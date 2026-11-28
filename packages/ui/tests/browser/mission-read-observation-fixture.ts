@@ -2,7 +2,7 @@ import type { Page, Request } from "playwright"
 import type { serverApi } from "../../src/lib/api-client"
 
 export const MISSION_READ_HEADER = "x-codenomad-fixture-mission-read"
-type Reads = Pick<typeof serverApi, "fetchMissionSchedule" | "fetchMissionSchedules" | "fetchMissionRecurrence" | "fetchPermissionReceipts">
+type Reads = Pick<typeof serverApi, "fetchPermissionReceipts">
 
 /** The queue can defer fetch: bind its exact originating signal until the real API settles. */
 export function observeMissionReads(api: Reads) {
@@ -53,13 +53,6 @@ export function observeMissionReads(api: Reads) {
       read.used && signal.aborted && error instanceof DOMException && error.name === "AbortError").finally(() => pending.delete(read)))
     return result
   }
-  const point = api.fetchMissionSchedule, list = api.fetchMissionSchedules, recurrence = api.fetchMissionRecurrence
-  api.fetchMissionSchedule = (instance, id, input, signal) => observe(signal,
-    `/api/workspaces/${encodeURIComponent(instance)}/missions/${encodeURIComponent(id)}/schedule`, () => point(instance, id, input, signal))
-  api.fetchMissionSchedules = (instance, input, signal) => observe(signal,
-    `/api/workspaces/${encodeURIComponent(instance)}/missions/scheduled`, () => list(instance, input, signal))
-  api.fetchMissionRecurrence = (instance, signal) => observe(signal,
-    `/api/workspaces/${encodeURIComponent(instance)}/missions/recurrence`, () => recurrence(instance, signal))
   const receipts = api.fetchPermissionReceipts
   api.fetchPermissionReceipts = (instance, session, scope, cursor, signal) => observe(signal,
     `/api/workspaces/${encodeURIComponent(instance)}/sessions/${encodeURIComponent(session)}/permission-receipts`, () => receipts(instance, session, scope, cursor, signal))

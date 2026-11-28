@@ -76,6 +76,8 @@ Vous obtenez les rapports des tâches et un rapport final ; les modifications de
 
 ## Débogage {#debug}
 
+Avant de déclarer une tâche, le coordinateur peut clôturer la mission avec des preuves si aucun changement n’est nécessaire ou si le travail a été vérifié sans nécessiter de débogage, par exemple une fusion sans conflit, relue et testée.
+
 Les preuves d’abord : prouver le bogue et sa cause, le corriger en commençant par un test, faire vérifier la correction par deux réviseurs indépendants, traiter leurs remarques, puis tout valider au vert. Choisissez-le pour un bogue reproductible, un test en échec ou une régression, quand vous voulez une preuve plutôt qu’une supposition.
 
 ### Étapes et rôles {#debug-steps}

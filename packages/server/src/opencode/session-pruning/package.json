@@ -18,11 +18,12 @@
     "assets-gallery-contract.ts", "assets-gallery-proof.ts", "assets-gallery.ts", "assets-conversation.ts",
     "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
     "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
-    "transaction.ts", "message-storage.ts", "native-assistant-content.ts"
+    "transaction.ts", "message-storage.ts", "native-assistant-content.ts",
+    "user-files.ts", "user-file-contract.ts", "user-file-reference.ts", "permission-rules-contract.ts"
   ],
   "dependencies": {
-    "@opencode/plugin": "2.3.0",
-    "@opencode/schema": "2.3.0",
+    "@opencode/plugin": "2.4.2",
+    "@opencode/schema": "2.4.2",
     "zod": "^4.6.6"
   }
 }

@@ -51,25 +51,32 @@ Si otro cliente resuelve una solicitud, puede desaparecer de aquí. Un tiempo de
 2. Para decisiones sin mensaje de origen, abre **Decisiones de permisos de la sesión**.
 3. Usa **Cargar más decisiones** para continuar o **Reintentar** tras un fallo de lectura.
 
-Los comprobantes registran las solicitudes/recursos conocidos, la decisión confirmada y el motivo/procedencia disponibles. **Decisión en CodeNomad**, **Automático · Yolo** y **Decisión nativa** distinguen los orígenes observados; una resolución nativa no demuestra que alguien hiciera clic en esta ventana.
+Los comprobantes registran las solicitudes/recursos conocidos, la decisión confirmada y el motivo/procedencia disponibles. **Decisión en CodeNomad**, **Decisión automática** y **Decisión nativa** distinguen los orígenes observados; una resolución nativa no demuestra que alguien hiciera clic en esta ventana.
 
 Los comprobantes son anotaciones de solo lectura de CodeNomad, no mensajes nativos ni editores de reglas de permisos. Se excluyen de la búsqueda nativa en todo el historial, la copia de mensajes y la exportación. No pueden reconstruir decisiones perdidas mientras CodeNomad estaba sin conexión, y un resultado de herramienta correcto no sustituye un comprobante ausente. La eliminación de una sesión borra sus comprobantes.
 
-## Modo Yolo y ámbito familiar {#yolo-mode}
+## Modo de permisos de la conversación {#conversation-mode}
 
-1. Selecciona una conversación y abre **Estado → Modo yolo**.
-2. Actívalo solo si es aceptable aprobar permisos automáticamente para toda la familia.
-3. Desactívalo antes de continuar con trabajo no fiable; inspecciona las solicitudes pendientes y las herramientas ya en ejecución.
+Selecciona una conversación, abre **Estado → Permisos** y haz clic en un modo. Al plegar la sección, un rayo (Autónomo) o un escudo (Supervisado) muestra el último modo conocido.
 
-Aunque el control se refiere a una sesión, su ámbito efectivo es la raíz resuelta de la familia y sus descendientes: activarlo/desactivarlo desde un hijo afecta a esa familia. Una bifurcación nativa se trata como una raíz propia. No es una aprobación global para todos los proyectos o conversaciones independientes.
+- **Autónomo** — Aplica las reglas de permisos de OpenCode.
+- **Supervisado** — Pide confirmación antes de que el agente modifique archivos o ejecute comandos de shell. Para esas acciones, las prohibiciones globales, del proyecto y de la conversación siguen vigentes, y las reglas que las permiten pasan a requerir confirmación. Las aprobaciones de **Permitir siempre** guardadas por OpenCode siguen vigentes para las solicitudes que coincidan.
 
-Yolo aprueba **solo permisos**. No responde preguntas ni formularios, no aporta información ausente, no garantiza ejecuciones correctas ni omite las comprobaciones de propiedad del backend. El backend de CodeNomad realiza la aprobación automática: cerrar una ventana no basta para desactivarla mientras el backend siga activo, y un backend detenido no puede seguir aprobando solicitudes. El ajuste familiar se conserva y se restaura cuando se vuelve a cargar el espacio de trabajo.
+Ambos modos usan las reglas de sesión de OpenCode, también en su interfaz de terminal si abres la misma conversación en el mismo servicio. Volver a **Autónomo** solo quita las reglas añadidas para la supervisión. Los archivos de configuración de OpenCode no cambian. CodeNomad no aprueba solicitudes automáticamente en ninguno de los dos modos.
 
-Desactivar Yolo no revoca una decisión ya aceptada ni revierte efectos sobre archivos/red. Revisa los comprobantes **Automático · Yolo** y detén explícitamente la ejecución si es necesario. Para automatización con puntos de aprobación humana, consulta [Misiones](missions.md).
+El modo Supervisado no es un entorno aislado. Las lecturas, el acceso fuera del proyecto y las herramientas MCP conservan sus propias reglas. Las solicitudes abiertas conservan sus reglas originales.
+
+En un subagente, **Permisos** muestra y cambia el modo de la conversación raíz. Los subagentes existentes conservan sus reglas al cambiar el modo. Si un subagente inicia otro, el nuevo copia las reglas de su padre inmediato.
+
+Una bifurcación copia las reglas de su conversación de origen y tiene su propio modo. Si CodeNomad no puede verificar qué reglas quitar, la bifurcación las conserva y puedes seguir enviando mensajes.
+
+Si el modo está sin confirmar, selecciona **Volver a cargar los permisos**. Para elegir el modo inicial, consulta [Permisos de las conversaciones nuevas](settings.md#new-conversation-permissions).
 
 ## Recuperar solicitudes ausentes u obsoletas {#request-recovery}
 
 1. Comprueba el indicador de conexión y reconecta al mismo backend/proyecto.
 2. Deja que la recuperación reconcilie las solicitudes nativas pendientes; las solicitudes conocidas y los borradores se conservan si la cobertura es incompleta.
 
-Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).
+Los fallos temporales de recuperación se reintentan en segundo plano sin crear notificaciones. Si el plugin integrado de OpenCode no puede listar las solicitudes en espera, aparece un único aviso por backend en la pestaña del navegador hasta que la recuperación se complete.
+
+Una respuesta incompleta no es una cola vacía autoritativa, y un aviso de plugin no disponible no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).

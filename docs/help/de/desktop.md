@@ -2,7 +2,7 @@
 
 ## Fenster, Tabs und gemeinsamer Dienst {#windows-tabs}
 
-1. Verwenden Sie **Neue Instanz**, um einen weiteren Projekt-/Startseiten-Tab im aktuellen Fenster zu öffnen.
+1. Öffnen Sie mit **Neue Instanz** einen leeren Tab im aktuellen Fenster und wählen Sie ein Projekt.
 2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 
@@ -10,18 +10,21 @@ Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenC
 
 Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
 
+Die Desktop-Automatisierung bleibt im vom Agenten geprüften Fenster, auch wenn Sie das Fenster wechseln. Mit `codenomad.inspect({targets:true})` kann der Agent die verfügbaren lokalen Fenster auflisten und ein anderes anhand seiner Kennung prüfen.
+Native Maus- und Tastatureingaben im App-Fenster sind nur auf dessen Hauptseite möglich. Für die Webvorschau einer Unterhaltung gibt es eigene Werkzeuge.
+
 ## Desktop-Startargumente {#desktop-cli}
 
 Geben Sie diese Argumente nach der **Desktop-Programmdatei** (Tauri oder Electron) an, im Terminal oder im Feld **Ziel** einer Windows-Verknüpfung. Ersetzen Sie die Beispielpfade durch Ihren Programmpfad.
 
 | Argument | Wirkung |
 | --- | --- |
-| `--connect-server <server>` | Öffnet einen entfernten CodeNomad-Server über seine HTTP(S)-URL, seinen gespeicherten Namen oder seine gespeicherte ID. Siehe [Verbindung und Anmeldung](remote-access.md#saved-servers). |
+| `--connect-server <name-or-url>` | Öffnet unabhängig von `multiBackend` ein separates Remote-Fenster über eine HTTP(S)-URL, einen gespeicherten Namen oder eine gespeicherte ID. Siehe [Remote-Verbindungen](remote-access.md#connect-server). |
 | `--folder <path>` | Öffnet ein vorhandenes Projektverzeichnis. Für mehrere Verzeichnisse wiederholen; relative Pfade beziehen sich auf das Startverzeichnis. |
 | `<path> ...` | Öffnet Projektverzeichnisse ohne ausdrückliches `--folder`. **Bereits laufendes Windows Tauri:** Verwenden Sie für jedes Verzeichnis `--folder`. Werden Positionspfade mit `--folder` gemischt, entfällt ebenfalls die gesamte Ordneranforderung. |
 | `--new-window` | Fordert ein neues Anwendungsfenster an, auch wenn ein weiterer Start sonst das vorhandene Fenster fokussieren würde. |
 
-Auch `--connect-server=<server>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das entfernte Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`; lokale Fenster werden erst bei einem Verbindungsfehler wiederhergestellt.
+Auch `--connect-server=<name-or-url>` und `--folder=<path>` funktionieren. Pfade und Namen mit Leerzeichen müssen in Anführungszeichen stehen. Für ausschließlich das Remote-Fenster verwenden Sie nur `--connect-server`, ohne Ordner oder `--new-window`. Ein bereits geöffnetes lokales Fenster verarbeitet die Anfrage; beim Start werden lokale Fenster erst bei einem Verbindungsfehler wiederhergestellt.
 
 In **PowerShell**:
 
@@ -47,6 +50,8 @@ Jeder Projekt-Tab stellt seine eigene Auswahl im rechten Panel, seinen Dateien-M
 Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Bedienelemente zielen auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgen sie stattdessen dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar. Werden die Einstellungen beim Start wieder geöffnet, verbinden sie sich erneut, sobald dieses Projekt fertig geöffnet ist; solange der Ordner noch startet oder in mehreren Tabs geöffnet ist, bleiben sie nicht verfügbar, bis Sie die Einstellungen aus dem gewünschten Fenster öffnen.
 
 Browser- und Remote-Clients verwenden eingebettete Einstellungen.
+
+[Remote-Tabs wiederherstellen](projects.md#restore-remote-tabs).
 
 ## Desktop-Datenprofile {#data-profiles}
 

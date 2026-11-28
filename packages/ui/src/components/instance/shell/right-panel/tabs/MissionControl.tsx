@@ -1,10 +1,10 @@
-import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
+import { For, Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, on, onCleanup, untrack, type Component, type JSX } from "solid-js"
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { missionTaskExecutionEvidence } from "../../../../../../../server/src/missions/execution-evidence"
-import type { MissionTaskMark } from "../../../../../../../server/src/missions/mission-task-marks"
+import { missionTaskMarkLive, missionTaskMarksCover, type MissionTaskMark } from "../../../../../../../server/src/missions/mission-task-marks"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -12,18 +12,18 @@ import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { applySurface, beginGesture, type SurfaceGesture } from "../../../../../stores/session-surface"
-import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, retargetMissionReader, updateMissionProjectView, navigateMissionProjectView,
+import { MAX_EXPANDED, forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView, navigateMissionProjectView,
   type MissionReaderTarget } from "../../../../../stores/mission-view-state"
-import { markMissionTasksSeen, missionTaskUnseen, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
+import { markMissionTasksSeen, missionTaskUnseen, missionTasksSeenThrough, seedMissionTasksSeen } from "../../../../../stores/mission-task-seen"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
-import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
-import { missionQuestionContext, missionQuestions, type MissionQuestionStore } from "../../../../mission-questions"
+import { missionIncludesSession } from "../../../../mission-attention-model"
+import { missionQuestionContext, missionQuestions } from "../../../../mission-questions"
 import { currentMissionObservations, missionQuestionOwners } from "../../../../mission-question-owners"
 import { MissionPanelHeader, MissionRows } from "../../../../mission-picker"
-import { MissionActionBar, MissionActionSlot, MissionTaskToolbarActive } from "../../../../mission-action-bar"
-import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
+import { MissionActionBar, MissionActionSlot } from "../../../../mission-action-bar"
+import { missionMark, sortMissionPickerEntries, type MissionPickerEntry } from "../../../../mission-picker-model"
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
@@ -33,18 +33,20 @@ import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
 import { missionCleanupPending } from "../../../../../lib/mission-cleanup"
 import { openSettings, openSettingsRow } from "../../../../../stores/settings-screen"
-import { createMissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { conversationActivity, missionTaskRowState } from "../../../../mission-task-tree"
-import { MissionTaskActions, type MissionTaskSelection } from "../../../../mission-task-actions"
+import type { MissionTaskSelection } from "../../../../mission-task-actions"
 import { MissionTaskPreview } from "../../../../mission-task-preview"
 import { missionDerivedSessionIncludes, missionDerivedTaskSession, useMissionTaskSessionDemand } from "../../../../../stores/mission-task-sessions"
-import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
 import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
-import { createMissionScheduleList } from "../../../../mission-schedule-list"
-import { MissionPanelScope, MissionViewScope } from "../../../../mission-panel-scope"
+import { useMissionCalendars } from "../../../../../stores/mission-calendars"
+import { MissionProgramming } from "../../../../mission-programming"
+import { missionProgramming, missionProgrammingDraft, missionProgrammingSuccessor } from "../../../../mission-programming-model"
+import { MissionViewScope } from "../../../../mission-panel-scope"
 import { MissionPanelPaging } from "../../../../mission-panel-paging"
+import { projectScope } from "../../../../../lib/backend-identity"
+import { captureBackendOperation } from "../../../../../lib/backend-operation"
 import { MissionListPaging } from "../../../../mission-list-paging"
 
 interface MissionControlProps {
@@ -66,12 +68,10 @@ const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
 
 const MissionControl: Component<MissionControlProps> = (props) => {
   const { locale } = useI18n()
-  const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
+  const scope = () => { const instance = instances().get(props.instanceId); return instance ? projectScope(instance) : props.instanceId }
   const view = () => missionProjectView(props.instanceId)
   const updateView = (patch: Parameters<typeof updateMissionProjectView>[1]) => updateMissionProjectView(props.instanceId, patch)
   const selectedMissionId = () => view().selected
-  const selectedSchedule = () => view().selectedRecurrence
-  const selectedScheduled = () => view().selectedScheduled
   const editorScope = () => JSON.stringify([props.instanceId, scope()])
   const editor = () => missionEditor(editorScope())
   const [navigationError, setNavigationError] = createSignal(false)
@@ -79,8 +79,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // The selected item's unconfirmed control, resent only by an explicit refresh click.
   const [controlRetry, setControlRetry] = createSignal<MissionControlRetry>()
   const [refreshing, setRefreshing] = createSignal(false)
-  // The open editor's passive scheduling reads share the toolbar's update icon.
-  const [editorReading, setEditorReading] = createSignal(false)
+  // The instance whose first journal read has settled: passive revalidation never spins the update icon.
+  const [loadedFor, setLoadedFor] = createSignal<string>()
   const registerRetry = (retry: MissionControlRetry) => {
     setControlRetry(() => retry)
     return () => setControlRetry(current => current === retry ? undefined : current)
@@ -94,13 +94,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
   // A full map, or a list row before its map is read (its declared actors and its
-  // current marks window); a passage reads its own store and family. Only current
-  // observation pages are evidence.
-  const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string,
-    store: MissionQuestionStore = missionStore, observedFamily = family(value.id)) => {
-    const pages = currentMissionObservations(store, props.instanceId, value.id)
+  // current marks window). Only current observation pages are evidence.
+  const includesSession = (value: Pick<MissionPanelMap, "id" | "projectID" | "coordinatorSessionId"> & { actors: readonly { sessionId: string }[] }, id: string) => {
+    const pages = currentMissionObservations(missionStore, props.instanceId, value.id)
     return value.coordinatorSessionId === id
-      || missionIncludesSession([...value.actors, ...store.observedActors(props.instanceId, value.id), ...pages.flatMap(page => page.context.actors)], id, observedFamily)
+      || missionIncludesSession([...value.actors, ...missionStore.observedActors(props.instanceId, value.id), ...pages.flatMap(page => page.context.actors)], id, family(value.id))
       || pages.some(page => page.requests.items.some(item => item.request.sessionID === id))
       || missionDerivedSessionIncludes(props.instanceId, value as MissionPanelMap, id)
   }
@@ -119,9 +117,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     () => instances().get(props.instanceId)?.metadata?.project?.id)
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), listProjectChanges()]), () => props.isActive?.() ?? true)
   let intent = 0
-  const selectMission = (id: string) => { intent++; updateView({ selected: id, selectedRecurrence: undefined, selectedScheduled: undefined, selectedTask: undefined }) }
-  // The panel has one selection: a row, or instead one task (of a one-time Mission, or of
-  // the selected schedule's passage, whose row stays selected underneath).
+  const selectMission = (id: string) => { intent++; updateView({ selected: id, selectedTask: undefined }) }
+  // The panel has one selection: a row, or instead one task of a Mission.
   const selectedTaskKey = () => view().selectedTask
   const isSelectedTask = (missionId: string, taskId: string) => selectedTaskKey()?.missionId === missionId && selectedTaskKey()?.taskId === taskId
   // While the eye is pressed (a Mission or task reader is open), the reader follows the selection.
@@ -131,17 +128,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
   const selectTask = (missionId: string, taskId: string) => {
     intent++
-    const passage = passageSchedule() !== undefined && mission()?.id === missionId
     navigateMissionProjectView(props.instanceId, {
-      ...(passage ? {} : { selected: missionId, selectedRecurrence: undefined, selectedScheduled: undefined }),
-      selectedTask: { missionId, taskId },
-      ...(viewing() ? { reader: readerTarget({ missionId, kind: "task", itemId: taskId }) } : {}),
+      selected: missionId, selectedTask: { missionId, taskId },
+      ...(viewing() ? { reader: { missionId, kind: "task", itemId: taskId } } : {}),
     })
   }
-  // A chosen one-time Mission takes the open reader to its summary.
+  // A chosen Mission takes the open reader to its summary.
   const followReader = (id: string, intent: SurfaceGesture) => {
     const reader = view().reader
-    if (!viewing() || !reader?.recurrence && reader?.missionId === id && reader.kind === "overview") return
+    if (!viewing() || reader?.missionId === id && reader.kind === "overview") return
     navigateMissionProjectView(props.instanceId, { reader: { missionId: id, kind: "overview" } }, intent)
   }
   const [actionSlot, setActionSlot] = createSignal<HTMLElement>()
@@ -180,20 +175,59 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     onCleanup(() => deactivateMissionDemand(instanceId))
   })
 
+  // A programmed Mission is the ordinary Mission of its current launch; its programming is read with the list,
+  // again whenever a Mission appears, goes or changes state.
+  const calendars = useMissionCalendars({ instanceId: () => props.instanceId, directory, active: visible,
+    refresh: () => `${recurrenceRefresh()}|${rows().map(row => `${row.id}:${row.status}:${row.runState}`).join()}` })
+  const programmingOf = (id: string | undefined) => calendars.rows().find(calendar => calendar.missionID === id)
+  const [programmingFailed, setProgrammingFailed] = createSignal(false)
+  // The Mission list is read again only for a programmed Mission it lacks: any other read would cut its paging short.
+  createEffect(on(() => calendars.rows().map(calendar => `${calendar.id}:${calendar.missionID}`).join(), () => {
+    if (state().status === "ready" && calendars.rows().some(calendar => calendar.missionID && !rows().some(row => row.id === calendar.missionID)))
+      void missionStore.refresh(props.instanceId)
+  }, { defer: true }))
+  // The selection follows a programmed Mission to the launch that replaced the selected one.
+  let followed = calendars.rows()
+  createEffect(() => {
+    const next = missionProgrammingSuccessor(followed, calendars.rows(), untrack(selectedMissionId))
+    followed = calendars.rows()
+    if (next) untrack(() => selectMission(next))
+  })
+  // Its programming goes first, so no launch follows the deletion.
+  const deleteMission = async (mission: MissionPanelMap) => {
+    const calendar = programmingOf(mission.id), current = captureView()
+    setProgrammingFailed(false)
+    if (calendar) {
+      try { await calendars.act(calendar.id, { action: "delete" }) }
+      catch { if (current()) setProgrammingFailed(true); return }
+      if (!current() || editor()) return
+    }
+    openEditor({ kind: "delete", mission })
+  }
+
   // A late recovery acknowledgement refreshes only a still-visible view: hidden
   // views keep their cached snapshot for activation revalidation.
   // Task trees are shown, and read, while the panel is active and the creation form is closed.
   const treeShown = () => (props.isActive?.() ?? true) && editor()?.kind !== "create"
   const directoryTaskMarks = createMemo(() => new Map(rows().map(row => [row.id, missionStore.taskMarks(props.instanceId, row.id)])))
+  const tasksSeenThrough = (id: string) => missionTasksSeenThrough(completionScope(), id)
+  // A row's task marks are read while a task of it can still work or ask, or may have
+  // finished unseen: a closed Mission unchanged since it was seen needs none.
+  const taskMarksWanted = (row: { id: string; status: string; updatedAt: number; taskCount?: number }) => row.taskCount !== 0
+    && (row.status === "active" || row.status === "failed" || row.updatedAt > tasksSeenThrough(row.id))
+  // Marks arrive in attention order (live tasks, then the others from the newest change):
+  // past the first seen one nothing can show, and past an unseen one nothing more can.
+  const taskMarksSettled = (id: string, tasks: readonly MissionTaskMark[]) => missionTaskMarksCover(tasks, tasksSeenThrough(id))
+    || tasks.length > 0 && !missionTaskMarkLive(tasks[tasks.length - 1]) && tasks.some(task => missionTaskUnseen(completionScope(), id, task))
   createEffect(() => {
     if (!visible() || !treeShown()) return
     for (const row of rows()) {
-      if (row.taskCount === 0) continue
+      if (!taskMarksWanted(row)) continue
       const marks = directoryTaskMarks().get(row.id)!
       if (marks.loading) return
       if (marks.failure) continue
       const stale = marks.revision === undefined || marks.revision < row.revision
-      if (stale || marks.more) {
+      if (stale || marks.more && !taskMarksSettled(row.id, marks.tasks)) {
         untrack(() => void missionStore.more(props.instanceId, `task-marks:${row.id}`, stale))
         return
       }
@@ -210,64 +244,32 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const refreshVisible = () => (props.isActive?.() ?? true) && missionStore.demandedInstanceIds().includes(props.instanceId)
     ? missionStore.refresh(props.instanceId) : Promise.resolve()
 
-  const passageSchedule = () => selectedSchedule() ?? selectedScheduled()
-  const [scheduledCurrent, setScheduledCurrent] = createSignal<string>()
-  const currentPassage = useMissionCurrentPassage({ instanceId: () => props.instanceId, projectID,
-    directory: scope, scheduleID: () => selectedSchedule() ?? scheduledCurrent(), owner: () => selectedScheduled() ? "scheduled" : "daily", active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
-  const passageStore = () => currentPassage.inventory() ?? missionStore
-  const mission = createMemo(() => passageSchedule() ? currentPassage.snapshot()?.scheduleID === passageSchedule() ? currentPassage.snapshot()?.mission : undefined
-    : missions().find((candidate) => candidate.id === selectedMissionId()))
-  // The selected one-time Mission's detail needs its full map, even when it is closed.
+  const mission = createMemo(() => missions().find((candidate) => candidate.id === selectedMissionId()))
+  // The selected Mission's detail needs its full map, even when it is closed.
   // Only the instance and selection identities drive the registration, never store publications.
   const wantOwner = `selection:${createUniqueId()}`
-  const wantedMission = createMemo(() => selectedSchedule() || selectedScheduled() ? undefined : selectedMissionId())
+  const wantedMission = createMemo(selectedMissionId)
   createEffect(() => {
     const instanceId = props.instanceId, id = wantedMission()
     untrack(() => missionStore.want(instanceId, wantOwner, id))
     onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
   })
-  const observedActivity = () => passageSchedule() ? currentPassage.snapshot()?.activity : state().activity
-  // Open questions of a mission's declared actors and observed family.
-  const openRequests = (id: string, actors: readonly { sessionId: string }[], activity?: MissionActivityProjection) => selectMissionAttention({ actors,
-    forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: [],
-    family: activity?.missions.find(item => item.missionId === id)?.family })
-    .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
-  const currentRequests = () => {
-    const value = mission(), passageID = currentPassage.snapshot()?.passageID
-    if (!passageSchedule() || !value || !passageID) return
-    const store = passageStore(), actors = [...value.actors, ...store.observedActors(props.instanceId, value.id)]
-    const known = new Set(currentMissionObservations(store, props.instanceId, value.id).flatMap(page => page.requests.items.map(item => `${item.kind}:${item.request.id}`)))
-    return { passageID, count: Math.max(known.size, openRequests(value.id, actors, observedActivity())) }
-  }
-  const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
-    const current = currentPassage.snapshot()
-    return target.kind !== "recurrence" && target.kind !== "playbook" && passageSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
-      instanceId: props.instanceId, projectID: current.projectID, scheduleID: current.scheduleID, passageID: current.passageID,
-      ...(current.source?.owner === "scheduled" ? { owner: "scheduled" as const } : {}),
-    } } : target
-  }
-  const selectedFamily = () => observedActivity()?.missions.find(item => item.missionId === mission()?.id)?.family
+  const selectedFamily = () => state().activity?.missions.find(item => item.missionId === mission()?.id)?.family
 
-  const navigationOrigin = (discoverPassage = false, surfaceIntent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null })) => {
+  const navigationOrigin = (surfaceIntent = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null })) => {
     const instanceId = props.instanceId, viewScope = scope(), viewCurrent = captureView(), operation = ++intent
-    const schedule = passageSchedule()
-    let passage = discoverPassage ? undefined : currentPassage.snapshot()?.passageID
-    return { instanceId, scope: viewScope, surfaceIntent,
-      current: () => surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope
-        && passageSchedule() === schedule && (!schedule || discoverPassage && passage === undefined || currentPassage.snapshot()?.passageID === passage),
-      bindPassage: () => { passage = currentPassage.snapshot()?.passageID },
-    }
+    const backend = captureBackendOperation(instanceId)
+    return { instanceId, scope: viewScope, signal: backend.signal, surfaceIntent,
+      current: () => backend.current() && surfaceIntent.current() && viewCurrent() && operation === intent && scope() === viewScope }
   }
 
   const openActor = async (sessionId: string, origin: ReturnType<typeof navigationOrigin>, afterSelection?: () => void,
     missionId = mission()?.id): Promise<boolean> => {
-    const scheduleID = passageSchedule(), passageID = currentPassage.snapshot()?.passageID
     const client = instances().get(origin.instanceId)?.client, generation = getOpenCodeInstanceGeneration(origin.instanceId)
-    const authorized = () => passageSchedule() === scheduleID && (!scheduleID || currentPassage.snapshot()?.passageID === passageID)
-      && (scheduleID ? Boolean(mission()?.id === missionId && includesSession(mission()!, sessionId, passageStore(), selectedFamily()))
-        : missions().some(value => value.id === missionId && includesSession(value, sessionId))
-          || rows().some(row => row.id === missionId && includesSession({ ...row, projectID: projectID() ?? "", actors: row.actorSessionIds.map(id => ({ sessionId: id })) }, sessionId)))
-    const admitted = () => origin.current() && authorized()
+    const authorized = () => missions().some(value => value.id === missionId && includesSession(value, sessionId))
+      || rows().some(row => row.id === missionId && includesSession({ ...row, projectID: projectID() ?? "", actors: row.actorSessionIds.map(id => ({ sessionId: id })) }, sessionId))
+    const backend = captureBackendOperation(origin.instanceId, origin.signal)
+    const admitted = () => backend.current() && origin.current() && authorized()
       && instances().get(origin.instanceId)?.client === client && getOpenCodeInstanceGeneration(origin.instanceId) === generation
       && !getAuthoritativelyDeletedSessionIdsForInstance(origin.instanceId).has(sessionId)
     if (!admitted()) return false
@@ -275,7 +277,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     // Targeted native hydration preserves authoritative locations and parent
     // metadata, including a cold descendant absent from the display catalog.
     try {
-      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], undefined, admitted)
+      await hydrateRestoredSessionChain(origin.instanceId, [sessionId], backend.signal, admitted)
     } catch {
       if (admitted()) setNavigationError(true)
       return false
@@ -301,7 +303,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const isReading = (target: MissionReaderTarget) => {
     const current = view().reader
     return current?.missionId === target.missionId && current.kind === target.kind && current.itemId === target.itemId
-      && JSON.stringify(current.recurrence) === JSON.stringify(readerTarget(target).recurrence)
   }
   const read = async (target: MissionReaderTarget) => {
     if (isReading(target)) {
@@ -318,12 +319,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         const value = mission()?.id === target.missionId ? mission() : undefined
         const task = value?.tasks.find(task => task.id === target.itemId)
         const actor = value && target.kind === "task" ? task && missionTaskConversation(value, task, selectedFamily(),
-            missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...passageStore().observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
+            missionDerivedTaskSession(props.instanceId, value, task.key), [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)]) : value?.coordinatorSessionId
         if (!actor || !await openActor(actor, origin)) return
       }
       if (!origin.current()) return
       batch(() => {
-        navigateMissionProjectView(origin.instanceId, { reader: readerTarget(target) }, origin.surfaceIntent)
+        navigateMissionProjectView(origin.instanceId, { reader: target }, origin.surfaceIntent)
       })
       if (!origin.current()) return
       props.onRevealConversation?.()
@@ -343,163 +344,49 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // Unfolds the selection's detail (MissionRows owns its folding).
   let revealDetail: (() => void) | undefined
   /** The selected task of `value`, with its conversation and activity. */
-  const taskSelection = (value: MissionPanelMap | undefined, activity: MissionActivityProjection | undefined, store: ReturnType<typeof passageStore> = missionStore): MissionTaskSelection | undefined => {
+  const taskSelection = (value: MissionPanelMap | undefined, activity: MissionActivityProjection | undefined): MissionTaskSelection | undefined => {
     const selection = selectedTaskKey()
     if (!value || selection?.missionId !== value.id) return
     const task = value.tasks.find(item => item.id === selection.taskId)
     if (!task) return
     const observed = activity?.missions.find(item => item.missionId === value.id)
     const conversation = missionTaskConversation(value, task, observed?.family, missionDerivedTaskSession(props.instanceId, value, task.key),
-      [...value.actors, ...store.observedActors(props.instanceId, value.id)])
+      [...value.actors, ...missionStore.observedActors(props.instanceId, value.id)])
     const state = task.actorSessionId ? observed?.actors.find(actor => actor.sessionId === task.actorSessionId)?.state
       : conversation ? conversationActivity(props.instanceId, value, conversation) : undefined
     return { task, conversation, activity: state }
   }
-  // A red schedule row's question: the read passage's flag question, else its first one.
-  const passageQuestion = () => {
-    const value = passageSchedule() ? mission() : undefined
-    if (!value) return undefined
-    const store = passageStore(), family = observedActivity()?.missions.find(item => item.missionId === value.id)?.family
-    const questions = missionQuestions({ instanceId: props.instanceId, mission: value, actors: value.actors, family, store })
-    const actors = [...value.actors, ...store.observedActors(props.instanceId, value.id)]
-    const owners = missionQuestionOwners(missionQuestionContext(props.instanceId, value), questions, value.tasks,
-      task => missionTaskConversation(value, task, family, missionDerivedTaskSession(props.instanceId, value, task.key), actors))
-    return owners.flag[0] ?? questions[0]
-  }
-  // Selecting a red schedule row answers as soon as its passage's questions are
-  // discovered (the passage, its activity and request windows load separately). The
-  // click's fences hold throughout: the same view, no newer selection or navigation
-  // intent, no conversation change, the same connection and no editor; otherwise the
-  // answer is dropped, never replayed later.
-  const [pendingSchedule, setPendingSchedule] = createSignal<{ key: string; origin: ReturnType<typeof navigationOrigin>;
-    current: () => boolean; reader: boolean; answer: boolean; passageID?: string }>()
-  const retireSchedule = () => {
-    setPendingSchedule(undefined)
-  }
-  onCleanup(retireSchedule)
-  const scheduleTarget = (id: string, scheduled: boolean): MissionReaderTarget => ({ kind: "recurrence", missionId: id,
-    instanceId: props.instanceId, projectID: projectID(), ...(scheduled ? { scheduleOwner: "scheduled" as const } : {}) })
-  createEffect(() => {
-    const pending = pendingSchedule()
-    if (!pending) return
-    if (!(props.isActive?.() ?? true) || editor() || selectedKey() !== pending.key || !untrack(pending.current)) { retireSchedule(); return }
-    // A failed read before any passage is shown, or a schedule with no current passage,
-    // retires the intent: it never waits for a later read.
-    const snapshot = currentPassage.snapshot()
-    if ((currentPassage.error() && !mission()) || (!currentPassage.loading() && snapshot?.scheduleID === passageSchedule() && !snapshot?.passageID)) {
-      retireSchedule(); return
-    }
-    // Only the passage first read after the click: a replacement retires the intent.
-    const passageID = snapshot?.passageID ?? undefined
-    if (passageID && pending.passageID === undefined) pending.passageID = passageID
-    else if (pending.passageID !== undefined && passageID !== pending.passageID) { retireSchedule(); return }
-    if (pending.reader && snapshot?.mission && passageID && !currentPassage.loading() && !currentPassage.error()) {
-      untrack(() => {
-        pending.origin.bindPassage()
-        const reader = view().reader
-        if (reader) retargetMissionReader(props.instanceId, reader, readerTarget({ missionId: snapshot.mission!.id, kind: "overview" }), pending.origin.surfaceIntent)
-      })
-      pending.reader = false
-    }
-    if (!pending.answer) {
-      if (!currentPassage.loading() && snapshot?.scheduleID === passageSchedule()) retireSchedule()
-      return
-    }
-    // Tracked: reruns as the passage, its activity and its request windows arrive.
-    const question = passageQuestion()
-    if (!question) {
-      // Discovery settled without a question (it was answered meanwhile): retire the
-      // intent, so a later unrelated question never triggers it.
-      const value = mission()
-      if (value && observedActivity()?.missions.some(item => item.missionId === value.id) && !currentPassage.loading()
-        && !passageStore().reading(props.instanceId)) retireSchedule()
-      return
-    }
-    setPendingSchedule(undefined)
-    untrack(() => {
-      pending.origin.bindPassage()
-      void onOpenActor(question.sessionId, question.request, undefined, pending.origin)
-    })
-  })
-  // Whether the selection is a task of the selected row's Mission (or passage) rather than the row.
+  // Whether the selection is a task of the selected row's Mission rather than the row.
   // Restored/off-page task selection owns the toolbar while its bounded read resolves.
   const taskSelected = () => Boolean(selectedTaskKey())
   const selectedTaskDemand = createMemo(() => {
-    const key = selectedTaskKey(), value = mission(), store = passageStore()
+    const key = selectedTaskKey(), value = mission()
     if (!key || !value || value.id !== key.missionId || value.tasks.some(task => task.id === key.taskId)) return
-    return { key: JSON.stringify([props.instanceId, scope(), value.projectID, passageSchedule(), currentPassage.snapshot()?.passageID,
-      key, value.taskPage?.order, value.revision]), value, selection: key, store }
+    return { key: JSON.stringify([props.instanceId, scope(), value.projectID, key, value.taskPage?.order, value.revision]), value, selection: key }
   }, undefined, { equals: (a, b) => a?.key === b?.key })
   let taskDemandKey: string | undefined
   createEffect(() => {
     const demand = selectedTaskDemand()
     if (!treeShown() || !demand || taskDemandKey === demand.key) return
     taskDemandKey = demand.key
-    const current = captureView(), selection = demand.selection, schedule = passageSchedule(), passage = currentPassage.snapshot()?.passageID
-    const stillCurrent = () => current() && selectedTaskKey() === selection && passageSchedule() === schedule
-      && currentPassage.snapshot()?.passageID === passage && selectedTaskDemand()?.key === demand.key
+    const current = captureView(), selection = demand.selection
+    const stillCurrent = () => current() && selectedTaskKey() === selection && selectedTaskDemand()?.key === demand.key
     if (!demand.value.taskPage) {
       untrack(() => { if (stillCurrent()) updateView({ selectedTask: undefined }) })
       return
     }
-    untrack(() => void demand.store.loadTasks(props.instanceId, demand.value.id, { ids: [selection.taskId] }).then(result => {
+    untrack(() => void missionStore.loadTasks(props.instanceId, demand.value.id, { ids: [selection.taskId] }).then(result => {
       if (result === "read" && stillCurrent() && !mission()?.tasks.some(task => task.id === selection.taskId))
         updateView({ selectedTask: undefined })
     }))
   })
-  createEffect(() => {
-    const selection = selectedTaskKey(), snapshot = currentPassage.snapshot()
-    // A positively read replacement/no-current passage retires its former task selection.
-    if (selection && passageSchedule() && snapshot && snapshot.scheduleID === passageSchedule() && !currentPassage.loading()
-      && !currentPassage.error() && snapshot.mission?.id !== selection.missionId)
-      untrack(() => updateView({ selectedTask: undefined }))
-  })
-  createEffect(() => {
-    const reader = view().reader
-    if (!reader) return
-    const resolve = () => {
-      const snapshot = currentPassage.snapshot()
-      if (!passageSchedule() || !snapshot || snapshot.scheduleID !== passageSchedule() || currentPassage.loading() || currentPassage.error()) return
-      const scheduleReader = reader.kind === "recurrence" && !reader.itemId && reader.missionId === snapshot.scheduleID
-        && reader.instanceId === props.instanceId && reader.projectID === projectID()
-        && Boolean(reader.scheduleOwner === "scheduled") === Boolean(selectedScheduled())
-      const passageReader = reader.recurrence?.scheduleID === snapshot.scheduleID && reader.recurrence.passageID !== snapshot.passageID
-      if (!(scheduleReader && snapshot.mission && snapshot.passageID) && !passageReader) return
-      return snapshot.mission && snapshot.passageID ? readerTarget({ missionId: snapshot.mission.id, kind: "overview" })
-        : scheduleTarget(snapshot.scheduleID, Boolean(selectedScheduled()))
-    }
-    const target = resolve()
-    if (target) untrack(() => retargetMissionReader(props.instanceId, reader, target))
-  })
-  // A schedule's current passage: its selected task takes the toolbar from the schedule's.
-  const passageTask = createMemo(() => passageSchedule() ? taskSelection(mission(), observedActivity(), passageStore()) : undefined)
-  const tracking = () => <>
-    <Show when={passageSchedule()}>
-      <Show when={currentPassage.loading() && !currentPassage.snapshot()?.mission}><p role="status">{props.t("missions.control.loading")}</p></Show>
-      <Show when={currentPassage.error()}><p role="status">{props.t(currentPassage.snapshot()?.mission ? "missions.recurrence.stale" : "missions.recurrence.unavailable")}</p></Show>
-    </Show>
-    <MissionPanelScope value={passageStore}><Show when={mission()}>{selected => <>
-      <Show when={passageTask()?.task.key} keyed>{_key => <MissionTaskActions readOnly instanceId={props.instanceId} mission={selected()}
-        selection={passageTask()!} disabled onAdmitted={refreshVisible}
-        reading={isReading({ missionId: selected().id, kind: "task", itemId: passageTask()!.task.id })}
-        onToggleReader={() => { const task = passageTask(); if (task) void read({ missionId: selected().id, kind: "task", itemId: task.task.id }) }}
-        onOpenConversation={id => void onOpenActor(id)} />}</Show>
-      <MissionTracking instanceId={props.instanceId} mission={selected()} activity={observedActivity()}
-        active={treeShown()} selected={task => isSelectedTask(selected().id, task.id)} onSelect={task => selectTask(selected().id, task.id)}
-        onOpenActor={onOpenActor} /></>}</Show></MissionPanelScope>
-  </>
-  const recurrence = createMissionRecurrenceList({ get instanceId() { return props.instanceId }, get scope() { return scope() },
-    get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
-    get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
-    get tracking() { return tracking() }, detailId, registerRetry,
-    get selectedRequests() { return selectedSchedule() ? currentRequests() : undefined },
-    get passage() {
-      const passage = mission()
-      if (!passage) return undefined
-      const overview: MissionReaderTarget = { missionId: passage.id, kind: "overview" }
-      return { reading: isReading(overview), onToggle: () => void read(overview),
-        onOpenConversation: () => void onOpenActor(passage.coordinatorSessionId) }
-    } })
+  // The selected row's task tree, with its task sessions, mounts only while its chevron is open;
+  // the toolbar keeps reading the selection's map either way.
+  const selectedExpanded = () => (view().expanded ?? []).includes(`mission:${selectedMissionId()}`)
+  const tracking = () => <Show when={selectedExpanded() && mission()}>{selected =>
+    <MissionTracking instanceId={props.instanceId} mission={selected()} activity={state().activity}
+      active={treeShown()} selected={task => isSelectedTask(selected().id, task.id)} onSelect={task => selectTask(selected().id, task.id)}
+      onOpenActor={onOpenActor} />}</Show>
   const mapsById = createMemo(() => new Map(missions().map(map => [map.id, map])))
   const activityById = createMemo(() => new Map(state().activity?.missions.map(value => [value.missionId, value])))
   // Directory task facts own row attention. Selection only demands the detailed plan.
@@ -508,7 +395,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const map = mapsById().get(value.id)
     const key = map ?? { ...value, projectID: projectID() ?? "" }
     const observations = currentMissionObservations(missionStore, props.instanceId, value.id)
-    const marks = directoryTaskMarks().get(value.id)
+    const wanted = taskMarksWanted(value), marks = wanted ? directoryTaskMarks().get(value.id) : undefined
     const currentMarks = marks?.revision !== undefined && marks.revision >= value.revision && marks.revision >= (map?.revision ?? 0)
     const facts: readonly MissionTaskMark[] = currentMarks ? marks.tasks : map?.tasks ?? []
     const actors = [...map?.actors ?? observations.flatMap(page => page.context.actors), ...missionStore.observedActors(props.instanceId, value.id)]
@@ -525,12 +412,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const wholeOwed = [...map?.actorEvidence?.reportOwed ?? [], ...observations
       .flatMap(page => page.context.actors.filter(actor => actor.reportOwed).map(actor => actor.sessionId))]
     const offPageOwed = new Set(wholeOwed.filter(id => !loadedOwed.has(id)))
-    const partialTasks = currentMarks ? marks.more : !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length
+    // Unread marks count only while one of them could still change the row.
+    const partialTasks = wanted && (currentMarks ? marks.more && !taskMarksSettled(value.id, marks.tasks)
+      : !map || (map.taskPage?.total ?? map.tasks.length) > map.tasks.length)
     // Finished tasks this window has not shown yet (green, like an idle subsession).
     const unseen = facts.filter((task, index) => taskStates[index] === "done" && missionTaskUnseen(completionScope(), value.id, task))
     const observeNative = facts.some(task => !task.actorSessionId && !task.replacedByTaskKey && !["completed", "failed", "withdrawn"].includes(task.status))
       && Boolean(family?.state !== "unknown" && family?.members.some(member => member.actorSessionId === value.coordinatorSessionId && member.sessionId !== value.coordinatorSessionId))
-    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map ? facts : undefined, conversation),
+    return [value.id, { ...missionQuestionOwners(missionQuestionContext(props.instanceId, key), questions, currentMarks || map || !wanted ? facts : undefined, conversation),
       sessionContext, observeNative, facts, taskStates, coveredActors, offPageOwed, partialTasks, unseen }]
   })))
   const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
@@ -538,90 +427,36 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const questions = rowQuestions().get(value.id)
     const others = questions?.partialTasks ? observed?.actors.filter(actor => actor.sessionId !== value.coordinatorSessionId
       && (!questions.coveredActors.has(actor.sessionId) || questions.offPageOwed.has(actor.sessionId))).map(actor => actor.state) ?? [] : []
-    const mark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
+    const launchMark = missionMark(value, { openRequests: questions?.flag.length ?? 0, actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(completionScope(), value) })
+    // Between launches a programmed Mission waits for its next wake, or is paused.
+    const programming = programmingOf(value.id) && missionProgramming(programmingOf(value.id)!, props.t, locale())
+    const mark = programming ? programming.mark(launchMark, value.status !== "active" || value.runState === "prepared") : launchMark
     // Like session rows, input, work and unseen results propagate independently of selection.
     const tasks = questions?.taskStates ?? []
     const childActivity = questions?.tasks.length || tasks.includes("input")
       || others.some(state => state === "permission" || state === "form") ? "permission" as const
       : tasks.includes("active") || others.some(state => state === "running" || state === "queued" || state === "background")
         ? "working" as const : questions?.unseen.length ? "idle" as const : undefined
-    const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
+    const stateText = mark !== launchMark ? props.t(mark === "waiting" ? "missionsPanel.state.waiting" : "missions.scheduleList.state.paused")
+      : props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
     // The read map's count, else the row's (absent when unknown: the chevron stays).
     const map = missionStore.state(props.instanceId).missions.find(item => item.id === value.id)
     const taskCount = map ? map.taskPage?.total ?? map.tasks.length : value.taskCount
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity, leaf: taskCount === 0,
-      status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark, childActivity,
+      // A programmed Mission always unfolds: its programming is there before any task.
+      leaf: taskCount === 0 && !programming, ...(programming ? { recurring: true } : {}),
+      activityAt: value.updatedAt, status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         childActivity === "permission" ? props.t("missionsPanel.row.taskInput") : "",
+        ...(programming ? programming.row : []),
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
-  // The saved Mission ID survives ownership conversion in another window, including
-  // cold restoration. Point-read that selection; absence never triggers an inventory scan.
-  const unifiedSelection = () => selectedScheduled() ?? (selectedSchedule() ? undefined : selectedMissionId())
-  const scheduled = createMissionScheduleList({ get instanceId() { return props.instanceId }, get directory() { return scope() },
-    get selectedRequests() { return selectedScheduled() ? currentRequests() : undefined },
-    onPassage: setScheduledCurrent,
-    onNoPassage: id => {
-      if (selectedScheduled() !== id) return
-      const reader = view().reader
-      batch(() => {
-        if (selectedTaskKey()) updateView({ selectedTask: undefined })
-        if (reader?.recurrence?.scheduleID === id && reader.recurrence.owner === "scheduled")
-          retargetMissionReader(props.instanceId, reader, scheduleTarget(id, true))
-      })
-    },
-    get tracking() { return selectedScheduled() ? tracking() : undefined },
-    get passage() { const value = selectedScheduled() ? mission() : undefined; if (!value) return undefined
-      const target: MissionReaderTarget = { missionId: value.id, kind: "overview" }
-      return { reading: isReading(target), onToggle: () => void read(target) } },
-    get overview() {
-      const id = selectedScheduled()
-      if (!id) return undefined
-      const target = scheduleTarget(id, true)
-      return { reading: isReading(target), onToggle: () => {
-        intent++
-        const close = isReading(target)
-        navigateMissionProjectView(props.instanceId, { reader: close ? undefined : target })
-        if (!close) props.onRevealConversation?.()
-      } }
-    },
-    get projectID() { return projectID() }, active: visible, enabled: () => !editor(), get refresh() { return recurrenceRefresh() },
-    get selected() { return unifiedSelection() }, detailId, onEdit: id => openEditor({ kind: "edit", scheduleID: id }),
-    onDeleted: id => { if (selectedScheduled() === id) updateView({ selectedScheduled: undefined }) },
-    onOpenConversation: id => void (async () => {
-      const origin = navigationOrigin(), selected = selectedScheduled(), instanceId = props.instanceId
-      const generation = getOpenCodeInstanceGeneration(instanceId)
-      const current = () => origin.current() && selectedScheduled() === selected && scheduled.ownsSession(id)
-        && getOpenCodeInstanceGeneration(instanceId) === generation
-      try {
-        if (!current()) return
-        await hydrateRestoredSessionChain(instanceId, [id], undefined, current)
-        if (!current() || !sessions().get(instanceId)?.has(id)) return
-        batch(() => { setActiveSessionFromList(instanceId, id, origin.surfaceIntent); applySurface({ instanceId, sessionId: id }, { kind: "conversation" }, origin.surfaceIntent) })
-        if (!current()) return
-        props.onRevealConversation?.()
-      } catch { if (current()) setNavigationError(true) }
-    })() })
-  createEffect(() => {
-    const id = unifiedSelection()
-    if (!visible() || editor() || !id) return
-    const representation = scheduled.representation(id)
-    if (representation === "one-time" && selectedScheduled() === id) updateView({ selected: id, selectedRecurrence: undefined, selectedScheduled: undefined, selectedTask: undefined })
-    else if (representation === "schedule" && selectedScheduled() !== id) {
-      updateView({ selected: undefined, selectedRecurrence: undefined, selectedScheduled: id })
-    }
-  })
-  const pickerEntries = () => {
-    const unified = scheduled.entries(), ids = new Set(unified.map(row => row.key.slice("scheduled:".length)))
-    return [...missionEntries().filter(row => !ids.has(row.key.slice("mission:".length))), ...recurrence.entries(), ...unified]
-  }
-  const selectedRow = () => selectedSchedule() || selectedScheduled() ? undefined : rows().find(row => row.id === selectedMissionId())
-  const selectedKey = () => selectedScheduled() ? `scheduled:${selectedScheduled()}` : selectedSchedule() ? `schedule:${selectedSchedule()}` : selectedRow() ? `mission:${selectedRow()!.id}` : undefined
-  const selectedOneTime = () => selectedSchedule() || selectedScheduled() ? undefined : mission()
-  const selectedOneTimeId = () => selectedOneTime()?.id
+  const pickerEntries = createMemo(() => sortMissionPickerEntries(missionEntries()))
+  const selectedRow = () => rows().find(row => row.id === selectedMissionId())
+  const selectedKey = () => selectedRow() ? `mission:${selectedRow()!.id}` : undefined
   const creating = () => editor()?.kind === "create"
   // Like an idle session, a completed Mission stays green until this window shows it;
   // the creation form hides the selected detail.
@@ -629,23 +464,26 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   createEffect(() => {
     if (!["ready", "loading", "error"].includes(state().status) || state().projectID !== projectID()) return
     const completed = rows().filter(value => value.status === "completed")
-    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.projectID === projectID() && selectedOneTime()?.status === "completed"
-      ? [selectedOneTime()!.id] : []
+    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && mission()?.projectID === projectID() && mission()?.status === "completed"
+      ? [mission()!.id] : []
     const viewScope = completionScope()
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed, true))
   })
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
-  const reading = () => refreshing() || missionStore.reading(props.instanceId) || currentPassage.inventory()?.reading(props.instanceId)
-    || recurrence.loading() || scheduled.loading() || currentPassage.loading() || editorReading()
+  createEffect(() => { const status = state().status; if (status !== "idle" && status !== "loading") setLoadedFor(props.instanceId) })
+  const spinning = () => refreshing() || loadedFor() !== props.instanceId
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */
   const refresh = async () => {
     if (refreshing()) return
     const retry = controlRetry(), instanceId = props.instanceId
+    const operation = captureBackendOperation(instanceId, undefined, captureView())
+    if (!operation.current()) return
     setRefreshing(true)
     try {
       const mapRead = missionStore.refresh(instanceId)
       const [, read] = await Promise.allSettled([mapRead, retry?.reconcile(mapRead)])
+      if (!operation.current()) return
       setRecurrenceRefresh(value => value + 1)
       // A skipped, failed or superseded read never leads to a resend.
       const witnessed = read.status === "fulfilled" && read.value === true
@@ -655,7 +493,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   return (
     // While creating, the form replaces the list and the selected detail, which stay mounted
     // (hidden by mission-control.css) so their pending controls and retries survive.
-     <MissionViewScope value={completionScope}><MissionActionSlot.Provider value={actionSlot}><MissionTaskToolbarActive.Provider value={() => Boolean(passageSchedule() && taskSelected())}>
+     <MissionViewScope value={completionScope}><MissionActionSlot.Provider value={actionSlot}>
     <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header" ref={measureHeader}>
         <MissionPanelHeader actionSlot={setActionSlot}
@@ -670,9 +508,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             <Settings class="h-4 w-4" aria-hidden="true" />
           </button>
           <button type="button" class="mission-control-icon-button" aria-label={refreshLabel()}
-            title={refreshLabel()} disabled={state().status === "loading" || refreshing()} onClick={() => void refresh()}>
-            <Show when={reading()} fallback={<RefreshCw class="h-4 w-4" />}>
-              <Loader2 class="h-4 w-4 animate-spin" />
+            title={refreshLabel()} disabled={spinning()} onClick={() => void refresh()}>
+            <Show when={spinning()} fallback={<RefreshCw class="h-4 w-4" />}>
+              <span class="inline-flex animate-spin"><Loader2 class="h-4 w-4" /></span>
             </Show>
           </button>
         </>} />
@@ -682,7 +520,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           active: () => visible() && treeShown() && Boolean(rowQuestions().get(id)?.observeNative), pulse: () => state().activity?.generatedAt })
         return null
       }}</For>
-      <Show when={passageSchedule() && taskSelected() && !passageTask()}><MissionActionBar task label={props.t("missionsPanel.picker.actions")} reading={false} /></Show>
       <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
       <Show when={editor()} keyed>{action => {
         let completionCurrent: () => boolean = () => false
@@ -691,15 +528,15 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         active={() => (props.isActive?.() ?? true) && editor() === action}
         onDispose={draft => settleMissionEditor(action, draft === null ? action : draft && { ...action, draft })}
         captureOperation={() => {
-          const origin = captureView(), operation = intent
-          completionCurrent = () => origin() && operation === intent
+          const origin = captureView(), operation = intent, backend = captureBackendOperation(props.instanceId)
+          completionCurrent = () => backend.current() && origin() && operation === intent
           return completionCurrent
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences} onShowPlaybook={showPlaybook}
         onReopen={() => {
           // The edit reopens on the newest map, read first: the one it opened on is outdated.
           // The form stays as it opened until this settles; a failed read rejects, so it says so.
-          const view = captureView()
+          const view = captureBackendOperation(props.instanceId, undefined, captureView()).current
           return missionStore.refresh(props.instanceId).then(() => {
             if (!view() || editor() !== action) return
             if (missionStore.state(props.instanceId).status !== "ready") throw new Error("The mission map could not be read")
@@ -708,17 +545,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           })
         }}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
-        onReading={setEditorReading}
-        onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
-        onSaved={(saved, scheduleID) => {
+        onSaved={(saved, missionID) => {
           if (!completionCurrent() || editor() !== action) return
           const instanceId = props.instanceId, current = completionCurrent
           settleMissionEditor(action)
           setRecurrenceRefresh(value => value + 1)
-          if (scheduleID) updateView({ selectedScheduled: scheduleID, selectedRecurrence: undefined })
           if (!saved && action.mission) forgetMissionView(props.instanceId, action.mission.id)
           void missionStore.refresh(instanceId).then(() => {
-            const id = saved?.id ?? scheduleID
+            const id = saved?.id ?? missionID
             if (id && current() && !editor()) selectMission(id)
           })
         }} />
@@ -728,7 +562,6 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         expanded={() => view().expanded ?? []}
         onExpanded={keys => updateView({ expanded: keys.slice(-MAX_EXPANDED) })}
         markRead={key => {
-          if (!key.startsWith("mission:")) return key.startsWith("schedule:") ? recurrence.markRead(key) : scheduled.markRead(key)
           const id = key.slice("mission:".length), entry = missionEntries().find(item => item.key === key)
           const unseen = rowQuestions().get(id)?.unseen ?? [], finished = entry?.mark === "done"
           // Like a session hierarchy: clears the finished-unseen tasks and the Mission's own completion.
@@ -738,63 +571,32 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             if (finished) markMissionsFinishedSeen(completionScope(), [id], rows().filter(value => value.status === "completed"), true)
           }) : undefined
         }}
-        paging={<>{recurrence.listView()}{scheduled.listView()}
-          <MissionListPaging instanceId={props.instanceId} active={treeShown()}
+        paging={<MissionListPaging instanceId={props.instanceId} active={treeShown()}
             taskMarksError={[...directoryTaskMarks().values()].some(value => Boolean(value.failure))}
             taskMarksLoading={[...directoryTaskMarks().values()].some(value => Boolean(value.failure && value.loading))}
             onTaskMarksRetry={() => { for (const [id, value] of directoryTaskMarks()) if (value.failure) void missionStore.more(props.instanceId, `task-marks:${id}`, true) }}
-            scheduleMore={Boolean(scheduled.next())} scheduleLoading={scheduled.loading()} scheduleError={scheduled.error()}
-            onScheduleMore={scheduled.more} onScheduleRetry={scheduled.retry} /></>}
+            />}
         onSelect={entry => {
-          retireSchedule()
           const admitted = beginGesture({ instanceId: props.instanceId, sessionId: props.activeSessionId() ?? null })
-          const [kind, id] = [entry.key.slice(0, entry.key.indexOf(":")), entry.key.slice(entry.key.indexOf(":") + 1)]
-          if (kind === "schedule" || kind === "scheduled") {
-            // Capture this displayed result before selection starts any reads. A
-            // restored selection or a later success never inherits this gesture.
-            const acknowledge = entry.mark === "done" ? (kind === "schedule" ? recurrence : scheduled).markRead(entry.key) : undefined
-            if (treeShown() && documentAttention() && !editor()) acknowledge?.()
-            intent++
-            const follow = viewing()
-            batch(() => {
-              updateView(kind === "schedule" ? { selected: undefined, selectedRecurrence: id, selectedScheduled: undefined, selectedTask: undefined }
-                : { selected: undefined, selectedRecurrence: undefined, selectedScheduled: id, selectedTask: undefined })
-              if (follow) navigateMissionProjectView(props.instanceId, { reader: scheduleTarget(id, kind === "scheduled") }, admitted)
-            })
-            // A red row asks for an answer: open its passage's question, as for a Mission row.
-            if (follow || entry.mark === "permission") {
-              const origin = navigationOrigin(true, admitted), instanceId = props.instanceId
-              const client = instances().get(instanceId)?.client, generation = getOpenCodeInstanceGeneration(instanceId)
-              setPendingSchedule({ key: entry.key, origin, reader: follow, answer: entry.mark === "permission",
-                current: () => origin.current() && !editor() && instances().get(instanceId)?.client === client
-                  && getOpenCodeInstanceGeneration(instanceId) === generation })
-            }
-          }
-          else {
-            batch(() => { followReader(id, admitted); selectMission(id) })
-            // A red flag asks for an answer: like a session row, open the asking
-            // conversation with its question focused in the dock.
-            const question = rowQuestions().get(id)?.flag[0]
-            if (question) {
-              void onOpenActor(question.sessionId, question.request, id, navigationOrigin(false, admitted))
-            }
-          }
+          const id = entry.key.slice("mission:".length)
+          batch(() => { followReader(id, admitted); selectMission(id) })
+          // A red flag asks for an answer: like a session row, open the asking
+          // conversation with its question focused in the dock.
+          const question = rowQuestions().get(id)?.flag[0]
+          if (question) void onOpenActor(question.sessionId, question.request, id, navigationOrigin(admitted))
         }}
-        expandable={key => key.startsWith("mission:")}
+        expandable={key => !programmingOf(key.slice("mission:".length))}
         preview={key => <MissionTaskPreview instanceId={props.instanceId} missionId={key.slice("mission:".length)} activity={state().activity}
           active={treeShown()}
           selected={(value, task) => isSelectedTask(value.id, task.id)}
           onSelect={(value, task) => selectTask(value.id, task.id)}
           onAnswer={(value, sessionId, request) => void onOpenActor(sessionId, request, value.id)} />}
         detail={<>
-      {recurrence.view()}
-      {scheduled.view()}
-
       {/* The selection's detail is the selected row's children. */}
       {/* A parked failed read remains retryable through the refresh button. */}
        <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t(missionStore.mapMissing(props.instanceId, selectedRow()!.id)
          ? "missions.control.reader.missing" : "missions.control.loading")}</p></Show>
-      <Show when={selectedOneTimeId()} keyed>{id => {
+      <Show when={mission()?.id} keyed>{id => {
         // Keep the last known snapshot while the keyed detail is being disposed.
         const selected = createMemo<MissionPanelMap>(previous => missions().find(value => value.id === id) ?? previous!)
         // The selected task takes the header toolbar.
@@ -809,20 +611,27 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onOpenCoordinator={() => void onOpenActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry} onRevealDetail={() => revealDetail?.()}
-            editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
-            onEdit={() => openEditor({ kind: "edit", mission: selected() })}
-            onDelete={() => openEditor({ kind: "delete", mission: selected() })}
+            editDisabled={Boolean(editor()) || (programmingOf(id) ? !missionProgrammingDraft(programmingOf(id)!) : selected().status !== "active")} deleteDisabled={Boolean(editor())}
+            onEdit={() => {
+              // A programmed Mission is edited whole, in the form that created it.
+              const calendar = programmingOf(id)
+              openEditor(calendar ? { kind: "create", calendar: calendar.id, draft: missionProgrammingDraft(calendar, directory()) } : { kind: "edit", mission: selected() })
+            }}
+            onDelete={() => void deleteMission(selected())}
+            programming={programmingOf(id) && { paused: programmingOf(id)!.paused, between: selected().status !== "active" || selected().runState === "prepared",
+              act: action => { setProgrammingFailed(false); return calendars.act(programmingOf(id)!.id, { action }).catch(() => { setProgrammingFailed(true) }) } }}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
             onOpenTask={sessionId => void onOpenActor(sessionId)} />
+          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} failed={programmingFailed()} />}</Show>
           {tracking()}
         </section>
       }}</Show>
       </>} />
 
-      <Show when={!selectedSchedule() && !selectedScheduled() && scheduled.entries().length === 0 && recurrence.entries().length === 0}><Switch>
+      <Switch>
         <Match when={state().status === "loading" && rows().length === 0}>
-          <StateMessage icon={<Loader2 class="h-5 w-5 animate-spin" />} title={props.t("missions.control.loading")} />
+          <StateMessage icon={<span class="inline-flex animate-spin"><Loader2 class="h-5 w-5" /></span>} title={props.t("missions.control.loading")} />
         </Match>
         <Match when={state().status === "unavailable"}>
           <StateMessage
@@ -850,7 +659,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             detail={props.t("missions.control.empty.detail")}
           />
         </Match>
-      </Switch></Show>
+      </Switch>
       <Show when={state().cleanupUnavailable}><p class="mission-control-stale" role="alert">{props.t("missions.cleanup.error.unconfirmed")}</p></Show>
       <Show when={missionStore.progress(props.instanceId, "cleanups").more || missionStore.progress(props.instanceId, "cleanups").failure}>
         <MissionPanelPaging instanceId={props.instanceId} lane="cleanups" />
@@ -859,7 +668,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         disabled={Boolean(editor()) || !["ready", "loading"].includes(state().status) || Boolean(state().cleanupUnavailable)} active={props.isActive?.() ?? true}
         refresh={() => missionStore.refresh(props.instanceId)} /></Show>
     </section>
-    </MissionTaskToolbarActive.Provider></MissionActionSlot.Provider></MissionViewScope>
+    </MissionActionSlot.Provider></MissionViewScope>
   )
 }
 

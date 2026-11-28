@@ -15,8 +15,21 @@ export function operationDriver(kind: DriverKind, send: (operation: PageOperatio
     resolve: async node => (await run({ op: "resolve", node })).handle as string | undefined,
     call: async (functionId, handle, args) => run({ op: "call", function: functionId, ...(handle === undefined ? {} : { handle }), args }),
     scrollIntoView: async node => { await run({ op: "scroll-into-view", node }) },
-    geometry: async node => { const { quads } = await run({ op: "geometry", node }); return Array.isArray(quads) ? quads as number[][] : [] },
-    viewport: async () => { const result = await run({ op: "viewport" }); return { width: typeof result.width === "number" ? result.width : Infinity, height: typeof result.height === "number" ? result.height : Infinity } },
+    geometry: async node => {
+      const { quads } = await run({ op: "geometry", node })
+      if (!Array.isArray(quads) || quads.some(quad => !Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite))) {
+        throw new Error("Invalid page geometry (content quads); inspect again")
+      }
+      return quads
+    },
+    viewport: async () => {
+      const { width, height } = await run({ op: "viewport" })
+      if (typeof width !== "number" || !Number.isFinite(width) || width <= 0
+        || typeof height !== "number" || !Number.isFinite(height) || height <= 0) {
+        throw new Error("Invalid page viewport; inspect again")
+      }
+      return { width, height }
+    },
     hitTest: async (x, y) => (await run({ op: "hit-test", x, y })).node as number | undefined,
     pointer: async event => { await run({ op: "pointer", event }) },
     wheel: async event => { await run({ op: "wheel", event }) },

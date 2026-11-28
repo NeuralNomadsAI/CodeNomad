@@ -1,7 +1,10 @@
-import { createEffect, createMemo, on, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, onCleanup, untrack, type Accessor } from "solid-js"
+import { captureBackendOperation } from "../../../lib/backend-operation"
+import { instances } from "../../../stores/instances"
 import {
   reconcileSessionTranscriptBudget,
   setSessionTranscriptVisible,
+  sessionTranscriptBinding,
 } from "../../../stores/session-transcript-memory"
 
 type SessionCacheOptions = {
@@ -29,11 +32,18 @@ export function useSessionCache(options: SessionCacheOptions): SessionCacheState
 
   // Enforcement reads session/loading state. Those reads must not become
   // visibility dependencies and briefly unpin an unchanged visible identity.
-  createEffect(on([options.instanceId, visibleSessionId], ([instanceId, sessionId]) => {
-    if (!sessionId) return
-    setSessionTranscriptVisible(instanceId, sessionId, true)
-    onCleanup(() => setSessionTranscriptVisible(instanceId, sessionId, false))
-  }))
+  const binding = createMemo(() => {
+    const sessionId = visibleSessionId()
+    return sessionId ? sessionTranscriptBinding(options.instanceId(), sessionId) : undefined
+  })
+  const owner = createMemo(() => instances().get(options.instanceId())?.client)
+  createEffect(() => {
+    const instanceId = options.instanceId(), sessionId = visibleSessionId()
+    const client = owner()
+    if (!sessionId || !client || !binding()) return
+    const operation = captureBackendOperation(instanceId, undefined, () => instances().get(instanceId)?.client === client)
+    onCleanup(untrack(() => setSessionTranscriptVisible(instanceId, sessionId, operation)))
+  })
 
   onCleanup(() => {
     reconcileSessionTranscriptBudget()

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-client-state-save-file-draft"
+description = "Enables the client_state_save_file_draft command without any pre-configured scope."
+commands.allow = ["client_state_save_file_draft"]
+
+[[permission]]
+identifier = "deny-client-state-save-file-draft"
+description = "Denies the client_state_save_file_draft command without any pre-configured scope."
+commands.deny = ["client_state_save_file_draft"]

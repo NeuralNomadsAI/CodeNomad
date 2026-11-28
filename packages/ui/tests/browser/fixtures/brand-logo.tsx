@@ -13,13 +13,13 @@ import { applyUiSettings } from "./ui-settings"
 import type { Instance } from "../../../src/types/instance"
 import "../../../src/index.css"
 
-// A local desktop window as App renders it: title bar and tab bar above the home page or,
+// A local desktop window as App renders it: title bar and tab bar above the empty tab or,
 // with ?view=session, a session's empty state.
 const view = new URLSearchParams(location.search).get("view")
 const [description, setDescription] = createSignal<string>()
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <div style={{ display: "flex", "flex-direction": "column", height: "100vh", background: "var(--surface-canvas)" }}>
-    <NativeTitlebar title="CodeNomad" logo menus actions />
+    <NativeTitlebar title="CodeNomad" logo menus />
     <InstanceTabs tabs={[]} activeTabId={null} onSelect={() => {}} onClose={() => {}} onNew={() => {}} onMoveTab={() => {}} />
     <div class="session-center-column" style={{ flex: "1", display: "flex", "min-height": "0" }}>
       {view === "session"

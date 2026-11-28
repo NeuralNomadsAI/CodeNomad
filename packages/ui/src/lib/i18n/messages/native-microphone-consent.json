@@ -1,0 +1,42 @@
+{
+  "en": {
+    "dictation": "Allow one dictation recording for this server?",
+    "inputTest": "Allow one microphone recording to test this server’s speech API?"
+  },
+  "fr": {
+    "dictation": "Autoriser un seul enregistrement de dictée pour ce serveur ?",
+    "inputTest": "Autoriser un enregistrement au micro pour tester l’API vocale de ce serveur ?"
+  },
+  "de": {
+    "dictation": "Eine Diktataufnahme für diesen Server erlauben?",
+    "inputTest": "Eine Mikrofonaufnahme zum Testen der Sprach-API dieses Servers erlauben?"
+  },
+  "es": {
+    "dictation": "¿Permitir una sola grabación de dictado para este servidor?",
+    "inputTest": "¿Permitir una sola grabación con el micrófono para probar la API de voz de este servidor?"
+  },
+  "he": {
+    "dictation": "לאפשר הקלטת הכתבה אחת עבור שרת זה?",
+    "inputTest": "לאפשר הקלטה אחת במיקרופון לבדיקת ממשק ה־API הקולי של שרת זה?"
+  },
+  "ja": {
+    "dictation": "このサーバー向けの音声入力を1回録音しますか？",
+    "inputTest": "このサーバーの音声 API をテストするために、マイクで1回録音することを許可しますか？"
+  },
+  "ne": {
+    "dictation": "यो सर्भरका लागि एक पटक बोलेर लेख्न रेकर्डिङ अनुमति दिने?",
+    "inputTest": "यो सर्भरको आवाज API परीक्षण गर्न माइक्रोफोनबाट एक पटक रेकर्ड गर्न अनुमति दिने?"
+  },
+  "ru": {
+    "dictation": "Разрешить одну запись диктовки для этого сервера?",
+    "inputTest": "Разрешить одну запись с микрофона для проверки голосового API этого сервера?"
+  },
+  "tr": {
+    "dictation": "Bu sunucu için tek bir dikte kaydına izin verilsin mi?",
+    "inputTest": "Bu sunucunun ses API’sini denemek için tek bir mikrofon kaydına izin verilsin mi?"
+  },
+  "zh-Hans": {
+    "dictation": "允许为此服务器录制一次听写吗？",
+    "inputTest": "允许录制一次麦克风音频来测试此服务器的语音 API 吗？"
+  }
+}

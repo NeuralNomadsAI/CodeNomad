@@ -13,19 +13,22 @@ const parent=new NativeParent(process.stdout,true),browser=new BrowserPage(paren
 installShutdownStdinHandler(process.stdin,async()=>{},line=>parent.handleLine(line))
 const [base,output]=process.argv.slice(2),engine=process.platform==='darwin'?'macos':output.includes('wayland')?'wayland':'x11'
 const request=<T=any>(method:string,params:object={},timeout=20_000)=>parent.request<T>(method,{sessionID:'fixture-session',...params},timeout)
+const probe=async()=>(await request<{target:string}>('browser.probe')).target
+const navigate=async(name:string)=>request('browser.execute',{target:await probe(),command:{action:'navigate',url:`${base}/read/${name}`}})
+const execute=async(action:Parameters<BrowserPage["execute"]>[1])=>browser.execute('fixture-session',action,undefined,await probe())
 const control=(kind:string)=>request('fixture.action-control',{kind})
 const observe=()=>request('fixture.action-probe')
 async function main(){
    assert.equal(parent.browserAutomationUnavailable,false)
-  await request('browser.execute',{command:{action:'open',url:`${base}/read/preview`}})
+  await request('browser.execute',{workspaceIDs:["fixture-tab"],command:{action:'open',url:`${base}/read/preview`}})
   const result=await actionScenarios({
-    navigate:name=>{console.error(`action fixture: ${name}`);return request('browser.execute',{command:{action:'navigate',url:`${base}/read/${name}`}})},
-    snapshot:async()=>(await browser.execute('fixture-session',{action:'snapshot'})).snapshot as string,
-    act:action=>{console.error(`action: ${action.action}${action.key?` ${action.key}`:''}`);return browser.execute('fixture-session',parsePageAction(action,'snapshot')!)},observe,control,
+    navigate:name=>{console.error(`action fixture: ${name}`);return navigate(name)},
+    snapshot:async()=>(await execute({action:'snapshot'})).snapshot as string,
+    act:action=>{console.error(`action: ${action.action}${action.key?` ${action.key}`:''}`);return execute(parsePageAction(action,'snapshot')!)},observe,control,
   },engine)
   for(const admitted of [false,true]) {
-    await request('browser.execute',{command:{action:'navigate',url:`${base}/read/inputs`}})
-    const operationID=randomUUID(),descriptor=await request('browser.page.begin',{operationID})
+    await navigate('inputs')
+    const operationID=randomUUID(),descriptor=await request('browser.page.begin',{operationID,target:await probe()})
     const send=(operation:any,timeout?:number)=>request('browser.page.send',{operationID,generation:descriptor.generation,operation},timeout)
     const driver=nativeDriver(descriptor,operation=>send(operation),async()=>{})
     const target=(await driver.tree()).find(node=>node.role==='button' && node.name==='Hover me')!

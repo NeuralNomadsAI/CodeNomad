@@ -1,9 +1,13 @@
 //! Owner-fenced native child views. Business/session state belongs to consumers.
+use diagnostics::preview_error;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime};
+
+#[path = "embedded_view/diagnostics.rs"]
+pub(crate) mod diagnostics;
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos", test))]
 #[path = "embedded_view/browser.rs"]
@@ -74,6 +78,13 @@ pub(crate) fn is_allowed_url(url: &tauri::Url) -> bool {
         && url.password().is_none()
 }
 
+#[path = "../../vendor/wry-0.57.1/src/preview_origin.rs"]
+mod preview_origin;
+
+pub(crate) fn private_preview_url(url: &tauri::Url) -> bool {
+    preview_origin::private_preview_url(url.as_str())
+}
+
 fn site_url_allowed(url: &tauri::Url, origin: Option<&str>) -> bool {
     is_allowed_url(url)
         || (url.scheme() == "about" && url.path() == "blank")
@@ -116,6 +127,7 @@ struct Inner {
 
 #[derive(Clone, PartialEq, Eq)]
 struct Record {
+    restricted: bool,
     owner: String,
     token: u64,
     document: u64,
@@ -130,6 +142,48 @@ struct Record {
 pub(crate) struct EmbeddedViews(Arc<Mutex<Inner>>);
 
 impl EmbeddedViews {
+    pub(crate) fn restricted_browser(&self, label: &str) -> bool {
+        self.0.lock().is_ok_and(|inner| {
+            inner
+                .records
+                .get(label)
+                .is_some_and(|record| record.restricted)
+        })
+    }
+
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    pub(crate) fn configure_browser_presentation<R: Runtime>(
+        &self,
+        view: &tauri::Webview<R>,
+        source: &tauri::Url,
+        logical: Option<&str>,
+    ) -> Result<(), String> {
+        let record = self.owned(view.window().label(), view.label())?;
+        if let Some(value) = logical {
+            let parsed = tauri::Url::parse(value).map_err(|_| "Invalid logical browser address")?;
+            if !is_allowed_url(&parsed) || private_preview_url(&parsed) {
+                return Err("Invalid logical browser address".into());
+            }
+        }
+        let restricted = record.restricted || logical.is_some() || private_preview_url(source);
+        if restricted != record.restricted {
+            #[cfg(windows)]
+            windows::privacy(view)?;
+            #[cfg(target_os = "linux")]
+            linux::privacy(view)?;
+            #[cfg(target_os = "macos")]
+            macos::privacy(view)?;
+        }
+        let mut inner = self.0.lock().map_err(|error| error.to_string())?;
+        inner
+            .records
+            .get_mut(view.label())
+            .filter(|current| current.token == record.token)
+            .ok_or("Expired browser view")?
+            .restricted = restricted;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(owner: &str, label: &str) -> Self {
         let views = Self::default();
@@ -149,6 +203,7 @@ impl EmbeddedViews {
         }
         inner.sequence = inner.sequence.wrapping_add(1);
         let record = Record {
+            restricted: false,
             owner: owner.into(),
             token: inner.sequence,
             document: 0,
@@ -308,8 +363,9 @@ impl EmbeddedViews {
                 app.get_webview(&label).map(|view| view.close())
             };
             if let Some(Err(error)) = result {
+                let error = preview_error("close child webview", error);
                 eprintln!("[browser-cleanup] {label}: {error}");
-                failure.get_or_insert_with(|| error.to_string());
+                failure.get_or_insert(error);
             }
         }
         failure.map_or(Ok(()), Err)
@@ -427,7 +483,9 @@ impl EmbeddedViews {
             return Err("Embedded view requires a local primary renderer".into());
         }
         // Register before add_child: the host navigation interceptor runs during creation.
-        let record = self.reserve(window.label(), label)?;
+        let record = self
+            .reserve(window.label(), label)
+            .map_err(|error| preview_error("reserve child webview", error))?;
         if label.starts_with("browser-") {
             self.install_fullscreen_window(window);
         }
@@ -500,7 +558,7 @@ impl EmbeddedViews {
                 PhysicalPosition::new(-32_768, -32_768),
                 PhysicalSize::new(1, 1),
             )
-            .map_err(|error| format!("failed to create browser preview: {error}"));
+            .map_err(|error| preview_error("create child webview", error));
         let webview = match result {
             Ok(webview) => webview,
             Err(error) => {
@@ -510,10 +568,15 @@ impl EmbeddedViews {
         };
         let configured = webview
             .hide()
-            .map_err(|error| error.to_string())
-            .and_then(|()| install(&webview))
+            .map_err(|error| preview_error("hide new child webview", error))
+            .and_then(|()| {
+                install(&webview).map_err(|error| preview_error("install protections", error))
+            })
             .and_then(|()| self.set_bounds(window.app_handle(), window.label(), label, bounds))
-            .and_then(|()| self.finish_creation(label, &record));
+            .and_then(|()| {
+                self.finish_creation(label, &record)
+                    .map_err(|error| preview_error("finish child creation", error))
+            });
         if let Err(error) = configured {
             self.remove_exact(label, &record);
             let _ = webview.close();
@@ -541,8 +604,10 @@ impl EmbeddedViews {
         }
         webview
             .set_position(PhysicalPosition::new(bounds.x, bounds.y))
-            .and_then(|()| webview.set_size(PhysicalSize::new(bounds.width, bounds.height)))
-            .map_err(|error| error.to_string())
+            .map_err(|error| preview_error("set child position", error))?;
+        webview
+            .set_size(PhysicalSize::new(bounds.width, bounds.height))
+            .map_err(|error| preview_error("set child size", error))
     }
 
     pub(crate) fn set_visible<R: Runtime>(
@@ -561,7 +626,12 @@ impl EmbeddedViews {
         } else {
             webview.hide()
         }
-        .map_err(|error| error.to_string())
+        .map_err(|error| {
+            preview_error(
+                if visible { "show child webview" } else { "hide child webview" },
+                error,
+            )
+        })
     }
 
     fn webview<R: Runtime>(

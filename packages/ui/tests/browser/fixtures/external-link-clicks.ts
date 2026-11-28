@@ -5,6 +5,7 @@ Object.assign(window, {
   __TAURI__: {},
   __CODENOMAD_WINDOW_CONTEXT__: "local",
   __TAURI_INTERNALS__: {
+    metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } },
     invoke: async (command: string, args: unknown) => {
       calls.push({ command, args })
     },

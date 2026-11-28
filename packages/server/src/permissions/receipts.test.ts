@@ -10,19 +10,17 @@ import type { ServiceConnection } from "../workspaces/opencode-service"
 import { nativeEventConnections } from "../workspaces/opencode-service"
 import type { InstanceStreamEvent, PermissionReceipt } from "../api-types"
 import { EventBus } from "../events/bus"
-import { PermissionReceiptStore, permissionSnapshot } from "./receipt-store"
+import { PermissionReceiptStore, permissionSnapshot, receiptHash } from "./receipt-store"
 import { PermissionReceipts } from "./receipts"
-import { createOpencodePermissionReplier } from "./opencode-replier"
-import { AutoAcceptManager } from "./auto-accept-manager"
 import { registerPermissionReceiptRoutes } from "../server/routes/permission-receipts"
 import { registerInstanceProxyRoutes } from "../server/http-server"
 import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
-import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 
 const logger = { error() {}, warn() {}, debug() {}, trace() {}, isLevelEnabled: () => false } as unknown as Logger
 const pending = (id = "p", source = true) => ({ id, sessionID: "s", action: "shell", resources: ["git status"],
   message: "Inspect repository", metadata: { secret: "never-persist", diff: "FULL DIFF" },
   ...(source ? { source: { type: "tool", messageID: "m", id: "call" } } : {}) })
+const snapshot = (requestId: string, sessionID = "s") => permissionSnapshot({ ...pending(requestId), sessionID })!
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-receipts-"))
@@ -32,14 +30,6 @@ async function fixture() {
   const connection = {
     endpoint: { url: "http://127.0.0.1:4096", auth: { type: "basic", username: "opencode", password: "fixture-only" } },
     client: {
-      rpc: (definition: unknown) => {
-        assert.equal(definition, CODENOMAD_MISSIONS_RPC)
-        return { scheduleCarrierRead: async (input: { sessionID: string }, options: { location: { directory: string } }) => {
-          assert.deepEqual(input, { sessionID: "s" })
-          assert.deepEqual(options.location, { directory: "/project" })
-          throw { type: "rpc.unavailable", message: "RPC unavailable" }
-        } }
-      },
       debug: { location: { list: async () => [{ directory: "/project" }] } },
       config: { get: async () => [{ type: "directory", path: state.directory }] },
       session: { get: async () => ({ id: "s", location: { directory: "/project" } }) },
@@ -77,7 +67,7 @@ test("all decisions persist across reload, SSE-before-HTTP upgrades only the exa
   const f = await fixture()
   try {
     for (const decision of ["once", "always", "reject"] as const) {
-      const confirm = await f.receipts.prepare("w", f.connection, "s", decision, decision, "codenomad", "Because I chose it")
+      const confirm = await f.receipts.prepare("w", f.connection, snapshot(decision), decision, "Because I chose it")
       f.emit("permission.replied", { sessionID: "s", requestID: decision, reply: decision })
       await f.receipts.stop()
       await confirm()
@@ -117,7 +107,7 @@ test("stop cancels read-only recovery but drains queued events and confirmed wri
     options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true })
     began()
   }) })
-  const confirm = await f.receipts.prepare("w", f.connection, "s", "confirmed", "reject", "codenomad", "kept")
+  const confirm = await f.receipts.prepare("w", f.connection, snapshot("confirmed"), "reject", "kept")
   let releaseWrite!: () => void
   let writing!: () => void
   const writingStarted = new Promise<void>(resolve => { writing = resolve })
@@ -230,7 +220,7 @@ test("unanchored native decisions survive, pending snapshots are not receipts, d
   try {
     f.emit("permission.asked", pending("unanchored", false))
     f.emit("permission.replied", { sessionID: "s", requestID: "unanchored", reply: "always" })
-    const confirm = await f.receipts.prepare("w", f.connection, "s", "pending", "reject", "codenomad", "later")
+    const confirm = await f.receipts.prepare("w", f.connection, snapshot("pending"), "reject", "later")
     await f.receipts.stop()
     assert.deepEqual((await f.receipts.list("w", "s", { unanchored: true })).receipts.map(row => row.requestId), ["unanchored"])
     assert.deepEqual((await f.receipts.list("w", "s", { messageId: "m" })).receipts, [])
@@ -243,23 +233,15 @@ test("unanchored native decisions survive, pending snapshots are not receipts, d
   } finally { await f.close() }
 })
 
-test("Yolo is confirmed only on success; a failed transport creates no receipt and never replays", async () => {
+test("historical automatic provenance remains readable without sending a permission reply", async () => {
   const f = await fixture()
   try {
-    const replier = createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts })
-    f.state.failure = true
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "failed" }), /after dispatch/)
-    assert.equal(f.state.replies, 1)
-    assert.equal((await f.receipts.list("w", "s", { messageId: "m" })).receipts.length, 0)
-    f.state.failure = false
-    await replier({ instanceId: "w", sessionId: "s", permissionId: "accepted" })
-    assert.equal(f.state.replies, 2)
-    const [receipt] = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
+    const scope = JSON.stringify([`host:${process.platform}`, "/native/config", receiptHash(JSON.stringify(["basic", "opencode", "fixture-only"]))])
+    await f.store.resolve(scope, { ...permissionSnapshot(pending("historic"))!, decision: "once", origin: "yolo", resolvedAt: 123 })
+    const reloaded = new PermissionReceipts(new PermissionReceiptStore(f.root), f.manager, f.bus, logger)
+    const [receipt] = (await reloaded.list("w", "s", { messageId: "m" })).receipts
     assert.equal(receipt.origin, "yolo")
-    assert.equal(receipt.reason, undefined)
-    f.state.owned = false
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "foreign" }), /does not belong/)
-    assert.equal(f.state.replies, 2)
+    assert.equal(f.state.replies, 0)
   } finally { await f.close() }
 })
 
@@ -296,34 +278,6 @@ test("shutdown cancels every recovery read and fences late ownership results", {
   }
 })
 
-test("Yolo stop drains dispatched replies before receipt and workspace shutdown", async () => {
-  const f = await fixture()
-  let dispatched!: () => void
-  let release!: () => void
-  const started = new Promise<void>(resolve => { dispatched = resolve })
-  Object.assign(f.connection.client.permission, { reply: async () => {
-    dispatched()
-    await new Promise<void>(resolve => { release = resolve })
-  } })
-  const yolo = new AutoAcceptManager({ eventBus: f.bus, logger,
-    replier: createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts }) })
-  try {
-    yolo.handleInstanceEvent("w", { type: "session.created", data: { id: "s" } })
-    yolo.toggle("w", "s")
-    yolo.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    await started
-    let stopped = false
-    const stopping = yolo.stop().then(() => { stopped = true })
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(stopped, false)
-    release()
-    await stopping
-    await f.receipts.stop()
-    const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
-    assert.equal(rows[0]?.origin, "yolo")
-  } finally { release?.(); await yolo.stop(); await f.close() }
-})
-
 test("route validates queries and fresh session ownership, returns bounded continuation pages", async () => {
   const f = await fixture()
   const app = Fastify()
@@ -335,7 +289,7 @@ test("route validates queries and fresh session ownership, returns bounded conti
     for (const sessionId of ["__no_session_draft__", "invalid"]) {
       assert.equal((await app.inject(`/api/workspaces/w/sessions/${sessionId}/permission-receipts?unanchored=true`)).statusCode, 400)
     }
-    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, "ses_fixture", requestId, "once", "codenomad"))()
+    for (const requestId of ["a", "b", "c"]) await (await f.receipts.prepare("w", f.connection, snapshot(requestId, "ses_fixture"), "once"))()
     for (const query of ["", "?limit=1000&messageId=m", "?unanchored=false", "?messageId=m&unanchored=true", "?messageId=m&cursor=../../other"]) {
       assert.equal((await app.inject(`${url}${query}`)).statusCode, 400)
     }
@@ -358,8 +312,7 @@ test("failed disk writes publish no success; snapshot failure prevents a native 
   try {
     await rm(f.root, { recursive: true })
     await writeFile(f.root, "not a directory")
-    const replier = createOpencodePermissionReplier({ workspaceManager: f.manager, permissionReceipts: f.receipts })
-    await assert.rejects(replier({ instanceId: "w", sessionId: "s", permissionId: "p" }))
+    await assert.rejects(f.receipts.prepare("w", f.connection, snapshot("p"), "once"))
     assert.equal(f.state.replies, 0)
     assert.equal(f.changed.length, 0)
   } finally { await f.close() }
@@ -369,6 +322,9 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
   const f = await fixture()
   const app = Fastify()
   let forwards = 0
+  let reads = 0
+  const getPermission = f.connection.client.permission.get
+  f.connection.client.permission.get = (...args) => { reads++; return getPermission(...args) }
   Object.assign(f.connection, { endpoint: { url: "http://127.0.0.1:1" }, profile: async () => "modern", invalidate() {},
     fetch: async (url: string) => {
       forwards++
@@ -398,6 +354,7 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
     assert.equal((await send("ambiguous")).statusCode, 500)
     await f.receipts.stop()
     assert.equal(forwards, 3)
+    assert.equal(reads, 3, "receipt preparation reuses the exact admitted permission")
     const rows = (await f.receipts.list("w", "s", { messageId: "m" })).receipts
     assert.equal(rows.length, 2)
     assert.equal(rows.find(row => row.requestId === "manual")?.origin, "codenomad")
@@ -425,7 +382,7 @@ test("manual proxy captures native success, never failed HTTP or ambiguous trans
 test("authenticated native channels and WSL hosts isolate identical session/request IDs", async () => {
   const f = await fixture()
   try {
-    await (await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad"))()
+    await (await f.receipts.prepare("w", f.connection, snapshot("p"), "once"))()
     const otherConnection = { ...f.connection, endpoint: { ...f.connection.endpoint,
       auth: { type: "basic" as const, username: "opencode", password: "other-native-channel" } } }
     const manager = { get: f.manager.get, ownsLocation: f.manager.ownsLocation, getExistingSharedServiceConnection: f.manager.getExistingSharedServiceConnection,
@@ -446,31 +403,12 @@ test("authenticated native channels and WSL hosts isolate identical session/requ
 test("confirmed native success is not turned into retryable failure when receipt write fails", async () => {
   const f = await fixture()
   try {
-    const confirm = await f.receipts.prepare("w", f.connection, "s", "p", "once", "codenomad")
+    const confirm = await f.receipts.prepare("w", f.connection, snapshot("p"), "once")
     await rm(f.root, { recursive: true })
     await writeFile(f.root, "disk unavailable")
     await confirm()
     assert.equal(f.changed.length, 0)
   } finally { await f.close() }
-})
-
-test("Yolo never replays a dispatched failure on duplicate events or toggles", async () => {
-  const bus = new EventBus()
-  let calls = 0
-  const manager = new AutoAcceptManager({ eventBus: bus, logger, replier: async () => {
-    calls++; throw Object.assign(new Error("ambiguous transport"), { retryable: false })
-  } })
-  manager.start()
-  try {
-    manager.handleInstanceEvent("w", { type: "session.created", data: { sessionID: "s" } })
-    manager.toggle("w", "s")
-    manager.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    await new Promise<void>(resolve => setImmediate(resolve))
-    manager.handleInstanceEvent("w", { type: "permission.asked", data: pending() })
-    manager.toggle("w", "s"); manager.toggle("w", "s")
-    await new Promise<void>(resolve => setImmediate(resolve))
-    assert.equal(calls, 1)
-  } finally { manager.stop() }
 })
 
 test("store bounds request fields and page IO; native namespaces do not collide", async () => {

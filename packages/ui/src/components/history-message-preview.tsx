@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { useI18n } from "../lib/i18n"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { formatRelativeTime } from "../lib/recent-folder-display"
 import { openHistoryMatchSession } from "../stores/history-search-sessions"
 import { getRootClient } from "../stores/opencode-client"
@@ -29,16 +30,18 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     const generation = getOpenCodeInstanceGeneration(instanceId)
     const revision = getOpenCodeMutationRevision(instanceId, sessionID)
     const controller = new AbortController()
-    const current = () => !controller.signal.aborted && generation === getOpenCodeInstanceGeneration(instanceId)
+    const operation = captureBackendOperation(instanceId, controller.signal)
+    const current = () => operation.current() && generation === getOpenCodeInstanceGeneration(instanceId)
       && revision === getOpenCodeMutationRevision(instanceId, sessionID)
     target += 1
     setTitle(""); setDirectory(undefined); setCreated(undefined); setBlocks([]); setFailed(false); setPending(true)
     setOpening(false); setOpenFailed(false)
     void (async () => {
+      if (!current()) return
       const client = getRootClient(instanceId)
       const [session, message] = await Promise.all([
-        client.session.get({ sessionID }, { signal: controller.signal }),
-        client.session.message.get({ sessionID, messageID }, { signal: controller.signal }),
+        client.session.get({ sessionID }, { signal: operation.signal }),
+        client.session.message.get({ sessionID, messageID }, { signal: operation.signal }),
       ])
       if (!current()) return
       setTitle(session.title ?? sessionID)
@@ -54,17 +57,19 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
       else if (message.type === "shell") setBlocks([message.command, message.output?.output ?? ""])
       else if (message.type === "compaction" && "summary" in message) setBlocks([message.summary])
     })().catch(() => { if (current()) setFailed(true) })
-      .finally(() => { if (current()) setPending(false) })
-    onCleanup(() => controller.abort())
+      .finally(() => { if (!controller.signal.aborted) setPending(false) })
+    onCleanup(() => { controller.abort(); setPending(false) })
   })
   async function open() {
     const opened = target
-    const current = () => opened === target
+    const operation = captureBackendOperation(props.instanceId)
+    const current = () => operation.current() && opened === target
+    if (!current()) return
     setOpening(true)
     setOpenFailed(false)
     const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current, props.highlight).catch(() => false)
+    if (opened === target) setOpening(false)
     if (!current()) return
-    setOpening(false)
     setOpenFailed(!result)
   }
   return <section class="history-message-preview" aria-live="polite">

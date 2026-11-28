@@ -64,7 +64,8 @@ export function registerMissionCreation(app: FastifyInstance, deps: MissionRoute
       results.set(entryKey, record)
       lifetime.signal.throwIfAborted()
       creation = await prepareMissionCreation({ manager: deps.workspaceManager, fence: deps.worktreeDeletionFence,
-        workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait })
+        workspaceID: request.params.id, request: request.body, signal: lifetime.signal, wait: lifetime.wait,
+        permissionModes: deps.permissionModes })
       record.preparation = creation
       const result = await creation.execute()
       record.receipt = { requestId: id, state: "created" }

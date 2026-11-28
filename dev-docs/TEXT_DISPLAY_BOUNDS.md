@@ -11,8 +11,9 @@ window (`MESSAGE_PART_DISPLAY_LIMIT`).
 
 | Block | Initial bound |
 | --- | --- |
-| Prose Markdown: assistant/user text parts, compaction summaries, subagent prompts and reports, skill instructions | 50 000 characters |
+| Prose Markdown: assistant/user text parts, compaction summaries, skill instructions | 50 000 characters |
 | Tool output: shell, read, write, edit/patch fallbacks, diffs, ANSI, execute, webfetch, tool input and errors | 10 000 characters |
+| Subagent card panes (the task card's nested prompt and report scrollers) | 20 000 characters (`TASK_PANE_RENDER_CHARACTER_LIMIT`) |
 | Reasoning (plain text in the thinking card's scroller) | 10 000 characters (`REASONING_RENDER_CHARACTER_LIMIT`) |
 
 Structured tool values (an object input or output) larger than about 10 KB are
@@ -42,7 +43,7 @@ from rendering" message, without a reveal; copy returns them whole.
   updates the streaming card in place.
 - Diffs over 10 000 characters render as plain text
   (`shouldRenderDiffPayloadAsPlainText`), and the window applies to either form.
-  `apply_patch` shares one 10 000-character budget across its files: each rendered
+  `apply_patch` and multi-file `patch` share one 10 000-character budget across a call's files: each rendered
   file reveals its own diff, and files omitted entirely show a copy-only status.
 
 ## Reveal state and rendering
@@ -66,6 +67,22 @@ from rendering" message, without a reveal; copy returns them whole.
   from parts, like a shell call's `$ command` and output, uses `joinedTextSource`,
   so a window copies only its prefix and never keeps a whole join alive between tool
   updates. Tool speech likewise bounds each section before joining.
+- A task card's steps list mounts only its newest `TASK_STEP_MOUNT_LIMIT` (30) rows:
+  each nested row is a whole tool card, so the scroller's layout cost is charged per
+  mounted row. The omitted gap renders the shared hidden-parts placeholder and one
+  reveal mounts `TASK_STEP_REVEAL_STEP` (100) more rows, keyed `task:steps` in the
+  record display cache like a text reveal. The window's start may slide forward only
+  up to the boundary of what the reader is actually reading — the first row still in
+  sight, or nearer still a row holding focus or the selection, wherever it sits. The
+  boundary is read from the DOM (row identity against the current keys) on each
+  window change, so it survives the scan bound dropping older rows and never depends
+  on a remembered anchor; the scan bound itself caps what a held window can mount.
+- Search navigation marks the hit's part search-revealed (`markRecordPartSearchRevealed`
+  in the record display cache): every text window of that part gains one base reveal
+  step, and the reader's own reveals stack on top of it, so a hit beyond a window's
+  rendered prefix still lands in view — and further **Show more** clicks keep
+  extending — while the highlight pass finds it. The mark is idempotent and clears
+  with the instance's render caches.
 - A reveal at transcript level (text parts, errors) holds the pre-reveal cut point
   through the transcript list's `alignElement` (`TranscriptAlignmentContext`): an
   absolutely positioned marker in the row is held before the text grows, so neither
@@ -88,6 +105,9 @@ string), which the card windows.
   (speech retention), `stores/message-v2/instance-store.test.ts`.
 - Browser: `tests/browser/reveal-truncated-text.test.ts` (text and tool reveals,
   reveal point while following the bottom, virtualization and session switch, copy),
+  `tests/browser/tool-card-bounds.test.ts` (subagent card pane windows, the steps
+  tail window with its in-place reveal, reveal persistence across remounts, and
+  bottom-following while steps stream),
   `markdown-latest-request.test.ts` (reveal, cache entries, streaming renders and
   main-thread time; `CODENOMAD_MARKDOWN_BASELINE=<markdown.tsx>` measures another
   component as baseline), `render-cost.test.ts` (megabyte-scale reveal steps),

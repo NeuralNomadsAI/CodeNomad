@@ -51,25 +51,32 @@ Başka istemci isteği sonuçlandırırsa burada kaybolabilir. Zaman aşımı ve
 2. Kaynak mesajı olmayan kararlar için **Oturum izin kararları** öğesini açın.
 3. Devam etmek için **Daha fazla karar yükle** öğesini veya okuma hatasından sonra **Yeniden dene** öğesini kullanın.
 
-Karar kayıtları bilinen istekleri/kaynakları, doğrulanmış kararı ve mevcut gerekçe/kaynak bilgisini kaydeder. **CodeNomad'da verilen karar**, **Otomatik · Yolo** ve **Yerel karar** gözlemlenen kaynakları ayırır; OpenCode'da sonuçlandırılmış olması bu pencerede kullanıcının tıkladığının kanıtı değildir.
+Karar kayıtları bilinen istekleri/kaynakları, doğrulanmış kararı ve mevcut gerekçe/kaynak bilgisini kaydeder. **CodeNomad'da verilen karar**, **Otomatik karar** ve **Yerel karar** gözlemlenen kaynakları ayırır; OpenCode'da sonuçlandırılmış olması bu pencerede kullanıcının tıkladığının kanıtı değildir.
 
 Karar kayıtları OpenCode mesajı veya izin kuralı düzenleyicisi değil, salt okunur CodeNomad açıklamalarıdır. OpenCode tam geçmiş araması, mesaj kopyalama ve dışa aktarmaya dahil edilmezler. CodeNomad çevrimdışıyken kaçırılan kararları yeniden kuramazlar; başarılı araç sonucu eksik kaydın yerine geçmez. Oturumun silinmesi karar kayıtlarını da kaldırır.
 
-## Yolo modu ve aile kapsamı {#yolo-mode}
+## Konuşma izin modu {#conversation-mode}
 
-1. Bir görüşme seçin ve **Durum → Yolo Modu** öğesini açın.
-2. Yalnızca otomatik izin onayının tüm aile için kabul edilebilir olması durumunda etkinleştirin.
-3. Güvenilmeyen çalışmalara devam etmeden önce onu devre dışı bırakın; Bekleyen istekleri ve halihazırda çalışan araçları inceleyin.
+Bir konuşma seçin, **Durum → İzinler** bölümünü açın ve bir moda tıklayın. Bölüm kapalıyken şimşek (Özerk) veya kalkan (Denetimli) simgesi bilinen son modu gösterir.
 
-Kontrol bir oturumu belirtse de etkili kapsamı çözümlenen aile kökü ve alt konuşmalarıdır: alt oturumdan açmak/kapatmak o aileyi etkiler. OpenCode çatallaması kendi kökü sayılır. Her proje veya bağımsız konuşma için genel onay değildir.
+- **Özerk** — OpenCode’un izin kurallarını uygular.
+- **Denetimli** — Ajan dosyaları değiştirmeden veya kabuk komutlarını çalıştırmadan önce onay ister. Bu işlemlere ilişkin genel, proje ve konuşma yasakları geçerli kalır; izin veren kurallar onay isteğine dönüşür. OpenCode’a kaydedilen **Her Zaman İzin Ver** onayları, eşleşen istekler için geçerli kalır.
 
-Yolo **yalnızca izinleri** onaylar. Soruları veya Formları yanıtlamaz, eksik bilgi sağlamaz, başarılı yürütme garantisi vermez veya arka uç sahiplik kontrollerini aşmaz. Otomatik onayı CodeNomad arka ucu yapar: arka uç açıkken tek pencereyi kapatmak bunu devre dışı bırakmaya yetmez; durmuş arka uç istek onaylayamaz. Aile ayarı kalıcı kaydedilir ve çalışma alanı yeniden yüklendiğinde geri alınır.
+Her iki mod da OpenCode’un oturum kurallarını kullanır. Aynı hizmette aynı konuşmayı açtığınızda bu kurallar OpenCode’un terminal arayüzünde de geçerlidir. **Özerk** moda dönmek yalnızca denetim için eklenen kuralları kaldırır. OpenCode yapılandırma dosyaları değişmez. CodeNomad hiçbir modda istekleri otomatik olarak onaylamaz.
 
-Yolo'nun kapatılması halihazırda kabul edilmiş bir kararı iptal etmez veya dosya/ağ etkilerini geri almaz. **Otomatik · Yolo** makbuzlarını inceleyin ve gerekirse yürütmeyi açıkça durdurun. İnsan kapılarıyla otomasyon için bkz. [Görevler](missions.md).
+Denetimli mod bir yalıtım ortamı değildir. Okuma, proje dışına erişim ve MCP araçları kendi kurallarına tabi kalır. Açık istekler ilk kurallarını korur.
+
+Bir alt ajanda **İzinler**, kök konuşmanın modunu gösterir ve değiştirir. Mod değişince mevcut alt ajanlar kurallarını korur. Bir alt ajan başka bir alt ajan başlattığında, yeni ajan doğrudan üst ajanının kurallarını kopyalar.
+
+Çatallanan konuşma kaynak konuşmanın kurallarını kopyalar ve kendi modu vardır. CodeNomad hangi kuralların kaldırılacağını doğrulayamazsa kurallar korunur ve mesaj göndermeye devam edebilirsiniz.
+
+Mod doğrulanmadıysa **İzinleri yeniden yükle** seçeneğini kullanın. Başlangıç modunu seçmek için [Yeni konuşmaların izinleri](settings.md#new-conversation-permissions) bölümüne bakın.
 
 ## Eksik veya eski istekleri kurtarma {#request-recovery}
 
 1. Bağlantı göstergesini kontrol edin ve aynı arka uca/projeye yeniden bağlanın.
 2. Kurtarmanın bekleyen yerel istekleri uzlaştırmasına izin verin; Kapsamın eksik olması durumunda bilinen talepler ve taslaklar korunur.
 
-Eksik bir yanıt, yetkili bir boş kuyruk değildir ve uyarı, bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).
+Geçici kurtarma hataları bildirim oluşturmadan arka planda yeniden denenir. Dahili OpenCode eklentisi bekleyen istekleri listeleyemezse, kurtarma başarılı olana kadar tarayıcı sekmesinde arka uç başına yalnızca bir bildirim gösterilir.
+
+Eksik bir yanıt, yetkili bir boş kuyruk değildir ve eksik eklenti bildirimi bir istemin, yanıtın veya onayın tekrarlanmasına izin vermez. Yapılandırmanın yeniden yüklenmesi yerel Formları/izinleri iptal edebilir; bunu rutin bir istek yenileme düğmesi olarak kullanmayın. Bkz. [Sorun Giderme](troubleshooting.md) ve [OpenCode kurulumu](opencode.md).

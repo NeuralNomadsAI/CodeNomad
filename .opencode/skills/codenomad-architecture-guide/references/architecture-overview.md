@@ -20,8 +20,8 @@ Client-state V3 is a per-window envelope over the V2 content-addressed partition
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned `@opencode/client@2.3.0` contract across server and UI; host-owned native plugin runtime |
-| CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing, desktop automation bridge | `packages/server/src/` |
+| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned `@opencode/client` contract across server and UI; host-owned native plugin runtime |
+| CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, permission mode ownership, auth, storage, speech, SSE multiplexing, desktop automation bridge | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |
 
@@ -33,14 +33,14 @@ Native Forms are the interruption API; never add a separate Question queue.
 
 - CodeNomad control endpoints live under `/api/*`, including `/api/workspaces`, Git routes and `/api/events`.
 - OpenCode requests use `/workspaces/:id/instance/api/*`. The explicit method/path allowlist injects service auth, validates supplied paths and `location`/`directory` values, checks session ownership, and defaults safe requests to the workspace directory. New upstream routes are exposed only after review.
-- Yolo state endpoints use `/workspaces/:id/yolo/sessions/:sessionId`; state changes and auto-accept confirmations travel over `/api/events`.
+- Conversation permission mode uses `/api/workspaces/:id/sessions/:sessionId/permission-mode`; native `session.permissions` invalidates display state.
 - `InstanceEventBridge` subscribes once to the volatile shared OpenCode event stream and publishes typed `instance.event` records on CodeNomad's event bus. Reconnect must refetch authoritative state because missed events are lost.
 
 ## Persistence
 
 `packages/server/src/config/location.ts` resolves CodeNomad data under `~/.config/codenomad/`: canonical `config.yaml`, `state.yaml`, and `instances/`, with `config.json` retained only as migration input.
 
-OpenCode location/workspace identity is upstream state. CodeNomad persists only its own preferences and policy metadata, including Yolo state.
+OpenCode location/workspace identity is upstream state. CodeNomad persists its own preferences and the exact permission blocks it owns.
 
 OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
 

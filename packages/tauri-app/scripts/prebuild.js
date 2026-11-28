@@ -75,7 +75,7 @@ function ensureServerBuild() {
 function ensureUiBuild() {
   const loadingHtml = path.join(uiDist, "loading.html")
   if (fs.existsSync(loadingHtml)) {
-    return
+    return false
   }
 
   console.log("[prebuild] ui build missing; running workspace build...")
@@ -87,6 +87,7 @@ function ensureUiBuild() {
   if (!fs.existsSync(loadingHtml)) {
     throw new Error("[prebuild] ui loading assets missing after build")
   }
+  return true
 }
 
 function syncServerUiBundle() {
@@ -162,8 +163,7 @@ async function main() {
   requireRootBuildDependencies()
   await ensureMonacoAssets()
   ensureServerBuild()
-  ensureUiBuild()
-  syncServerUiBundle()
+  if (ensureUiBuild()) syncServerUiBundle()
   const staged = stagePackagedServer({
     workspaceRoot,
     serverRoot,
@@ -176,6 +176,13 @@ async function main() {
       target: staged.target,
       log: (message) => console.log(`[prebuild] ${message}`),
     })
+    const speechRoot = path.join(workspaceRoot, "packages", "desktop-speech")
+    const speechDest = path.join(serverDest, "desktop-speech")
+    fs.mkdirSync(speechDest, { recursive: true })
+    for (const module of ["cache", "download", "files", "macos", "manifest", "process", "worker"]) {
+      const name = `hex-${module}.mjs`
+      fs.copyFileSync(path.join(speechRoot, name), path.join(speechDest, name))
+    }
   } finally {
     fs.rmSync(staged.stagingRoot, { recursive: true, force: true })
   }

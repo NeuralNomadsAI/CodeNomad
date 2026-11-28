@@ -658,6 +658,17 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.evictionCalls.length, 0)
   })
 
+  it("rejects the exact creation if cancellation reached the server first", async () => {
+    const harness = createHarness()
+    await harness.manager.cancelCreationRequest("departing-request")
+    await assert.rejects(
+      harness.manager.create(process.cwd(), undefined, { requestId: "departing-request" }),
+      /was cancelled/,
+    )
+    const retained = await harness.manager.create(process.cwd(), undefined, { requestId: "other-request" })
+    assert.deepEqual(harness.manager.list().map(({ id }) => id), [retained.workspace.id])
+  })
+
   it("keeps a released duplicate when another creation request is cancelled", async () => {
     const harness = createHarness()
     const retained = await harness.manager.create(process.cwd(), undefined, { requestId: "retained-request" })
@@ -751,9 +762,13 @@ describe("workspace manager shared service lifecycle", () => {
     const second = await harness.manager.create(process.cwd())
 
     assert.notEqual(first.workspace.id, second.workspace.id)
-    await harness.manager.delete(first.workspace.id)
+    const releases: unknown[] = []
+    harness.eventBus.on("workspace.stopped", event => releases.push(event))
+    await harness.manager.delete(first.workspace.id, { temporaryRetained: true })
+    assert.deepEqual(releases, [{ type: "workspace.stopped", workspaceId: first.workspace.id, reason: "deleted",
+      temporaryRetained: true }])
     assert.equal(harness.service.evictionCalls.length, 0)
-    assert.equal(harness.manager.list().length, 1)
+    assert.deepEqual(harness.manager.list().map(record => record.id), [second.workspace.id])
     await harness.manager.delete(second.workspace.id)
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.list().length, 0)

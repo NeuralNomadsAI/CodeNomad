@@ -77,3 +77,130 @@ test("sibling checkouts without the opened nested folder keep ownership but are 
     t.diagnostic(`Owned fixture removed: ${root}`)
   }
 })
+
+test("creation for an expected tip refuses a missing or moved branch before any checkout exists", async t => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-expected-tip-"))
+  const repo = path.join(root, "main")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const first = git(repo, "rev-parse", "HEAD")
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "two")
+    git(repo, "branch", "issue-12", first)
+    let nativeCreates = 0
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }], create: async () => { nativeCreates++; throw new Error("native creation reached") } },
+    } as unknown as OpenCodeClient
+    const context = { client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory }
+    await assert.rejects(createNativeWorktree(context, "issue-13", "root", first), /Branch changed/)
+    assert.equal(git(repo, "branch", "--list", "issue-13"), "", "a missing branch is never created from HEAD")
+    await assert.rejects(createNativeWorktree(context, "issue-12", "root", git(repo, "rev-parse", "HEAD")), /Branch changed/)
+    assert.equal(nativeCreates, 0)
+    await assert.rejects(createNativeWorktree(context, "issue-12", "root", first), /native creation reached/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+test("creation for an expected tip never lets Git guess a deleted branch from a remote-tracking one", async () => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-no-guess-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "issue-12")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const tip = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "issue-12", tip)
+    git(repo, "remote", "add", "origin", "https://example.com/o/r.git")
+    git(repo, "update-ref", "refs/remotes/origin/issue-12", tip)
+    let created = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }, ...(created ? [{ directory: child }] : [])],
+        // The branch disappears after the precheck.
+        create: async () => { git(repo, "branch", "-D", "issue-12"); git(repo, "worktree", "add", "--detach", "-q", child, tip); created = true; return { directory: child } },
+        remove: async () => { git(repo, "worktree", "remove", "--force", child); created = false } },
+    } as unknown as OpenCodeClient
+    await assert.rejects(createNativeWorktree({ client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory },
+      "issue-12", "root", tip), /invalid reference|Branch changed/)
+    assert.equal(git(repo, "branch", "--list", "issue-12"), "", "no branch was guessed back")
+    assert.equal(created, false, "the checkout is removed")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+test("creation for an expected tip accepts the branch when a tag has the same name", async () => {
+  const root = await mkdtemp(path.join(process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir(), "worktree-tag-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "issue-7")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    const tip = git(repo, "rev-parse", "HEAD")
+    git(repo, "branch", "issue-7", tip)
+    git(repo, "tag", "issue-7", tip)
+    let created = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => {}, list: async () => [{ directory: repo }, ...(created ? [{ directory: child }] : [])],
+        create: async () => { git(repo, "worktree", "add", "--detach", "-q", child, tip); created = true; return { directory: child } },
+        remove: async () => { git(repo, "worktree", "remove", "--force", child); created = false } },
+    } as unknown as OpenCodeClient
+    const result = await createNativeWorktree({ client, workspacePath: repo, location: { directory: repo }, toHost: async (directory: string) => directory },
+      "issue-7", "root", tip)
+    assert.equal(result.branch?.replace(/^heads\//, ""), "issue-7")
+    assert.equal(git(child, "symbolic-ref", "HEAD"), "refs/heads/issue-7")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("creation retries an invalidated result inventory without repeating the creation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "worktree-create-config-race-"))
+  const repo = path.join(root, "main"), child = path.join(repo, ".codenomad", "worktrees", "new-branch")
+  const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    git(root, "init", "--initial-branch=main", repo)
+    await mkdir(path.dirname(child), { recursive: true })
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "--allow-empty", "-m", "one")
+    git(repo, "config", "extensions.worktreeConfig", "true")
+    let creations = 0, resultReads = 0, changed = false
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+      worktree: {
+        refresh: async () => {},
+        list: async () => {
+          if (!creations) return [{ directory: repo }]
+          resultReads++
+          return [{ directory: repo }, { directory: child }]
+        },
+        create: async () => {
+          assert.equal(++creations, 1)
+          git(repo, "worktree", "add", "--detach", "-q", child, "HEAD")
+          return { directory: child }
+        },
+      },
+    } as unknown as OpenCodeClient
+    const result = await createNativeWorktree({
+      client, workspacePath: repo, location: { directory: repo },
+      toHost: async directory => {
+        if (directory === child && resultReads === 1 && !changed) {
+          assert.equal(git(child, "symbolic-ref", "HEAD"), "refs/heads/new-branch")
+          git(repo, "config", "user.name", "Changed during result scan")
+          changed = true
+        }
+        return directory
+      },
+    }, "new-branch")
+    assert.equal(changed, true)
+    assert.equal(creations, 1)
+    assert.equal(resultReads, 2)
+    assert.equal(result.registeredDirectory, await realpath(child))
+    assert.equal(result.branch, "new-branch")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})

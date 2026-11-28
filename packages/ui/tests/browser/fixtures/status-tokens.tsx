@@ -30,15 +30,17 @@ const client: any = {
 const query = new URLSearchParams(location.search)
 const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
-serverApi.fetchConfigOwner = async () => config
 let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
-serverApi.patchConfigOwner = async (_owner, patch: any) => {
-  saves += 1
-  maxInFlight = Math.max(maxInFlight, ++inFlight)
-  // ?saveDelay=<ms> keeps each save pending like a slow server.
-  try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
-  config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
-  return config
+if (!query.has("legacyEverything")) {
+  serverApi.fetchConfigOwner = async () => config
+  serverApi.patchConfigOwner = async (_owner, patch: any) => {
+    saves += 1
+    maxInFlight = Math.max(maxInFlight, ++inFlight)
+    // ?saveDelay=<ms> keeps each save pending like a slow server.
+    try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
+    config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
+    return config
+  }
 }
 serverApi.fetchStateOwner = async () => ({} as any)
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
@@ -62,7 +64,7 @@ const [sessionId, select] = createSignal("parent")
 const [expanded, setExpanded] = createSignal<string[]>([])
 const [width, setWidth] = createSignal(460)
 const [customization, setCustomization] = createSignal({ ...DEFAULT_RIGHT_PANEL_CUSTOMIZATION,
-  hiddenStatusSectionIds: ["yolo-mode", "provider-usage", "background-processes", "mcp", "plugins"] })
+  hiddenStatusSectionIds: ["permissions", "provider-usage", "background-processes", "mcp", "plugins"] })
 const Fixture = () => {
   const { t } = useI18n()
   return <div style={{ display: "flex", gap: "24px", padding: "16px", "align-items": "start" }}>

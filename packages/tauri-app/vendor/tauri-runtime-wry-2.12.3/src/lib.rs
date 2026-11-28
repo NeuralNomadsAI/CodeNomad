@@ -1704,8 +1704,10 @@ impl<T: UserEvent> WebviewDispatch<T> for WryWebviewDispatcher<T> {
   }
 
   fn set_cookie(&self, cookie: Cookie<'_>) -> Result<()> {
+    // GTK may dispatch another IPC while waiting for the cookie store.
+    let window_id = *self.window_id.lock().unwrap();
     self.context.send_user_message(Message::Webview(
-      *self.window_id.lock().unwrap(),
+      window_id,
       self.webview_id,
       WebviewMessage::SetCookie(cookie.into_owned()),
     ))?;
@@ -5128,6 +5130,11 @@ You may have it installed on another user account, but it is not available for t
       webview_builder = webview_builder
         .with_initialization_script_for_main_only(script.script, script.for_main_frame_only);
     }
+  }
+
+  if browser_guest {
+    webview_builder = webview_builder.with_initialization_script_for_main_only(
+      include_str!("../../../../ui/src/lib/native/remote-preview-guards.cjs"), false);
   }
 
   for (scheme, protocol) in uri_scheme_protocols {

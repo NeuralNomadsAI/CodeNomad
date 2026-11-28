@@ -35,7 +35,7 @@ async function setup(host = "web", context = "remote", params = "") {
   await page.addInitScript(`
     window.clipboardReads = 0
     window.nativeClipboard = [{ name: "image.png", size: 3, data: "YWJj", mime: "image/png" }]
-    window.__TAURI_INTERNALS__ = { async invoke(command) {
+    window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: "local-fixture" }, currentWebview: { label: "local-fixture" } }, async invoke(command) {
       if (command !== "read_clipboard_attachments") return null
       window.clipboardReads++
       return window.nativeClipboard

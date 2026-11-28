@@ -23,6 +23,8 @@ export interface SnapshotOptions {
   query?: string
   /** Approximate character budget of the outline. */
   budget?: number
+  /** Upper bound on the characters in an issued reference, excluding brackets. */
+  refLength?: number
 }
 
 export interface Snapshot {
@@ -123,7 +125,8 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
   let forest = roots.flatMap(root => build(root, {}))
   const query = normalize(options.query ?? "")
   if (query) forest = forest.flatMap(item => filter(item, query))
-  const total = measure(forest, 0)
+  const refCost = options.refLength === undefined ? REF_COST : 3 + options.refLength
+  const total = measure(forest, 0, refCost)
   if (!forest.length) {
     return { text: query ? `No element matches ${quote(options.query!.trim())}` : "No accessible elements found", collapsed: 0, total: 0, shown: 0 }
   }
@@ -145,13 +148,13 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
   }
   const render = (item: View, depth: number, budget: number) => {
     if (item.full <= budget) return emitFull(item, depth)
-    const layout = allocate(item.children, depth + 1, budget - own(item, depth))
+    const layout = allocate(item.children, depth + 1, budget - own(item, depth, refCost), refCost)
     if (!layout) { emitLine(item, depth, hiddenSuffix(item.size - 1)); collapsed++; return }
     emitLine(item, depth)
     emitList(layout, depth + 1)
   }
-  const top = allocate(forest, 0, Math.max(options.budget ?? DEFAULT_SNAPSHOT_BUDGET, 200))
-  emitList(top ?? [{ view: forest[0], budget: minimum(forest[0], 0) }, ...forest.length > 1 ? [{ more: forest.length - 1 }] : []], 0)
+  const top = allocate(forest, 0, Math.max(options.budget ?? DEFAULT_SNAPSHOT_BUDGET, 200), refCost)
+  emitList(top ?? [{ view: forest[0], budget: minimum(forest[0], 0, refCost) }, ...forest.length > 1 ? [{ more: forest.length - 1 }] : []], 0)
   return { text: lines.join("\n"), collapsed, total, shown }
 }
 
@@ -197,30 +200,30 @@ function filter(item: View, query: string): View[] {
   return children.length ? [{ ...item, children }] : []
 }
 
-function measure(items: View[], depth: number): number {
+function measure(items: View[], depth: number, refCost: number): number {
   let count = 0
   for (const item of items) {
-    const inside = measure(item.children, depth + 1)
+    const inside = measure(item.children, depth + 1, refCost)
     item.size = 1 + inside
-    item.full = own(item, depth) + item.children.reduce((sum, child) => sum + child.full, 0)
+    item.full = own(item, depth, refCost) + item.children.reduce((sum, child) => sum + child.full, 0)
     count += item.size
   }
   return count
 }
 
-function own(item: View, depth: number): number {
-  return depth * 2 + 3 + item.head.length + item.tail.length + (item.backend === undefined ? 0 : REF_COST)
+function own(item: View, depth: number, refCost: number): number {
+  return depth * 2 + 3 + item.head.length + item.tail.length + (item.backend === undefined ? 0 : refCost)
 }
 
-function minimum(item: View, depth: number): number {
-  return own(item, depth) + (item.children.length ? hiddenSuffix(item.size - 1).length : 0)
+function minimum(item: View, depth: number, refCost: number): number {
+  return own(item, depth, refCost) + (item.children.length ? hiddenSuffix(item.size - 1).length : 0)
 }
 
 /** Shares a budget among siblings: small ones stay whole, large ones are collapsed inside;
  * when even collapsed lines do not fit, the first and last siblings are kept around a gap. */
-function allocate(items: View[], depth: number, budget: number): Emitted[] | undefined {
+function allocate(items: View[], depth: number, budget: number, refCost: number): Emitted[] | undefined {
   if (!items.length) return []
-  const minimums = items.map(item => minimum(item, depth))
+  const minimums = items.map(item => minimum(item, depth, refCost))
   const floor = minimums.reduce((sum, value) => sum + value, 0)
   if (floor <= budget) {
     const share = (level: number) => items.reduce((sum, item, index) => sum + Math.min(item.full, Math.max(minimums[index], level)), 0)

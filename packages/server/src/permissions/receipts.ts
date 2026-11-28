@@ -7,7 +7,7 @@ import type { WorkspaceManager } from "../workspaces/manager"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import { nativeEventConnections } from "../workspaces/opencode-service"
 import { locationRequestOptions, readLocationRef } from "../opencode/compatibility/location"
-import { PermissionReceiptStore, permissionSnapshot, receiptHash, type ReceiptQuery } from "./receipt-store"
+import { PermissionReceiptStore, permissionSnapshot, receiptHash, type PermissionSnapshot, type ReceiptQuery } from "./receipt-store"
 
 type Manager = Pick<WorkspaceManager, "get" | "getSharedServiceConnection" | "getExistingSharedServiceConnection" | "ownsLocation" | "getServiceWslDistro" | "getServicePathStyle">
 type InstanceEvent = Extract<WorkspaceEventPayload, { type: "instance.event" }>
@@ -160,19 +160,17 @@ export class PermissionReceipts {
     }, signal)
   }
 
-  /** Called after proxy/Yolo ownership checks, before the native mutation. */
-  async prepare(instanceId: string, connection: ServiceConnection, sessionId: string, requestId: string,
-    decision: PermissionReceipt["decision"], origin: "codenomad" | "yolo", reason?: string) {
+  /** The proxy supplies the owned pending snapshot from admission. */
+  async prepare(instanceId: string, connection: ServiceConnection, request: PermissionSnapshot,
+    decision: PermissionReceipt["decision"], reason?: string) {
     const scope = await this.scope(instanceId, connection)
-    const pending = await connection.client.permission.get({ sessionID: sessionId, requestID: requestId }, { signal: AbortSignal.timeout(10_000) })
-    const request = permissionSnapshot(pending)
-    if (!request || request.sessionId !== sessionId || request.requestId !== requestId) throw new Error("Permission request identity mismatch")
+    const { sessionId, requestId } = request
     connection.assertCurrent()
     await this.store.capture(scope, request)
     this.observe(instanceId, scope, sessionId)
     // Confirmation is independent of the SSE event order. No call on failure.
     return () => {
-      const task = this.resolve(instanceId, scope, { ...request, decision, origin, reason: reason?.slice(0, 4096), resolvedAt: Date.now() }).catch(() => {
+      const task = this.resolve(instanceId, scope, { ...request, decision, origin: "codenomad", reason, resolvedAt: Date.now() }).catch(() => {
         // The native mutation already succeeded: never convert this into a
         // transport error inviting a replay, and never publish an unpersisted row.
         this.logger.error({ instanceId, sessionId, requestId }, "Native permission reply succeeded but receipt persistence failed")

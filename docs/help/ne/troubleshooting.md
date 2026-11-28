@@ -42,7 +42,7 @@ owned worktree वा conversation placement verify गर्न नसके �
 सुरुवात त्रुटिको संवादमा executable र संस्करण जाँच्न **OpenCode सेटिङहरू खोल्नुहोस्** रोज्नुहोस्; वातावरणका अनुकूलित मानहरूका लागि **उन्नत → वातावरण चरहरू (Environment Variables)** मा जानुहोस्।
 
 1. **प्राथमिकताहरू → OpenCode** खोली **OpenCode संस्करण** card (installed version र running service status), त्यसपछि **OpenCode बाइनरी** अन्तर्गतको selected executable जाँच्नुहोस्।
-2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.3.0**; recommended/qualified संस्करण: **2.3.0**।
+2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.4.2**; recommended/qualified संस्करण: **2.4.2**।
 3. installed CLI running service भन्दा फरक भए shared service restart गर्ने कि स्पष्ट निर्णय गर्नुहोस्।
 
 **OpenCode सेवा पुनः सुरु गर्नुहोस्** **समस्या समाधान** अन्तर्गत उपलब्ध छ र पुष्टि चाहिन्छ। हरेक connected client को सक्रिय काम interrupt गर्छ, तर session history राख्छ। configuration reload छुट्टै हो: process राख्छ तर loaded Location पुनर्निर्माण र pending question/permission रद्द गर्छ। कुनै हानिरहित refresh होइन।
@@ -85,7 +85,7 @@ cancelled वा partial cleanup मा अर्को deletion अघि progr
 ## log र सुरक्षित निदान {#diagnostics}
 
 1. **सेटिङहरू → OpenCode → OpenCode लगहरू हेर्नुहोस्** खोल्नुहोस्। छानिएको कार्यान्वयन होस्टको विश्वव्यापी `opencode.log` फाइल `opencode debug paths log` बाट पत्ता लगाइन्छ। अन्तिम बढीमा 128 KiB देखाइन्छ; **रिफ्रेस** ले फेरि पढ्छ।
-2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्।
+2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्। CodeNomad server ले आफ्नो configuration file सँगै (पूर्वनिर्धारित `~/.config/codenomad`) `logs/server.log` मा आफ्नै log पनि राख्छ; अघिल्लो भरिएको file `server.previous.log` हो।
 3. **सेटिङहरू → जानकारी → निदान (Diagnostics)** खोली **बग रिपोर्ट गर्नुहोस्**, **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** प्रयोग गर्नुहोस्।
 
 logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [bug report गर्नुहोस्](support.md#report-a-bug) हेर्नुहोस्।

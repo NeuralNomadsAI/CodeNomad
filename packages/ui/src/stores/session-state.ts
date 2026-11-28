@@ -1,15 +1,16 @@
 import { batch, createSignal } from "solid-js"
+import { carrySessionProjection, childSessionIds, sessionCheckpoint, sessionIndicatorRows, sessionTopology } from "./session-projection"
 import { beginGesture, type SurfaceGesture } from "./session-surface"
 import { activeSessionId, setActiveSessionId } from "./session-selection-state"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
-import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
+import { loadMessages, refreshSessionCatalog } from "./session-api"
 import { showToastNotification } from "../lib/notifications"
 import { messageStoreBus } from "./message-v2/bus"
-import { instances, ensureYoloStateSynced } from "./instances"
+import { instances } from "./instances"
 import { showConfirmDialog } from "./alerts"
 import { getLogger } from "../lib/logger"
-import { getRootClient } from "./opencode-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { tGlobal } from "../lib/i18n"
 import { computeThreadTotals, type ThreadTotals } from "../lib/thread-totals"
 import { applySessionPage, getDefaultSessionPaginationState, type SessionPaginationState } from "./session-pagination-model"
@@ -35,11 +36,14 @@ import {
 export type { SessionThread } from "./session-tree"
 import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
 import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
+import { confirmedSessionListDirectory, getSessionPlacementEvidence } from "./session-events"
 import { resolveRestoredSessionSelection } from "./app-session-reconciliation"
+import { getSessionListView } from "./session-list-view"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
 interface GenerationAdmission {
+  signal: AbortSignal
   token: number
   pending: number
   accepted: boolean
@@ -64,6 +68,7 @@ export interface SessionInfo {
   contextAvailableTokens: number | null
 }
 
+// Published workspace maps are snapshots. Replace every changed map.
 const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
@@ -127,7 +132,10 @@ function getSessionListIds(instanceId: string): string[] {
   const current = sessions().get(instanceId)
   if (!current) return ids
   const directoryOnly = getDirectoryOnlyWorktree(instanceId)
-  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  return projectSessionListIds(ids, current, directoryOnly?.serviceDirectory ?? directoryOnly?.directory)
+}
+
+function projectSessionListIds(ids: string[], current: ReadonlyMap<string, Session>, directory?: string): string[] {
   // Restored catalogs retain all candidates before worktree scope is known.
   // Match the thread builder's root projection without rewriting native parents.
   return ids.filter(id => !current.has(id) || getSessionRootFromMap(current, id, directory)?.id === id)
@@ -218,19 +226,33 @@ function isSessionSearchLoading(instanceId: string): boolean {
 // inventory, and for Git-unavailable folders (which project their own
 // directory), every held session is in scope. The active session's family is
 // always in scope: a session opened explicitly is shown where it was opened.
-const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+// A session a move located elsewhere (`markSessionMovedAway`) is never in scope.
+const NO_SESSIONS: ReadonlyMap<string, Session> = new Map()
+const workspaceScopes = new WeakMap<object, {
+  worktrees: unknown; active?: string; away: unknown; scope: ReadonlySet<string>; unscoped: boolean; folder: string; client: unknown; evidence: unknown
+}>()
 
 function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
-  const all = sessions()
+  const held = sessions().get(instanceId) ?? NO_SESSIONS
   const worktrees = worktreesByInstance().get(instanceId)
-  if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
+  const away = getMovedAwaySessions(instanceId)
+  const unscoped = !worktrees || getGitRepoStatus(instanceId) === null || Boolean(getDirectoryOnlyWorktree(instanceId))
+  if (unscoped && !away.size) return null
   const active = activeSessionId().get(instanceId)
-  const cached = workspaceScopes.get(instanceId)
-  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active) return cached.scope
-  const scope = selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
-    id: session.id, parentId: session.parentId, directory: session.location?.directory })),
-  instances().get(instanceId)?.folder ?? "", worktrees, active ? [active] : [])
-  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, scope })
+  const instance = instances().get(instanceId)
+  const folder = instance?.folder ?? ""
+  const client = instance?.client
+  const evidence = getSessionPlacementEvidence(instanceId)
+  const topology = sessionTopology(held)
+  const cached = workspaceScopes.get(topology)
+  if (cached && cached.worktrees === worktrees && cached.active === active && cached.away === away
+    && cached.unscoped === unscoped && cached.folder === folder && cached.client === client && cached.evidence === evidence) return cached.scope
+  const scope = unscoped ? new Set(held.keys())
+    : selectWorkspaceFamilyIds([...held.values()].map((session) => ({
+      id: session.id, parentId: session.parentId, directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location?.directory })),
+    folder, worktrees!, active ? [active] : [])
+  for (const id of away.keys()) scope.delete(id)
+  workspaceScopes.set(topology, { worktrees, active, away, scope, unscoped, folder, client, evidence })
   return scope
 }
 
@@ -238,18 +260,50 @@ function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boole
   return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
 }
 
-// The tab's aggregate over the sessions in scope, derived once per sessions
-// snapshot and scope, so every publication and scope change is reflected.
-const indicatorStatuses = new Map<string, { sessions: unknown; scope: ReadonlySet<string> | null; status: InstanceSessionIndicatorStatus }>()
+/** Evaluate a verified return without its departure marker or a selected-family override. */
+export function canRelistReturnedSession(instanceId: string, sessionId: string): boolean {
+  const worktrees = worktreesByInstance().get(instanceId)
+  if (!worktrees || getGitRepoStatus(instanceId) === null) return false
+  const away = getMovedAwaySessions(instanceId)
+  const members = new Map([...(sessions().get(instanceId) ?? [])].filter(([id]) => id === sessionId || !away.has(id)))
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const scope = selectWorkspaceFamilyIds([...members.values()].map(session => ({
+    id: session.id, parentId: session.parentId,
+    directory: confirmedSessionListDirectory(instanceId, session.id, session) ?? session.location.directory,
+  })), instances().get(instanceId)?.folder ?? "", worktrees)
+  return scope.has(sessionId) && getSessionRootFromMap(members, sessionId, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) !== null
+}
+
+const listedSessionMaps = new WeakMap<ReadonlyMap<string, Session>, { scope: unknown; directory?: string; listed: ReadonlyMap<string, Session> }>()
+
+/** The held sessions the list shows: in scope and connected to a listed root.
+ * Its rows, its parents' subsession activity and the tab indicator all derive
+ * from this one map, so a session outside it never renders, connects rows or
+ * contributes activity; a row under an ancestor outside the scope is left out
+ * as a child whose parent is missing is. */
+function getListedSessionMap(instanceId: string): ReadonlyMap<string, Session> {
+  const held = sessions().get(instanceId) ?? NO_SESSIONS
+  const scope = getWorkspaceSessionScope(instanceId)
+  if (!scope) return held
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const cached = listedSessionMaps.get(held)
+  if (cached && cached.scope === scope && cached.directory === directory) return cached.listed
+  const scoped = new Map([...held].filter(([id]) => scope.has(id)))
+  const listed = new Map([...scoped].filter(([id]) => getSessionRootFromMap(scoped, id, directory) !== null))
+  const result = listed.size === held.size ? held : listed
+  listedSessionMaps.set(held, { scope, directory, listed: result })
+  return result
+}
+
+const indicatorStatuses = new WeakMap<ReadonlyMap<string, Session>, InstanceSessionIndicatorStatus>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
-  const all = sessions()
-  const scope = getWorkspaceSessionScope(instanceId)
-  const cached = indicatorStatuses.get(instanceId)
-  if (cached && cached.sessions === all && cached.scope === scope) return cached.status
+  const listed = getListedSessionMap(instanceId)
+  const cached = indicatorStatuses.get(listed)
+  if (cached !== undefined) return cached
   let status: InstanceSessionIndicatorStatus = "idle"
-  for (const session of all.get(instanceId)?.values() ?? []) {
-    if (scope && !scope.has(session.id)) continue
+  for (const session of sessionIndicatorRows(listed).values()) {
     if (session.pendingPermission || session.pendingForm) {
       status = "permission"
       break
@@ -257,7 +311,7 @@ export function getInstanceSessionIndicatorStatusCached(instanceId: string): Ins
     if (session.status === "compacting") status = "compacting"
     else if (session.status === "working" && status === "idle") status = "working"
   }
-  indicatorStatuses.set(instanceId, { sessions: all, scope, status })
+  indicatorStatuses.set(listed, status)
   return status
 }
 
@@ -375,6 +429,7 @@ function getSessionDraftPrompt(instanceId: string, sessionId: string): string {
 function writeSessionDraftPrompt(instanceId: string, sessionId: string, value: string) {
   const key = getDraftKey(instanceId, sessionId)
   setSessionDraftPrompts((prev) => {
+    if ((prev.get(key) ?? "") === value) return prev
     const next = new Map(prev)
     if (!value) {
       next.delete(key)
@@ -408,6 +463,11 @@ function hydrateSessionDraftPrompt(instanceId: string, sessionId: string, value:
   for (const listener of sessionDraftHydratedListeners) listener(instanceId, sessionId, value)
 }
 
+export function replaceSessionDraftPrompt(instanceId: string, sessionId: string, value: string): void {
+  markSessionDraftAuthoritative(instanceId, sessionId)
+  hydrateSessionDraftPrompt(instanceId, sessionId, value)
+}
+
 function onSessionDraftHydrated(listener: SessionDraftHydratedListener): () => void {
   sessionDraftHydratedListeners.add(listener)
   return () => sessionDraftHydratedListeners.delete(listener)
@@ -422,6 +482,11 @@ function getSessionDraftPromptsForInstance(instanceId: string): Record<string, s
     result[key.slice(prefix.length)] = value
   }
   return result
+}
+
+export function trackSessionDraftChanges(): void {
+  sessionDraftPrompts()
+  authoritativeDraftKeys()
 }
 
 function getAuthoritativeSessionIds(keys: ReadonlySet<string>, instanceId: string): ReadonlySet<string> {
@@ -450,6 +515,48 @@ function markSessionDeletedAuthoritative(instanceId: string, sessionId: string):
   addAuthoritativeKey(setAuthoritativelyDeletedSessionKeys, getDraftKey(instanceId, sessionId))
 }
 
+/** Per instance, the destination of each session located elsewhere (null if
+ * the proxy refused a parent read without revealing its directory). It is never
+ * listed there, whatever path brings it; a later inventory serving that
+ * destination lists it again. Released when a refresh lists it at a served
+ * directory, it is deleted or moves again, or the instance closes. */
+const [movedAwaySessions, setMovedAwaySessions] = createSignal<ReadonlyMap<string, ReadonlyMap<string, string | null>>>(new Map())
+const NO_MOVED_AWAY: ReadonlyMap<string, string | null> = new Map()
+
+function updateMovedAwaySessions(instanceId: string, update: (away: Map<string, string | null>) => void): void {
+  setMovedAwaySessions((previous) => {
+    const away = new Map(previous.get(instanceId) ?? NO_MOVED_AWAY)
+    update(away)
+    const next = new Map(previous)
+    if (away.size) next.set(instanceId, away)
+    else next.delete(instanceId)
+    return next
+  })
+}
+
+function markSessionMovedAway(instanceId: string, sessionId: string, directory: string | null): void {
+  if (movedAwaySessions().get(instanceId)?.get(sessionId) === directory) return
+  updateMovedAwaySessions(instanceId, (away) => { away.set(sessionId, directory) })
+}
+
+function forgetSessionMovedAway(instanceId: string, sessionId: string): void {
+  if (!movedAwaySessions().get(instanceId)?.has(sessionId)) return
+  updateMovedAwaySessions(instanceId, (away) => { away.delete(sessionId) })
+}
+
+function getMovedAwaySessions(instanceId: string): ReadonlyMap<string, string | null> {
+  return movedAwaySessions().get(instanceId) ?? NO_MOVED_AWAY
+}
+
+function getMovedAwaySessionIds(instanceId: string): string[] {
+  return [...getMovedAwaySessions(instanceId).keys()]
+}
+
+function clearInstanceMovedAwaySessions(instanceId: string): void {
+  if (!movedAwaySessions().has(instanceId)) return
+  setMovedAwaySessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+}
+
 function clearInstanceDeletedSessionAuthority(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
@@ -471,6 +578,11 @@ function clearSessionDraftPrompt(instanceId: string, sessionId: string) {
     next.delete(key)
     return next
   })
+}
+
+/** A passive eviction clears the live value, not an unhydrated saved draft. */
+export function evictSessionDraftPrompt(instanceId: string, sessionId: string) {
+  if (getSessionDraftPrompt(instanceId, sessionId)) writeSessionDraftPrompt(instanceId, sessionId, "")
 }
 
 function clearInstanceDraftPromptValues(instanceId: string) {
@@ -521,7 +633,7 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
   })
 }
 
-function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void | boolean) {
+function withSession(instanceId: string, sessionId: string, updater: (session: Session, previous: Readonly<Session>) => void | boolean) {
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
@@ -529,18 +641,68 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     const current = instanceSessions.get(sessionId)
     if (!current) return prev
 
-    const updatedSession: Session = { ...current }
-    const result = updater(updatedSession)
+    const time = { ...current.time }
+    const location = current.location && { ...current.location }
+    const model = current.model && { ...current.model }
+    const tokens = current.tokens && { ...current.tokens, cache: { ...current.tokens.cache } }
+    const retry = current.retry && { ...current.retry }
+    const updatedSession: Session = { ...current, time, location, model, tokens, retry }
+    const result = updater(updatedSession, current)
     if (result === false) {
       return prev
     }
 
-    instanceSessions.set(sessionId, updatedSession)
-
-    const next = new Map(prev)
-    next.set(instanceId, instanceSessions)
-    return next
+    // Preserve unchanged nested identities, including a model object
+    // deliberately replaced by an authoritative selection.
+    if (updatedSession.time === time && shallowFieldsEqual(current.time, time)) updatedSession.time = current.time
+    if (updatedSession.location === location && shallowFieldsEqual(current.location, location)) updatedSession.location = current.location
+    if (updatedSession.model === model && shallowFieldsEqual(current.model, model)) updatedSession.model = current.model
+    if (updatedSession.retry === retry && current.retry && retry && shallowFieldsEqual(current.retry, retry)) updatedSession.retry = current.retry
+    if (updatedSession.tokens === tokens && tokens && current.tokens) {
+      if (shallowFieldsEqual(current.tokens.cache, tokens.cache)) tokens.cache = current.tokens.cache
+      if (shallowFieldsEqual(current.tokens, tokens)) updatedSession.tokens = current.tokens
+    }
+    return replaceSessionRow(prev, instanceId, updatedSession)
   })
+}
+
+function shallowFieldsEqual<T extends object>(a: T, b: T): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const keys = Object.keys(a) as (keyof T)[]
+  return keys.length === Object.keys(b).length
+    && keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]))
+}
+
+/** Publish one row while retaining projections that it cannot affect. */
+export function replaceSessionRow(previous: Map<string, Map<string, Session>>, instanceId: string, session: Session) {
+  const instanceSessions = previous.get(instanceId)
+  const sessionId = session.id
+  const updated = new Map(instanceSessions).set(sessionId, session)
+  if (!instanceSessions) return new Map(previous).set(instanceId, updated)
+  const current = instanceSessions.get(sessionId)
+  carrySessionProjection(instanceSessions, updated, current, session)
+  const projection = listedSessionMaps.get(instanceSessions)
+  const previousTopology = sessionTopology(instanceSessions)
+  const nextTopology = sessionTopology(updated)
+  const parent = !current && session.parentId ? instanceSessions.get(session.parentId) : undefined
+  const scope = parent ? workspaceScopes.get(previousTopology) : undefined
+  const sameLocationLeaf = scope && parent && !childSessionIds(instanceSessions, sessionId).length
+    && !getMovedAwaySessions(instanceId).has(sessionId)
+    && (confirmedSessionListDirectory(instanceId, parent.id, parent) ?? parent.location.directory)
+      === (confirmedSessionListDirectory(instanceId, sessionId, session) ?? session.location.directory)
+    && parent.location.directory === session.location.directory
+    && scope.scope.has(parent.id)
+  const extendedScope = sameLocationLeaf && new Set(scope.scope).add(sessionId)
+  if (extendedScope && scope) workspaceScopes.set(nextTopology, { ...scope, scope: extendedScope })
+  if (projection && (previousTopology === nextTopology || (extendedScope && projection.scope === scope?.scope))) {
+    const before = projection.listed
+    const include = before.has(sessionId) || Boolean(extendedScope && parent && before.has(parent.id))
+    const listed = before === instanceSessions ? updated : include ? new Map(before).set(sessionId, session) : before
+    if (listed !== before && listed !== updated) carrySessionProjection(before, listed, current, session)
+    listedSessionMaps.set(updated, { ...projection, scope: extendedScope || projection.scope, listed })
+  }
+  return new Map(previous).set(instanceId, updated)
 }
 
 function setSessionPending(
@@ -647,12 +809,15 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
   complete: () => void
   rollback: () => void
 } {
+  const { signal } = captureBackendOperation(instanceId)
+  if (signal.aborted) return { complete: () => {}, rollback: () => {} }
   const key = `${instanceId}:${sessionId}`
   let admission = generationAdmissions.get(key)
-  if (!admission) {
+  if (!admission || admission.signal !== signal) {
     const session = sessions().get(instanceId)?.get(sessionId)
     if (!session) return { complete: () => {}, rollback: () => {} }
     admission = {
+      signal,
       token: ++generationAdmissionSequence,
       pending: 0,
       accepted: false,
@@ -719,11 +884,6 @@ function writeSessionSelection(
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
   void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
-  if (sessionId) {
-    // Backfill authoritative Yolo state for the now-active session so the badge
-    // matches the server even on first connect / multi-client scenarios.
-    ensureYoloStateSynced(instanceId, sessionId)
-  }
 }
 
 function writeActiveParentSession(instanceId: string, parentSessionId: string | null): void {
@@ -868,14 +1028,22 @@ function getSessions(instanceId: string): Session[] {
   return instanceSessions ? Array.from(instanceSessions.values()) : []
 }
 
+export function getSessionCheckpoint(instanceId: string): object {
+  return sessionCheckpoint(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
+export function getSessionTopology(instanceId: string): object {
+  return sessionTopology(sessions().get(instanceId) ?? NO_SESSIONS)
+}
+
 function getParentSessions(instanceId: string): Session[] {
   const allSessions = getSessions(instanceId)
   return allSessions.filter((s) => getSessionRoot(instanceId, s.id)?.id === s.id)
 }
 
 function getChildSessions(instanceId: string, parentId: string): Session[] {
-  const allSessions = getSessions(instanceId)
-  return allSessions.filter((s) => s.parentId === parentId)
+  const rows = sessions().get(instanceId)
+  return rows ? childSessionIds(rows, parentId).map(id => rows.get(id)!) : []
 }
 
 function getDescendantSessions(instanceId: string, parentId: string): Session[] {
@@ -883,11 +1051,11 @@ function getDescendantSessions(instanceId: string, parentId: string): Session[] 
   return instanceSessions ? getDescendantSessionsFromMap(instanceSessions, parentId) : []
 }
 
-function getSessionFamily(instanceId: string, parentId: string): Session[] {
-  const parent = sessions().get(instanceId)?.get(parentId)
-  if (!parent) return []
+function getSessionFamily(instanceId: string, parentId: string, held = sessions().get(instanceId)): Session[] {
+  const parent = held?.get(parentId)
+  if (!held || !parent) return []
 
-  const children = getDescendantSessions(instanceId, parentId)
+  const children = getDescendantSessionsFromMap(held, parentId)
   return [parent, ...children]
 }
 
@@ -904,14 +1072,44 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
   return instanceSessions ? buildSessionThreadsFromMap(instanceSessions, rootIds, childIds, directoryOnly?.serviceDirectory ?? directoryOnly?.directory) : []
 }
 
+const sessionThreadProjections = new WeakMap<ReadonlyMap<string, Session>, {
+  listed: ReadonlyMap<string, Session>; ids: string[]; directory?: string; threads: SessionThread[]
+}>()
+const sessionThreadRoots = new WeakMap<object, {
+  listedTopology: object; ids: string[]; directory?: string; roots: string[]
+}>()
+const EMPTY_SESSION_THREADS: SessionThread[] = []
+
 function getSessionThreads(instanceId: string): SessionThread[] {
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => isSessionInWorkspaceScope(instanceId, id)))
+  // A row under an ancestor outside the listed map is shown as a child whose
+  // parent is missing is: not at all.
+  const held = sessions().get(instanceId)
+  const listed = getListedSessionMap(instanceId)
+  if (!held?.size || !listed.size) return EMPTY_SESSION_THREADS
+  const ids = sessionPagination().get(instanceId)?.ids
+  if (!ids?.length) return EMPTY_SESSION_THREADS
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  const cached = sessionThreadProjections.get(held)
+  if (cached && cached.listed === listed && cached.ids === ids && cached.directory === directory) return cached.threads
+  const topology = sessionTopology(held)
+  const listedTopology = sessionTopology(listed)
+  let rootProjection = sessionThreadRoots.get(topology)
+  if (rootProjection?.listedTopology !== listedTopology || rootProjection.ids !== ids || rootProjection.directory !== directory) {
+    rootProjection = { listedTopology, ids, directory, roots: projectSessionListIds(ids, held, directory).filter(id => listed.has(id)) }
+    sessionThreadRoots.set(topology, rootProjection)
+  }
+  const threads = buildSessionThreadsFromMap(listed, rootProjection.roots, undefined, directory, true)
+  sessionThreadProjections.set(held, { listed, ids, directory, threads })
+  return threads
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return []
+  const away = getMovedAwaySessions(instanceId)
   return getSessionSearchResultIds(instanceId).flatMap(id => {
+    if (away.has(id)) return []
     const session = instanceSessions.get(id)
     return session ? [session] : []
   })
@@ -1037,6 +1235,12 @@ function getPersistentExpandedSessionIds(instanceId: string): string[] {
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
+  const view = getSessionListView(instanceId)
+  if (view.projected) {
+    const known = sessions().get(instanceId)
+    const scope = getWorkspaceSessionScope(instanceId)
+    return view.ids.filter(id => known?.has(id) && (!scope || scope.has(id)))
+  }
   const threads = projectUnarchivedSessionThreads(getSessionThreads(instanceId), activeSessionId().get(instanceId))
   if (threads.length === 0) return []
 
@@ -1119,16 +1323,14 @@ function getThreadTotals(instanceId: string, parentSessionId: string): ThreadTot
   return threadTotalsByInstance().get(instanceId)?.get(parentSessionId)
 }
 
-function updateThreadTotalsForParent(instanceId: string, parentSessionId: string): void {
-  const family = getSessionFamily(instanceId, parentSessionId)
-  const totals = computeThreadTotals(family, sessionInfoByInstance().get(instanceId))
-
+function updateThreadTotalsForParents(instanceId: string, parentIds: Iterable<string>): void {
+  const info = sessionInfoByInstance().get(instanceId)
   setThreadTotalsByInstance((prev) => {
-    const next = new Map(prev)
-    const instanceTotals = new Map(next.get(instanceId))
-    instanceTotals.set(parentSessionId, totals)
-    next.set(instanceId, instanceTotals)
-    return next
+    const instanceTotals = new Map(prev.get(instanceId))
+    for (const parentId of parentIds) {
+      instanceTotals.set(parentId, computeThreadTotals(getSessionFamily(instanceId, parentId), info))
+    }
+    return new Map(prev).set(instanceId, instanceTotals)
   })
 }
 
@@ -1136,70 +1338,27 @@ function updateThreadTotalsForSession(instanceId: string, sessionId: string): vo
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions?.has(sessionId)) return
   const familyIds = [...getSessionAncestorIdsFromMap(instanceSessions, sessionId), sessionId]
-  for (const familyId of familyIds) updateThreadTotalsForParent(instanceId, familyId)
+  updateThreadTotalsForParents(instanceId, familyIds)
 }
-
-async function isDeepCleanupCandidate(session: Session, instanceId: string): Promise<boolean> {
-  const instance = instances().get(instanceId)
-  if (!instance?.client) {
-    return false
-  }
-  let messages: any[] = []
-  try {
-    const client = getRootClient(instanceId)
-    messages = (await client.message.list({ sessionID: session.id })).data
-  } catch (error) {
-    log.error(`Failed to fetch messages for session ${session.id}`, error)
-    return false
-  }
-
-  // Specific logic by session type
-  if (session.parentId === null) {
-    // Parent: blank if no messages and no children (fresh !== blank sometimes!)
-    const hasChildren = getChildSessions(instanceId, session.id).length > 0
-    return messages.length === 0 && !hasChildren
-  } else if (session.title?.includes("subagent)")) {
-    // Subagent: "blank" (really: finished doing its job) if actually blank...
-    // ... OR no streaming, no pending perms, no tool parts
-    if (messages.length === 0) return true
-
-    const hasStreaming = messages.some((msg) => {
-      return msg.type === "assistant" && !msg.time?.completed
-    })
-
-    const lastMessage = messages[messages.length - 1]
-    const lastParts = lastMessage?.type === "assistant" ? lastMessage.content : []
-    const hasToolPart = lastParts.some((part: any) =>
-      part.type === "tool" || part.data?.type === "tool"
-    )
-
-    return !hasStreaming && !session.pendingPermission && !session.pendingForm && !hasToolPart
-  } else {
-    // Fork: blank if somehow has no messages or at revert point
-    if (messages.length === 0) return true
-
-    const lastMessage = messages[messages.length - 1]
-    return lastMessage?.id === session.revert?.messageID
-  }
-}
-
 
 const automaticCleanupRequests = new Map<string, {
   client: unknown
   generation: number
+  signal: AbortSignal
   promise: Promise<void>
 }>()
 
 function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fetchIfNeeded = false): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
   if (fetchIfNeeded) return runSessionCleanup(instanceId, excludeSessionId, true)
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const pending = automaticCleanupRequests.get(instanceId)
-  if (pending?.client === client && pending?.generation === generation) return pending.promise
+  if (pending?.client === client && pending?.generation === generation && pending.signal === operation.signal) return pending.promise
 
   // One bounded sweep per connection. Later creations are outside the captured
   // candidate set; they do not enqueue another full historical scan.
-  const request = { client, generation, promise: Promise.resolve() }
+  const request = { client, generation, signal: operation.signal, promise: Promise.resolve() }
   request.promise = runSessionCleanup(instanceId, excludeSessionId, false).finally(() => {
     if (automaticCleanupRequests.get(instanceId) === request) automaticCleanupRequests.delete(instanceId)
   })
@@ -1208,12 +1367,13 @@ function cleanupBlankSessions(instanceId: string, excludeSessionId?: string, fet
 }
 
 async function runSessionCleanup(instanceId: string, excludeSessionId: string | undefined, fetchIfNeeded: boolean): Promise<void> {
+  const operation = captureBackendOperation(instanceId)
   const instanceSessions = sessions().get(instanceId)
   if (!instanceSessions) return
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const candidates = Array.from(instanceSessions)
-  const current = () => instances().get(instanceId)?.client === client
+  const current = () => operation.current() && instances().get(instanceId)?.client === client
     && getOpenCodeInstanceGeneration(instanceId) === generation
 
   if (fetchIfNeeded) {
@@ -1227,7 +1387,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
         dismissible: false,
       }
     )
-    if (!confirmed) return
+    if (!confirmed || !current()) return
   }
 
   // Bound native checks instead of fanning out one read per historical session.
@@ -1237,21 +1397,10 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
     if (!current()) break
     if (sessionId === excludeSessionId) continue
     if (sessions().get(instanceId)?.get(sessionId) !== session) continue
-    if (!fetchIfNeeded) {
-      if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
-      continue
-    }
-    if (!await isDeepCleanupCandidate(session, instanceId)) continue
-    if (!current() || sessions().get(instanceId)?.get(sessionId) !== session) continue
-    try {
-      await deleteSession(instanceId, sessionId)
-      deletedCount++
-    } catch (error) {
-      log.error(`Failed to deep clean session ${sessionId}`, error)
-    }
+    if (await cleanupBlankSession(instanceId, sessionId)) deletedCount++
   }
 
-  if (deletedCount > 0) {
+  if (current() && deletedCount > 0) {
     showToastNotification({ category: "sessions",
       message: deletedCount === 1
         ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
@@ -1265,6 +1414,7 @@ export {
   sessions,
   setSessions,
   isSessionInWorkspaceScope,
+  getListedSessionMap,
   activeSessionId,
   activeParentSessionId,
   agents,
@@ -1292,7 +1442,7 @@ export {
   setSessionInfoByInstance,
   threadTotalsByInstance,
   getThreadTotals,
-  updateThreadTotalsForParent,
+  updateThreadTotalsForParents,
   updateThreadTotalsForSession,
   getSessionDraftPrompt,
   getSessionDraftPromptsForInstance,
@@ -1300,6 +1450,11 @@ export {
   getAuthoritativelyDeletedSessionIdsForInstance,
   getAuthoritativeSessionExpansionIdsForInstance,
   markSessionDeletedAuthoritative,
+  markSessionMovedAway,
+  forgetSessionMovedAway,
+  getMovedAwaySessions,
+  getMovedAwaySessionIds,
+  clearInstanceMovedAwaySessions,
   clearInstanceDeletedSessionAuthority,
   clearInstanceSessionExpansionState,
   hydrateSessionDraftPrompt,

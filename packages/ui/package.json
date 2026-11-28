@@ -1,6 +1,6 @@
 {
   "name": "@codenomad/ui",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -18,7 +18,7 @@
     "@kobalte/core": "0.13.11",
     "@mermaid-js/tiny": "12.3.0",
     "@noble/hashes": "2.4.0",
-    "@opencode/client": "2.3.0",
+    "@opencode/client": "2.4.2",
     "@solidjs/router": "^0.13.0",
     "@suid/material": "^0.19.0",
     "@suid/system": "^0.14.0",

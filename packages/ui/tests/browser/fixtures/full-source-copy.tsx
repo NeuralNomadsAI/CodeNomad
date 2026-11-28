@@ -1,5 +1,7 @@
 import { render } from "solid-js/web"
 import MessageSection from "../../../src/components/message-section"
+import TranscriptFilters from "../../../src/components/transcript-filters"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -12,6 +14,7 @@ import { loadMessages } from "../../../src/stores/session-api"
 import "../../../src/index.css"
 
 const scenario = new URLSearchParams(location.search).get("scenario")
+const toolDisclosureScenario = scenario === "tool-group-disclosure"
 const instanceId = "full-source-instance", sessionId = "full-source-session", messageId = "full-source-message"
 const filePath = "/fixture/example.ts"
 const diagnostics = { [filePath]: Array.from({ length: scenario === "diagnostics-long" ? 1 : 137 }, (_, index) => ({
@@ -29,14 +32,25 @@ const textParts = Array.from({ length: 1237 }, (_, index) => ({
 }))
 const input = { filePath, payload: `INPUT-START ${"Untruncated input 完整 ".repeat(1200)} INPUT-END`, nested: { retained: true } }
 const output = "Distinct output: this is not the tool input"
-const name = scenario === "todo" ? "todowrite" : scenario === "error" || scenario === "input" ? "read" : "edit"
+const patchFiles = [
+  { file: "new.txt", source: "new.txt", status: "added" },
+  { file: "old.txt", source: "old.txt", status: "deleted" },
+  { file: "right/shared.ts", source: "old/previous.ts", status: "modified", addition: "renamedAfter" },
+  { file: "left/shared.ts", source: "left/shared.ts", status: "modified", addition: "modifiedAfter" },
+  { file: "src/Foo.ts", source: "src/foo.ts", status: "modified" },
+].map(({ file, source, status, addition }) => ({
+  file, status, additions: Number(Boolean(addition)), deletions: Number(Boolean(addition)),
+  patch: `Index: /fixture/${source}\n===================================================================\n--- /fixture/${source}\n+++ /fixture/${source}\n`
+    + (addition ? `@@ -1,1 +1,1 @@\n-before\n+${addition}\n` : ""),
+}))
+const name = scenario === "patch" ? "patch" : scenario === "todo" ? "todowrite" : scenario === "error" || scenario === "input" ? "read" : "edit"
 const tool = {
   id: "full-source-tool", type: "tool", name, time: { created: 1, completed: 2 },
   state: scenario === "error"
     ? { status: "error", input: { filePath }, error: { type: "unknown", message: error } }
-    : { status: "completed", input: scenario === "input" ? input : { filePath },
-        metadata: scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
-        content: [{ type: "text", text: scenario === "input" ? output : "Tool completed" }] },
+    : { status: "completed", input: scenario === "patch" ? {} : scenario === "input" ? input : { filePath },
+        metadata: scenario === "patch" ? { files: patchFiles } : scenario === "todo" ? { todos } : scenario === "input" ? {} : { diagnostics },
+        content: [{ type: "text", text: scenario === "patch" ? "Success. Updated the following files:\nA new.txt\nD old.txt\nM right/shared.ts\nM left/shared.ts\nM src/Foo.ts" : scenario === "input" ? output : "Tool completed" }] },
 }
 // A tool inside the omitted range proves derived projections follow the reveal.
 const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: { created: 1, completed: 2 },
@@ -45,6 +59,10 @@ const hiddenTool = { id: "hidden-range-tool", type: "tool", name: "read", time: 
 const reads = (prefix: string, count = 3) => Array.from({ length: count }, (_, index) => ({ ...hiddenTool, id: `${prefix}-read-${index}`,
   state: { ...hiddenTool.state, input: { filePath: `/fixture/${prefix}-${index}.ts` } } }))
 const groupReads = reads("group")
+const shellCalls = ["git status --short", "git diff --stat", "git log -1 --oneline"].map((command, index) => ({
+  ...hiddenTool, id: `group-shell-${index}`, name: "bash",
+  state: { ...hiddenTool.state, input: { command, description: command }, content: [{ type: "text", text: "Command completed" }] },
+}))
 // Native API records enter through the real load/normalize/store/display path.
 const message = { id: messageId, type: "assistant", agent: "build", model: { providerID: "fixture", id: "fixture" },
   time: { created: 1, completed: 2 },
@@ -58,12 +76,21 @@ const message = { id: messageId, type: "assistant", agent: "build", model: { pro
     : scenario === "parts-short-tail" ? [...textParts.slice(0, 1000), ...reads("tail", 499), textParts[1000]]
     // The head ends with a two-read group the test expands before revealing two more.
     : scenario === "parts-merge-expanded" ? [...textParts.slice(0, 498), ...reads("expanded", 4), ...textParts.slice(498)]
+    : toolDisclosureScenario ? [...shellCalls.slice(0, 2), tool]
     : [tool] }
+const groupTime = Date.UTC(2026, 10, 10, 9, 30)
+const messages = scenario === "tool-groups" ? [
+  { ...message, id: "group-answer", time: { created: groupTime + 4000, completed: groupTime + 5000 },
+    content: [{ type: "text", text: "I reviewed the files and checked the working tree. No further changes are needed." }] },
+  { ...message, id: "group-second", time: { created: groupTime + 3000, completed: groupTime + 4000 }, content: [groupReads[2], ...shellCalls] },
+  { ...message, time: { created: groupTime + 1000, completed: groupTime + 3000 }, content: groupReads.slice(0, 2) },
+  { id: "group-prompt", type: "user", time: { created: groupTime }, text: "Review the pending changes and summarize the result." },
+] : [message]
 const requests: string[] = []
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, location: { directory: "/fixture" }, time: { created: 1, updated: 2 } }) },
-  message: { list: async () => { requests.push(sessionId); return { data: [message], cursor: {} } } },
+  message: { list: async () => { requests.push(sessionId); return { data: messages, cursor: {} } } },
 }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -75,12 +102,17 @@ setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, {
 setActiveSession(instanceId, sessionId)
 await applyUiSettings({ showMessageTimeline: scenario === "parts", toolInputsVisibility: scenario === "input" ? "expanded" : "hidden", toolOutputExpansion: "expanded",
   diagnosticsExpansion: "collapsed",
-  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { edit: "expanded", read: scenario === "parts-short-tail" ? "hidden" : "expanded", other: "expanded" } } })
+  toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { patch: "expanded", edit: "expanded",
+    read: scenario === "parts-short-tail" ? "hidden" : scenario === "tool-groups" ? "collapsed" : "expanded",
+    bash: "collapsed", other: "expanded" } },
+  ...(toolDisclosureScenario ? transcriptPresetPatch("minimal") : {}),
+})
 await loadMessages(instanceId, sessionId, { force: true })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <main style={{ display: "flex", height: "800px", width: "1000px" }}>
+  {(scenario === "tool-groups" || toolDisclosureScenario) && <header style={{ display: "flex", "justify-content": "end", width: "1000px" }}><TranscriptFilters /></header>}
+  <main style={{ display: "flex", height: scenario === "tool-groups" ? "500px" : "800px", width: "1000px" }}>
     <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={true} />
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 // Expected payloads are the original inputs, never bounded renderer projections.
-;(window as any).fixture = { diagnostics, todos, error, textParts, input, output, sessionId, messageId, requests }
+;(window as any).fixture = { diagnostics, todos, error, textParts, input, output, patchFiles, sessionId, messageId, requests }

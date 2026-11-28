@@ -9,8 +9,9 @@ import { withInstallationLock } from "./installation-lock"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
+import { RECOMMENDED, newerPatch } from "../opencode/runtime-version-fixture"
 
-const validV2 = () => ({ valid: true, version: "2.3.0" })
+const validV2 = () => ({ valid: true, version: RECOMMENDED })
 
 async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
@@ -58,7 +59,7 @@ test("normal global-user npm install publishes terminal command and retries PATH
     execute: async (_file: string, args: string[]) => {
       installs++
       if (args[0] === "upgrade") {
-        assert.deepEqual(args, ["upgrade", "2.3.1", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", newerPatch(), "--method", "npm"])
         await npmFixture(prefix, args[1]!)
         return
       }
@@ -86,15 +87,15 @@ test("normal global-user npm install publishes terminal command and retries PATH
     assert.equal(installs, 1)
     assert.equal(resolveDefaultInstallation(options).path, findPathOpenCode(options))
     assert.equal(resolveDefaultInstallation(options).source, "path")
-    await installSharedOpenCode("2.3.1", options)
+    await installSharedOpenCode(newerPatch(), options)
     assert.equal(installs, 2)
     await installSharedOpenCode(minimum, options)
     assert.equal(installs, 2, "never downgrade a newer common installation")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.3.1")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, newerPatch())
     await rm(findPathOpenCode(options)!)
     await installSharedOpenCode(minimum, options)
     assert.equal(installs, 3, "missing command is repaired at the newer installed version")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.3.1")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, newerPatch())
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

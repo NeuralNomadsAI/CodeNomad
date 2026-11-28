@@ -54,6 +54,9 @@ test("SideCar frames stay same-origin while preview frames remain isolated", asy
     const previewSandbox = new Set(await sandboxTokens(page, "#preview-root"))
     assert.equal(previewSandbox.has("allow-same-origin"), false)
     assert.equal(previewSandbox.has("allow-scripts"), true)
+    // A remote client's host path capability shares the application origin, so it never gains it either.
+    await page.locator("#path-preview-root iframe").waitFor()
+    assert.equal(new Set(await sandboxTokens(page, "#path-preview-root")).has("allow-same-origin"), false)
   } finally {
     await page.close()
   }

@@ -210,12 +210,14 @@ function semanticTree(state: State): SemanticNode[] {
   return nodes
 }
 
-export function read(operation: PageOperation): {document: string; result: Record<string,unknown>} {
+export function read(operation: PageOperation & {expectedDocument?: string}): {document: string; result: Record<string,unknown>} {
   if (globalState[KEY]?.document !== document) {
     globalState[KEY]=makeState()
   }
   const state=globalState[KEY]!
   watch(state,document); flush(state)
+  if (("node" in operation || operation.expectedDocument !== undefined) && operation.expectedDocument !== state.token)
+    return {document:state.token,result:{}}
   let result: Record<string,unknown>
   try { switch (operation.op) {
     case "tree": result={nodes:semanticTree(state)}; break

@@ -1,16 +1,24 @@
 {
   "functions": {
     "option-click": {
-      "plain": "90863b0a65aa2a1c497b545245a8296ad2cfeeab813547ede451d490e2632b1d",
-      "marked": "0a881e6b538aa589f0d895558513d6a2e1d94cbb793f1339d6f0751fefa2cfcf"
+      "plain": "9e0d2cd001b5950fb7b265b53b469984179bff8183b3154e7d90e9c692c84a79",
+      "marked": "9a0fb9b1ef9536c49ad3ae92bba2f260babcd0bc99cfde114567352b7cc497e7"
     },
     "programmatic-click": {
-      "plain": "734dbde138679fda25063747d26b0ffa822061aea13db26ed32e8288dcb1980f",
-      "marked": "80870581fdc8a5751f5da969309b20cbdf0ac425aefc5c9432f3afb9c14b35bd"
+      "plain": "85445e85e4dfc760c1beee5376aeae9622ccc23467443138c60c6f8342e5f602",
+      "marked": "eabba13fd409223a552c5fbbdc3b2cf45fbaafe803f4ca277d04114125204f01"
     },
     "select": {
-      "plain": "7444c1f9021566b13311d45daf37c2ab866a1c74dbe5783529317d6491a4941c",
-      "marked": "a141bc08c8d7c5bff6e6f019dc12ef0a75720e69f4e895437cb1d19b077b149a"
+      "plain": "00dc80a3a639c149c0c70802ceb70e09a25d052f07ab004b1bcdc797f6502452",
+      "marked": "16fc863adeeb35e15870bc1196a7ec044b2092ab8743be1c19afefa67f2e3102"
+    },
+    "select-values": {
+      "plain": "4242559206951f1edbcf742f196ddcb02a81a126b38d22b174b76df29bf735be",
+      "marked": "9bcf6382a3577a45e6ad7ae963e54bd2e03a9f5b2412e121c0f40629b660ffd8"
+    },
+    "file-input": {
+      "plain": "0552888aab19ff766ec73671730b4831c2a641647ae7e57a267bf934b65e0d99",
+      "marked": "bc9641ace42eee2bb1f0488d28eb40f48390b2c29039dba011b987d1c49ba4a0"
     },
     "focus": {
       "plain": "6fb37154d05f9387248ef22993ebcb95a850c49b561a5627ebaf36ad5854228f",
@@ -29,32 +37,44 @@
       "marked": "7e204012fa0990c918217f010ed84209bfc6eef3c609bac9af12cdc2e4db661c"
     },
     "set-value": {
-      "plain": "b942b3037f70886892efd5f5e79e8fb1a123f24983bf225cf90c72be25425873",
-      "marked": "38b3b9535b7269be7352cec9b41603ac88ae9750cc7b58f9b428a4e459d4cd75"
+      "plain": "86dae2cf97adccb5cbe67316dc7accf07b4e0d5e99102ddb22cdc4ef3beecc29",
+      "marked": "c9bfd675a8e904ccc6b046aed40556b0f0642f7289ba30fe92e4b07436ac76b6"
     },
     "delete-selection": {
-      "plain": "708ed8fe629bf30c23328f99a7f0c4f41189e709cde4c533465404797b1e6e9d",
-      "marked": "e329fbbc7e98ad022fc462f3bf5c4782dec9ddc2dd28ec2133f82e5d55b63da2"
+      "plain": "79d2fef2a24f4627572d1f1fcf51a56800c3202f5a626a4fd26c796b096f87a0",
+      "marked": "99993c01fc8fae49986646180db1db8a894e26d0c0667d2cb1e86ab63ed3226e"
     },
     "read-value": {
       "plain": "5e2558dd3d0f32375fb371b7f7a9e3244fb4b51e78d601add2b4881d9ad88e5b",
       "marked": "6ea9a054e607c5153a2075b502c0518f22c4bbb8c4118d1b9d7fae2b143f96b6"
     },
     "receives": {
-      "plain": "49653a8b7ef3dfd00a12239165d2f5724f21ae04984360dd1129ed117642787d",
-      "marked": "e82e4bdb6c7e188a3ca8b40c3926de1b1e1e29c432eddbb7d789286925526fcf"
+      "plain": "b1173274d1859094f8f62e2b3262b287d0630a93f7923c86c4f9cbab873a97b3",
+      "marked": "8ebd28defc8b3e55d1ebbcca635286b84544584d0c9628fd14b974fcd415726c"
+    },
+    "receives-wheel": {
+      "plain": "6db9c185ac5e04adb5cbb38bf0f431e2502b5ace83dd0ba513e5c43f58bb7f21",
+      "marked": "f3139a7e7466cfbe1766404f1eb50e52ed9b0bcb419ef92c6b1d1c5e59f0cf64"
     },
     "contains": {
       "plain": "5d62cfc6187d07d0a964a1eb3db5f6a49a84f375c437d3f606d3e7b07460ed80",
       "marked": "7c9d1e411468befe4839f1c066446cc828617a04f0e3c8f7c4db01b2f74b5f8a"
+    },
+    "checked-state": {
+      "plain": "cd5885823746ee36acfc9a1eb08bf2a7223418a296e35e8f255c4bf9e0477a82",
+      "marked": "63baecbbc759c1935f0cef3933d6571493eda9f5fded84b2216caa854c02d779"
+    },
+    "body-text-includes": {
+      "plain": "b7d89286ec60de695b9e6f3808d3cd474495b3c7ca3fe27ac027ab8a933cd4de",
+      "marked": "3377a702eef3862f24463c354683d6c48f06d4359b6f17ecede5e79809f65d2a"
     }
   },
   "globals": {
     "active-element": "07828a2500ef731867740e4ab46774880eac064611688e422bcecb71c6cdc849",
     "document-root": "59531dfec0550e8542be5b831f2a3e873ea10ea2ee64d665ffb016f2e2222394",
     "input-acceptance": "bb376d5fec62936887da6418209b9be305b372aff93cbd98adb2edaf013a0b67",
-    "mark-input": "c14fcf467ef073e1b4f0619e60795fa63e3bb17a406f55dcbf75f04b4bc6fb90",
-    "unmark-input": "c0280c55c747c4208020d8463caf9ce044e3ab36310b09f9ef1b2bb89897469c"
+    "mark-input": "95eb910d88d45bf0ec2cd87c63b77f64eb70a15c7f581a7c0775213d672a98b9",
+    "unmark-input": "036cc25db7bfd173d8f66bd4b1605957c82132ccf7dba68e3895b0a52aa2365a"
   },
   "snapshots": {
     "all": {

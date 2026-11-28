@@ -372,6 +372,6 @@
 }
 
 .selector-loading-spinner {
-  @apply w-4 h-4 animate-spin;
+  @apply w-4 h-4;
   color: var(--accent-primary);
 }

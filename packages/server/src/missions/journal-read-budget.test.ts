@@ -166,6 +166,20 @@ test("capacity checks and appends read only their mission's range", async () => 
   assert.deepEqual([appended.fullScans, appended.entries], [0, own])
 })
 
+test("declaration and briefing share the publication read with the append capacity check", async () => {
+  const { f, mission, own } = await liveMission(12)
+  const control = f.control()
+  const session = mission.coordinatorSessionId
+  const added = await cost(f, () => control.declare(session, { missionID: mission.id, taskKey: "publication",
+    title: "Publication", brief: "A single publication read", role: "specialist", blockedBy: [] }))
+  const briefed = await cost(f, () => control.briefing(session, { missionID: mission.id, requestID: "publication",
+    basedOnRevision: added.value.mission.revision, summary: "The declaration was published.",
+    achieved: [], ongoing: [], obstacles: [], next: [] }))
+  assert.equal(added.value.mission.revision, mission.revision + 2)
+  assert.equal(briefed.value.mission.revision, added.value.mission.revision + 1)
+  assert.deepEqual([added.entries, briefed.entries], [2 * (HISTORY + own), 2 * (HISTORY + own + 1)])
+})
+
 test("membership refusals and damage gates read what the hints have not seen", async () => {
   const { f, mission } = await liveMission(2)
   f.native.set("ses_claimed", { id: "ses_claimed", projectID: "project-1", title: "Coordinator", location })

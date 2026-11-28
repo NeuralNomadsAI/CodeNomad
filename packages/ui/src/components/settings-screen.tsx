@@ -3,7 +3,7 @@ import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
 import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
-import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, onMount, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
   activeSettingsSection,
@@ -34,9 +34,16 @@ import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { NativeTitlebar } from "./native-titlebar"
 import { createSettingsScrollRestoration } from "./settings/settings-scroll-restoration"
+import { Server } from "lucide-solid"
+import { ServersSettingsSection } from "./settings/servers-settings-section"
+import { useConfig } from "../stores/preferences"
 import { createPreferencesProjectContext } from "./settings/preferences-project-context"
 import { activeInstanceId, instances } from "../stores/instances"
 import { getActiveCatalogLocation } from "../stores/sessions"
+import { requestServerSelection } from "../lib/native/server-selection"
+import { backendRegistry } from "../stores/remote-backends"
+import { parseInstanceKey } from "../lib/backend-identity"
+import { getServerMeta, serversUsable } from "../lib/server-meta"
 
 type SettingsSectionOption = {
   id: SettingsSectionId
@@ -46,7 +53,8 @@ type SettingsSectionOption = {
 
 interface SettingsScreenProps {
   standalone?: boolean
-  providerContext?: { instanceId?: string; location?: LocationRef }
+  providerContext?: { instanceId?: string; location?: LocationRef; serverId?: string }
+  projectUnavailable?: boolean
   onClose?: () => void | Promise<void>
   onSectionChange?: (section: SettingsSectionId) => void | Promise<void>
   scrollPosition?: { scrollTop?: number }
@@ -56,12 +64,19 @@ interface SettingsScreenProps {
 export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
   const { t } = useI18n()
   const phoneQuery = useMediaQuery("(max-width: 640px)")
+  const config = useConfig()
+  const serversEnabled = () => config.preferences().multiBackend === true && serversUsable()
+  const [serverCapabilitiesResolved, setServerCapabilitiesResolved] = createSignal(false)
+  onMount(() => { void getServerMeta().catch(() => {}).finally(() => setServerCapabilitiesResolved(true)) })
   const embeddedProject = createPreferencesProjectContext(() => {
     const instanceId = !props.standalone && !props.providerContext ? activeInstanceId() ?? undefined : undefined
-    return { section: "general", instanceId, workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
+    return { section: "general", instanceId, serverId: instanceId ? backendRegistry.serverId(parseInstanceKey(instanceId).backendId) : undefined,
+      workspacePath: instanceId ? instances().get(instanceId)?.folder : undefined,
       location: instanceId ? getActiveCatalogLocation(instanceId) : undefined }
   }, () => !props.standalone && !props.providerContext && settingsOpen() && activeSettingsSection() === "general", () => {})
   const memoryContext = () => props.providerContext ?? embeddedProject()
+  const projectUnavailable = () => props.projectUnavailable || !props.standalone && !props.providerContext &&
+    parseInstanceKey(activeInstanceId() ?? "").backendId !== "local" && !embeddedProject()
 
   const sections = createMemo(() => {
     const items: SettingsSectionOption[] = [
@@ -69,7 +84,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "chat", icon: MessageSquare, label: t("settings.nav.chat") },
       { id: "hotkeys", icon: Keyboard, label: t("settings.nav.hotkeys") },
       { id: "notifications", icon: Bell, label: t("settings.nav.notifications") },
-      { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
+      { id: "speech", icon: Volume2, label: t("settings.nav.voice") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
       { id: "missions", icon: Flag, label: t("settings.nav.missions") },
@@ -80,6 +95,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "info", icon: Info, label: t("settings.nav.info") },
     ]
     items.splice(5, 0, { id: "remote", icon: MonitorUp, label: t("settings.nav.remote") })
+    if (serversEnabled()) items.splice(6, 0, { id: "servers", icon: Server, label: t("settings.nav.servers") })
     return items
   })
 
@@ -100,19 +116,24 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
           <div class="settings-section-stack">
             <RemoteControlSettingsSection />
             <RemoteAccessSettingsSection />
-            <Show when={canOpenRemoteWindows()}>
+            <Show when={canOpenRemoteWindows() && config.preferences().multiBackend !== true}>
               <SavedRemoteServersCard />
             </Show>
           </div>
         )
       case "opencode":
         return <OpenCodeSettingsSection />
+      case "servers":
+        return <Show when={serversEnabled()} fallback={<GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />}><ServersSettingsSection onSelectServer={async intent => {
+          await requestServerSelection(intent)
+          if (props.standalone) await handleCloseSettings()
+        }} /></Show>
       case "providers":
-        return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "missions":
-        return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("commands.openWorkspace.projectRequired.message")}</p>}><MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} /></Show>
       case "usage":
-        return <UsageSettingsSection instanceId={props.providerContext?.instanceId} />
+        return <Show when={!props.projectUnavailable} fallback={<p role="status">{t("settings.usage.noProject")}</p>}><UsageSettingsSection instanceId={props.providerContext?.instanceId} /></Show>
       case "sidecars":
         return <SideCarsSettingsSection />
       case "config-files":
@@ -123,7 +144,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <InfoSettingsSection />
       case "general":
       default:
-        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} />
+        return <GeneralSettingsSection startupStateOwner={props.standalone ? "opener" : "self"} instanceId={memoryContext()?.instanceId} location={memoryContext()?.location} serverId={memoryContext()?.serverId} projectUnavailable={projectUnavailable()} />
     }
   }
 
@@ -186,8 +207,9 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
     if (target.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId)
   }
 
+  // The controlled selector must not commit General while Servers admission is still loading.
   const content = () => (
-    <>
+    <Show when={activeSettingsSection() !== "servers" || config.preferences().multiBackend !== true || serverCapabilitiesResolved()}>
             <Show when={props.standalone}><h1 class="sr-only">{t("settings.title")}</h1></Show>
 
             <aside class="settings-screen-nav">
@@ -314,7 +336,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
 
               <div ref={settingsScroll} class="window-body settings-screen-scroll">{renderSection()}</div>
             </div>
-    </>
+    </Show>
   )
 
   if (props.standalone) {

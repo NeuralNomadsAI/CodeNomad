@@ -19,12 +19,12 @@ Les affectations sont enregistrées dans la configuration d’interface CodeNoma
 
 ## Valeurs par défaut du moteur de rendu {#renderer-defaults}
 
-`Mod` désigne `Ctrl` sous Windows/Linux et `Cmd` sous macOS. Ce sont des valeurs par défaut, pas des garanties que le système/l’hôte natif transmettra la touche. La portée compte : une même touche peut servir une autre action sur l’accueil, dans la zone de saisie ou la recherche.
+`Mod` désigne `Ctrl` sous Windows/Linux et `Cmd` sous macOS. Ce sont des valeurs par défaut, pas des garanties que le système/l’hôte natif transmettra la touche. La portée compte : une même touche peut servir une autre action dans un onglet vide, dans la zone de saisie ou la recherche.
 
 | Action | Valeur par défaut |
 | --- | --- |
 | Ouvrir la palette de commandes | `Mod+Shift+P` |
-| Nouvelle instance / Parcourir les dossiers sur l’accueil | `Mod+N` |
+| Nouvelle instance / Ouvrir un onglet vide | `Mod+N` |
 | Fermer l’onglet de l’application | `Mod+W` |
 | Onglet d’application précédent / suivant | `Mod+[` / `Mod+]` |
 | Onglet d’application 1–9 | `Mod+1` à `Mod+9` |
@@ -73,3 +73,5 @@ Les fenêtres ordinaires de navigateur gardent aussi leurs raccourcis. Si une af
 Les raccourcis de la rangée de chiffres et des crochets utilisent les positions physiques des touches pour la capture, l’exécution et les conflits, y compris sur AZERTY/QWERTZ. Les autres touches utilisent leurs valeurs logiques. Capturez sur le clavier prévu, puis vérifiez le résultat affiché.
 
 Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Sur ordinateur, l’envoi place le focus sur la conversation pour que les flèches, les touches de défilement par page et Espace la fassent défiler ; taper un caractère revient à la zone de saisie avec ce caractère, et **Activer la saisie** y revient avant d’utiliser l’historique des prompts.
+
+[Nouvelle instance](projects.md#new-instance-launcher).

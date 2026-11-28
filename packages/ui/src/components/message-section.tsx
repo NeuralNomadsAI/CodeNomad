@@ -1,6 +1,8 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
+import { For, Show, batch, createEffect, createMemo, createSignal, mapArray, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
+import { captureBackendOperation } from "../lib/backend-operation"
+import { backendEvents } from "../lib/server-events"
 import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
@@ -11,7 +13,7 @@ import MessageBlock from "./message-block"
 import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { type TimelineSegment } from "./message-timeline"
-import { buildTimelineSegments, getTimelineRecordSignature, parseTimelineSegmentId, timelineRunStart } from "./message-timeline-projection"
+import { buildTimelineSegments, parseTimelineSegmentId, sameTimelineList, sameTimelineSegment, timelineRunStart } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
@@ -22,7 +24,7 @@ import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ScrollSnapshot } from "../stores/message-v2/types"
 import { partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts, isRecordPartDisplayed, MESSAGE_PART_REVEAL_STEP, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds, isRecordPartDisplayed, MESSAGE_PART_REVEAL_STEP, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache"
 import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches, findRankedHistoryMatches, rankedHistoryNoticeKeys } from "../stores/session-history"
@@ -115,17 +117,27 @@ export interface MessageSectionProps {
 
 export default function MessageSection(props: MessageSectionProps) {
   const { preferences } = useConfig()
-  const { locale, t } = useI18n()
+  const { t } = useI18n()
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
+  const toolGroupVisibility = createMemo(() => preferences().toolGroupVisibility)
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
-  const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
+  const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId), [], { equals: sameTimelineList })
+  // Each resident message publishes structure independently. Text and tool
+  // payload changes that keep its shape never invalidate the outline.
+  const residentTimelineEntries = createMemo(mapArray(messageIds, messageId => ({
+    messageId,
+    segments: createMemo(() => buildTimelineSegments(props.instanceId, store().getMessage(messageId)), [], {
+      equals: (a, b) => a.length === b.length && a.every((segment, index) => sameTimelineSegment(segment, b[index])),
+    }),
+  })))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
     const ids = messageIds()
+    const entries = residentTimelineEntries()
     const visible = ids.filter((messageId, index) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
@@ -135,7 +147,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       // Thinking shows only with its preference, checked below.
-      if (buildTimelineSegments(props.instanceId, record, t).some(segment => segment.type !== "reasoning")) {
+      if (entries[index].segments().some(segment => segment.type !== "reasoning")) {
         return true
       }
 
@@ -165,7 +177,18 @@ export default function MessageSection(props: MessageSectionProps) {
       ...visible.filter((messageId) => !props.pendingPrompts!.has(messageId)),
       ...Array.from(props.pendingPrompts.keys()).filter((messageId) => visibleSet.has(messageId)),
     ]
-  })
+  }, [], { equals: sameTimelineList })
+
+  // Only assistant tool calls anchor per-message permission receipts; user,
+  // queued and non-assistant metadata rows never carry tool permissions.
+  const canHavePermissionReceipts = (messageId: string): boolean => {
+    if (props.pendingPrompts?.has(messageId)) return false
+    const resolvedStore = store()
+    const record = resolvedStore.getMessage(messageId)
+    if (!record || record.role !== "assistant") return false
+    const nativeType = resolvedStore.getMessageInfo(messageId)?.nativeType
+    return !nativeType || nativeType === "assistant"
+  }
 
   const sessionRevision = createMemo(() => store().getSessionRevision(props.sessionId))
   const technicalCleanupTranscript = createMemo<TechnicalCleanupTranscriptItem[]>(() => {
@@ -216,6 +239,7 @@ export default function MessageSection(props: MessageSectionProps) {
     sessionRevision()
     const resolvedStore = store()
     const pendingForms = pendingFormToolTargets()
+    const groupTools = toolGroupVisibility() !== "hidden"
     const items = visibleMessageIds().flatMap((messageId) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
@@ -226,7 +250,7 @@ export default function MessageSection(props: MessageSectionProps) {
       const projected = display.orderedParts.map((part) => {
         if (!isTechnicalGroupingVisiblePart(part)) return []
         const partId = typeof part.id === "string" ? part.id : ""
-        const kind = getTechnicalGroupKind(part)
+        const kind = getTechnicalGroupKind(part, groupTools)
         const pending = part.type === "tool" && Boolean(
           part.pendingPermission?.active
           || (partId && resolvedStore.getPermissionState(messageId, partId)?.active)
@@ -361,50 +385,24 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
-    sessionRevision()
-    const ids = visibleMessageIds()
-    const resolvedStore = store()
-    const activeLocale = locale()
-    // Revealing omitted parts changes the rendered window without a record revision.
-    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
-
-    return untrack(() => {
-      const activeIds = new Set(ids)
-      const segments: TimelineSegment[] = []
-      for (const messageId of ids) {
-        const record = resolvedStore.getMessage(messageId)
-        if (!record) continue
-        const revealed = revealedByMessage.get(messageId) ?? 0
-        const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
-          segments.push(...cached.segments)
-          continue
-        }
-        const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
-          ? cached.segments
-          : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
-        segments.push(...current)
-      }
-      for (const messageId of timelineSegmentCache.keys()) {
-        if (!activeIds.has(messageId)) timelineSegmentCache.delete(messageId)
-      }
-      return segments
-    })
-  })
+    const byId = new Map(residentTimelineEntries().map(entry => [entry.messageId, entry.segments]))
+    return visibleMessageIds().flatMap(messageId => byId.get(messageId)!())
+  }, [], { equals: sameTimelineList })
   // Jumping between user messages needs the same structural index, timeline shown or not.
   const [outlineDemanded, setOutlineDemanded] = createSignal(false)
+  const outlineActive = createMemo(() => props.isActive !== false && Boolean(props.onLoadMessageAnchor)
+    && (showMessageTimelinePreference() || outlineDemanded()))
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
-    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && (showMessageTimelinePreference() || outlineDemanded()) })
+    active: outlineActive })
   const projectSessionOutline = createSessionOutlineProjection()
-  const timelineSegments = createMemo(() => {
-    const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
-    const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()
-    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), messageIds(), t) : residentTimelineSegments()
+  const revertBoundary = createMemo(() => sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID)
+  const outlineEntries = createMemo(() => {
+    const boundary = revertBoundary()
+    const entries = outline.entries()
+    return boundary ? entries.filter(entry => entry.id < boundary) : entries
   })
+  const timelineSegments = createMemo(() => projectSessionOutline(outlineEntries(), residentTimelineSegments(), messageIds()))
   const timelineSegmentsByMessage = createMemo(() => {
     const result = new Map<string, TimelineSegment[]>()
     for (const segment of timelineSegments()) {
@@ -539,6 +537,7 @@ export default function MessageSection(props: MessageSectionProps) {
     readerOwnsActiveSegment = true
     setNavigation({ kind: "unrestored" })
   }
+  createEffect(on(() => backendEvents.signalForInstance(props.instanceId), resetNavigation, { defer: true }))
 
   function registerListApi(api: VirtualFollowListApi) {
     if (listApi() !== api) untrack(resetNavigation)
@@ -732,11 +731,13 @@ export default function MessageSection(props: MessageSectionProps) {
   })
 
   function restoreTranscriptPosition(api: VirtualFollowListApi) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const restoreSessionId = props.sessionId
     const restoring: RestoringNavigation = { kind: "restoring", sessionId: restoreSessionId, loading: null }
     setNavigation(restoring)
     releaseActiveSegment()
-    const isCurrentRestore = () => navigation() === restoring && isActive() && api === listApi()
+    const isCurrentRestore = () => operation.current() && navigation() === restoring && isActive() && api === listApi()
     const finish = (applied: boolean) => {
       if (!isCurrentRestore()) return
       setNavigation({ kind: "idle" })
@@ -761,16 +762,16 @@ export default function MessageSection(props: MessageSectionProps) {
           if (loadsLatest) {
             const controller = new AbortController()
             restoring.loading = controller
-            try { await props.onLoadLatestMessages!(controller.signal) }
+            try { await props.onLoadLatestMessages!(AbortSignal.any([controller.signal, operation.signal])) }
             finally { if (restoring.loading === controller) restoring.loading = null }
           } else if (props.onLoadMessageAnchor) {
             const controller = new AbortController()
             restoring.loading = controller
             try {
-              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, controller.signal) }
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, AbortSignal.any([controller.signal, operation.signal])) }
               catch (error) {
                 if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
-                await props.onLoadLatestMessages(controller.signal)
+                await props.onLoadLatestMessages(AbortSignal.any([controller.signal, operation.signal]))
                 if (!isCurrentRestore()) return
                 restoredSnapshot = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
               }
@@ -909,7 +910,7 @@ export default function MessageSection(props: MessageSectionProps) {
   /** A marker stands for its whole native run: reveal the omitted parts its run starts among. */
   function revealTimelineSegment(messageId: string, segmentId: string) {
     const record = store().getMessage(messageId)
-    const start = record ? timelineRunStart(record, segmentId, t) : undefined
+    const start = record ? timelineRunStart(record, segmentId) : undefined
     if (!record || start === undefined) return
     for (let step = 0; step <= record.partIds.length / MESSAGE_PART_REVEAL_STEP && !isRecordPartDisplayed(props.instanceId, record, start); step++) {
       revealHiddenRecordParts(props.instanceId, messageId)
@@ -1144,6 +1145,10 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     const sessionId = props.sessionId
     const controller = new AbortController()
+    const operation = captureBackendOperation(props.instanceId, controller.signal)
+    if (!operation.current()) return
+    const revoke = () => controller.abort()
+    operation.signal.addEventListener("abort", revoke, { once: true })
     const paging: PagingNavigation = {
       kind: "paging",
       sessionId,
@@ -1157,7 +1162,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setNavigation(paging)
     // A jump keeps its selected marker; other pages show the reading line's.
     if (direction !== "around") readerOwnsActiveSegment = true
-    const isCurrent = () => navigation() === paging && isActive() && api === listApi()
+    const isCurrent = () => operation.current() && navigation() === paging && isActive() && api === listApi()
     if (direction !== "latest") api.setAutoScroll(false)
     setOlderMessageLoadFailed(false)
     retryAnchorRestore = null
@@ -1195,6 +1200,7 @@ export default function MessageSection(props: MessageSectionProps) {
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
+      operation.signal.removeEventListener("abort", revoke)
       if (navigation() === paging) settlePaging(paging)
     }
   }
@@ -1211,6 +1217,7 @@ export default function MessageSection(props: MessageSectionProps) {
 
   createEffect(() => {
     const query = searchQuery()
+    const operation = captureBackendOperation(props.instanceId)
     if (query.trim().length < SEARCH_MIN_CHARS) {
       setDebouncedSearchQuery("")
       setActiveSearchIndex(0)
@@ -1222,6 +1229,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     setIsSearchPending(true)
     const timeout = window.setTimeout(() => {
+      if (!operation.current()) return
       setDebouncedSearchQuery(query)
     }, SEARCH_DEBOUNCE_MS)
     onCleanup(() => window.clearTimeout(timeout))
@@ -1262,8 +1270,10 @@ export default function MessageSection(props: MessageSectionProps) {
     const sessionId = props.sessionId
     const generation = ++searchGeneration
     const controller = new AbortController()
+    const operation = captureBackendOperation(instanceId, controller.signal)
+    if (!operation.current()) return
     let frame: number | undefined
-    const isCurrentSearch = () => generation === searchGeneration
+    const isCurrentSearch = () => operation.current() && generation === searchGeneration
       && isActive()
       && isSearchOpen()
       && props.instanceId === instanceId
@@ -1283,7 +1293,7 @@ export default function MessageSection(props: MessageSectionProps) {
           // so Solid keeps existing result buttons and their keyboard focus.
           setSearchMatches(previous => page.hits.filter(hit => hit.role !== "system" || systemVisibility !== "hidden").map((hit, index) => previous[index] ?? ({
             id: `${hit.sessionID}:${hit.messageID}:${hit.partIndex}`,
-            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind,
+            sessionId: hit.sessionID, messageId: hit.messageID, partType: hit.kind, partIndex: hit.partIndex,
             role: hit.role === "user" ? "user" : "assistant", start: 0, end: query.length,
             occurrence: 0, preview: hit.excerpt,
           })))
@@ -1296,7 +1306,7 @@ export default function MessageSection(props: MessageSectionProps) {
       })
     }
     const request = workspace
-      ? findRankedHistoryMatches(instanceId, query, technical, controller.signal, cursor).then(result => {
+      ? findRankedHistoryMatches(instanceId, query, technical, operation.signal, cursor).then(result => {
         if (!isCurrentSearch()) return
         setRankedSearchResult(result)
         if (result.status === "restart_required") {
@@ -1312,7 +1322,7 @@ export default function MessageSection(props: MessageSectionProps) {
       })
       : findHistoryMatches(instanceId, {
         sessionID: sessionId, query, purpose: "search", includeTechnical: technical, cursor,
-      }, controller.signal, page => publish(page, false)).then(page => publish(page, true))
+      }, operation.signal, page => publish(page, false)).then(page => publish(page, true))
     void request.catch((error) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
@@ -1452,7 +1462,6 @@ export default function MessageSection(props: MessageSectionProps) {
 
   onCleanup(() => {
     setIsSearchOpen(false)
-    timelineSegmentCache.clear()
     clearQuoteSelection()
   })
 
@@ -1656,6 +1665,7 @@ export default function MessageSection(props: MessageSectionProps) {
               systemMessagesVisibility={() => preferences().systemMessagesVisibility}
               thinkingDefaultExpanded={() => resolveThinkingExpansionDefault(preferences())}
               usageMetricsVisibility={usageMetricsVisibility}
+              toolGroupVisibility={toolGroupVisibility}
               toolVisibility={(toolName) => resolveToolVisibility(preferences(), toolName)}
               onRevert={props.onRevert}
               onFork={props.onFork}
@@ -1679,7 +1689,9 @@ export default function MessageSection(props: MessageSectionProps) {
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
               alignInTranscript={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
-            <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            <Show when={canHavePermissionReceipts(messageId)}>
+              <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
+            </Show>
             </>
           )}
           renderOverlay={() => (

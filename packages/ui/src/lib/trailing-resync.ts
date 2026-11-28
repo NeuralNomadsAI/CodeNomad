@@ -4,44 +4,62 @@
  * while a retry waits runs at once, a successful pass restores the whole budget and
  * `cancel` drops a waiting retry. */
 export class TrailingResyncCoordinator {
-  private readonly active = new Map<string, { dirty: boolean; settled: Promise<void> }>()
-  private readonly retries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout> }>()
+  private readonly active = new Map<string, { dirty: boolean; settled: Promise<void>; controller: AbortController; parent?: AbortSignal }>()
+  private readonly retries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout>; release?: () => void; parent?: AbortSignal }>()
 
   constructor(
-    private readonly run: (key: string) => Promise<void>,
+    private readonly run: (key: string, signal: AbortSignal) => Promise<void>,
     private readonly onError: (key: string, error: unknown) => void,
     private readonly retryDelaysMs: readonly number[] = [],
   ) {}
 
-  request(key: string): Promise<void> {
-    const retry = this.retries.get(key)
+  request(key: string, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return Promise.resolve()
+    let retry = this.retries.get(key)
+    if (retry && retry.parent !== signal) {
+      this.cancel(key)
+      retry = undefined
+    }
     if (retry?.timer) {
       clearTimeout(retry.timer)
       retry.timer = undefined
+      retry.release?.()
+      retry.release = undefined
     }
     const existing = this.active.get(key)
-    if (existing) {
+    if (existing && existing.parent === signal && !existing.controller.signal.aborted) {
       existing.dirty = true
       return existing.settled
     }
-    const state = { dirty: true, settled: Promise.resolve() }
+    existing?.controller.abort()
+    const state = { dirty: true, settled: Promise.resolve(), controller: new AbortController(), parent: signal }
+    const abort = () => {
+      if (this.active.get(key) === state) this.active.delete(key)
+      state.controller.abort()
+    }
+    signal?.addEventListener("abort", abort, { once: true })
     state.settled = Promise.resolve().then(async () => {
       let failed = false
       try {
-        while (state.dirty) {
+        while (state.dirty && !state.controller.signal.aborted) {
           state.dirty = false
           try {
-            await this.run(key)
+            await this.run(key, state.controller.signal)
             failed = false
           } catch (error) {
-            failed = true
-            this.onError(key, error)
+            if (!state.controller.signal.aborted) {
+              failed = true
+              this.onError(key, error)
+            }
           }
         }
       } finally {
-        this.active.delete(key)
-        if (failed) this.scheduleRetry(key)
-        else this.retries.delete(key)
+        signal?.removeEventListener("abort", abort)
+        if (this.active.get(key) === state) {
+          this.active.delete(key)
+          if (failed && !state.controller.signal.aborted) this.scheduleRetry(key, signal)
+          else this.cancel(key)
+        }
       }
     })
     this.active.set(key, state)
@@ -49,21 +67,29 @@ export class TrailingResyncCoordinator {
   }
 
   cancel(key: string): void {
-    clearTimeout(this.retries.get(key)?.timer)
+    const retry = this.retries.get(key)
+    clearTimeout(retry?.timer)
+    retry?.release?.()
     this.retries.delete(key)
   }
 
-  private scheduleRetry(key: string): void {
-    const retry = this.retries.get(key) ?? { attempt: 0 }
+  private scheduleRetry(key: string, signal?: AbortSignal): void {
+    if (signal?.aborted) { this.cancel(key); return }
+    const retry = this.retries.get(key) ?? { attempt: 0, parent: signal }
     const delay = this.retryDelaysMs[retry.attempt]
     if (delay === undefined) {
       this.retries.delete(key)
       return
     }
     retry.attempt += 1
+    const abort = () => { if (this.retries.get(key) === retry) this.cancel(key) }
+    signal?.addEventListener("abort", abort, { once: true })
+    retry.release = () => signal?.removeEventListener("abort", abort)
     retry.timer = setTimeout(() => {
       retry.timer = undefined
-      void this.request(key)
+      retry.release?.()
+      retry.release = undefined
+      if (this.retries.get(key) === retry) void this.request(key, signal)
     }, delay)
     this.retries.set(key, retry)
   }

@@ -7,20 +7,24 @@ import type { UserMissionModel } from "../lib/mission-model-library"
 /** What an idle editor left behind when its panel unmounted. */
 export interface MissionEditorDraft {
   scheduling?: import("../components/mission-scheduling-data").MissionSchedulingDraft
-  scheduleDocument?: NonNullable<import("../../../server/src/api-types").MissionScheduleRead["document"]>
   previousDraft?: string
   journalMission?: MissionPanelMap
   mode: "once" | "recurring"; titleOverride?: string; time: string; zone: string; watched: string[]
   objective: string; notes: string; template: MissionPanelMap["template"]; profiles?: MissionProfiles; customProfiles: boolean
   taskMode?: MissionTaskMode; customTaskMode: boolean; defaults: MissionProfileDefault[]; defaultsReady: boolean
-  selectedModel?: Pick<UserMissionModel, "id" | "name">; optionsOpen: boolean; profileDetailsOpen: boolean
+  draftId?: string
+  selectedModel?: UserMissionModel; savedBaselines?: UserMissionModel[]; optionsOpen: boolean; profileDetailsOpen: boolean
   startOnCreation?: boolean
+  coordinatorGoal?: boolean
   coordinatorSessionID?: string
+  /** The programming a recurring creation saves: the same one however often the form is submitted. */
+  calendarID?: string
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
   deleteAutoSubmitted?: boolean; deleteError?: string
 }
 
-export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }
+/** `calendar`: the creation form edits this existing programmed Mission. */
+export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; calendar?: string; draft?: Readonly<MissionEditorDraft> }
 
 // Window memory only, keyed by panel scope: the open editor outlives the panel
 // (another right-panel tab) and a hidden project, never a restart, and never
@@ -42,5 +46,26 @@ export function settleMissionEditor(action: MissionEditorAction, next?: MissionE
     if (next) updated.set(scope, next)
     else updated.delete(scope)
     return updated
+  })
+}
+
+const draftBaselineListeners = new Map<string, (saved: UserMissionModel) => void>()
+
+export function registerMissionDraftBaseline(draftId: string, onBaseline: (saved: UserMissionModel) => void): () => void {
+  draftBaselineListeners.set(draftId, onBaseline)
+  return () => { if (draftBaselineListeners.get(draftId) === onBaseline) draftBaselineListeners.delete(draftId) }
+}
+
+/** Record a confirmed saved-configuration baseline on the exact originating draft (mounted or awaiting remount). */
+export function recordMissionDraftBaseline(draftId: string, saved: UserMissionModel) {
+  const listener = draftBaselineListeners.get(draftId)
+  if (listener) { listener(saved); return }
+  setEditors(current => {
+    const entry = [...current].find(([, value]) => value.draft?.draftId === draftId)
+    if (!entry) return current
+    const [scope, action] = entry, draft = action.draft!
+    const savedBaselines = [...(draft.savedBaselines ?? []).filter(item => item.id !== saved.id), saved]
+    const selectedModel = draft.selectedModel?.id === saved.id ? saved : draft.selectedModel
+    return new Map(current).set(scope, { ...action, draft: { ...draft, savedBaselines, selectedModel } })
   })
 }

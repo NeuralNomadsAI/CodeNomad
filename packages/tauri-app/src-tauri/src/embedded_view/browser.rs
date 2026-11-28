@@ -4,7 +4,7 @@ use super::*;
 pub(super) fn page_permission_subject(raw: &str) -> Option<String> {
     let url = tauri::Url::parse(raw).ok()?;
     if is_allowed_url(&url) {
-        return Some(url.origin().ascii_serialization());
+        return Some(presentation_title(&url));
     }
     if url.scheme() == "about" && url.path() == "blank" {
         return Some("about:blank".into());
@@ -12,10 +12,17 @@ pub(super) fn page_permission_subject(raw: &str) -> Option<String> {
     if url.scheme() == "blob" {
         let inner = tauri::Url::parse(url.path()).ok()?;
         if is_allowed_url(&inner) {
-            return Some(inner.origin().ascii_serialization());
+            return Some(presentation_title(&inner));
         }
     }
     None
+}
+
+fn presentation_title(url: &tauri::Url) -> String {
+    if private_preview_url(url) {
+        return "CodeNomad".into();
+    }
+    url.origin().ascii_serialization()
 }
 
 fn download_path(directory: &Path, suggested: &Path) -> Option<PathBuf> {
@@ -54,6 +61,13 @@ pub(super) fn permission<R: Runtime>(
     kind: tauri::webview::PermissionKind,
 ) -> tauri::webview::PermissionResponse {
     use tauri::webview::{PermissionKind as K, PermissionResponse as R};
+    if webview
+        .app_handle()
+        .try_state::<EmbeddedViews>()
+        .is_some_and(|views| views.restricted_browser(webview.label()))
+    {
+        return R::Deny;
+    }
     match kind {
         K::Camera | K::Microphone | K::Geolocation | K::Notifications => R::Deny,
         // Mandatory desktop adapters classify the raw request, including its
@@ -95,9 +109,16 @@ pub(super) fn unknown_permission<R: Runtime>(webview: &tauri::Webview<R>, kind: 
 
 #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 pub(super) fn download<R: Runtime>(
-    _: tauri::Webview<R>,
+    view: tauri::Webview<R>,
     event: tauri::webview::DownloadEvent<'_>,
 ) -> bool {
+    if view
+        .app_handle()
+        .try_state::<EmbeddedViews>()
+        .is_some_and(|views| views.restricted_browser(view.label()))
+    {
+        return false;
+    }
     match event {
         tauri::webview::DownloadEvent::Requested { url, destination } => {
             if !is_allowed_url(&url) && !matches!(url.scheme(), "blob" | "data") {
@@ -130,6 +151,9 @@ impl EmbeddedViews {
         let Ok(opener_record) = self.owned(owner, opener) else {
             return NewWindowResponse::Deny;
         };
+        if opener_record.restricted || private_preview_url(&url) {
+            return NewWindowResponse::Deny;
+        }
         if !opener.starts_with("browser-")
             || !site_url_allowed(&url, opener_record.origin.as_deref())
         {
@@ -183,7 +207,7 @@ impl EmbeddedViews {
             tauri::WebviewUrl::External("about:blank".parse().unwrap()),
         )
         .window_features(features)
-        .title(url.origin().ascii_serialization())
+        .title(presentation_title(&url))
         .inner_size(520.0, 680.0)
         .disable_drag_drop_handler()
         .zoom_hotkeys_enabled(cfg!(windows))
@@ -355,4 +379,13 @@ mod tests {
         }
         assert!(download_path(&dir.path().join("missing"), Path::new("file")).is_none());
     }
+}
+#[test]
+fn private_preview_permission_subject_is_neutral() {
+    assert_eq!(
+        page_permission_subject(
+            "http://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.preview.localhost:9999/path"
+        ),
+        Some("CodeNomad".into())
+    );
 }

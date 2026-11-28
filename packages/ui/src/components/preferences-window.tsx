@@ -1,4 +1,4 @@
-import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, Show, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
 import OpenCodeSetup from "./opencode-setup"
@@ -17,12 +17,15 @@ import {
 import { runNativeWindowAction } from "../lib/native/window-controls"
 import { activeSettingsSection, adoptSettingsRowHint, setActiveSettingsSection, SETTINGS_ROW_HINT_KEY } from "../stores/settings-screen"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
-import { sdkManager } from "../lib/sdk-manager"
+import { backends } from "../lib/backend-client"
+import { parseInstanceKey } from "../lib/backend-identity"
 import { observeDesktopUpdates } from "../stores/desktop-updates"
 import { createPreferencesProjectContext } from "./settings/preferences-project-context"
 
 export const PreferencesWindow: Component = () => {
+  const destroyClients = (id: string) => backends.get(parseInstanceKey(id).backendId)?.sdk.destroyClientsForInstance(id)
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general" })
+  const [initialized, setInitialized] = createSignal(false)
   const subscriptions: Array<() => void> = []
   let requestQueue = Promise.resolve()
   let closePromise: Promise<void> | undefined
@@ -51,13 +54,13 @@ export const PreferencesWindow: Component = () => {
       const previous = request(), next = { ...previous, ...context, scrollTop }
       await persist(() => next)
       if (!current()) return
-      if (previous.instanceId && previous.instanceId !== context.instanceId) sdkManager.destroyClientsForInstance(previous.instanceId)
+      if (previous.instanceId && previous.instanceId !== context.instanceId) destroyClients(previous.instanceId)
       setRequest({ ...next, scrollTop })
     }).catch(() => undefined)
   })
   createEffect(() => {
     const instanceId = project()?.instanceId
-    if (instanceId) onCleanup(() => sdkManager.destroyClientsForInstance(instanceId))
+    if (instanceId) onCleanup(() => destroyClients(instanceId))
   })
 
   const applyRequest = async (next: NativePreferencesRequest, guard = true) => {
@@ -65,11 +68,12 @@ export const PreferencesWindow: Component = () => {
     clearTimeout(scrollTimer)
     if (guard) await persist(() => next)
     const previousInstanceId = request().instanceId
-    if (previousInstanceId && previousInstanceId !== next.instanceId) sdkManager.destroyClientsForInstance(previousInstanceId)
+    if (previousInstanceId && previousInstanceId !== next.instanceId) destroyClients(previousInstanceId)
     scrollTop = next.scrollTop ?? 0
     batch(() => {
       setRequest(next)
       setActiveSettingsSection(next.section)
+      setInitialized(true)
     })
     adoptSettingsRowHint(next.section)
   }
@@ -117,6 +121,7 @@ export const PreferencesWindow: Component = () => {
         if (mounted && !receivedLiveUpdate) await applyRequest(initial, false)
       } catch {
         // Keep the General section fallback.
+        setInitialized(true)
       }
       try {
         const stop = await onNativePreferencesCloseRequested(() => void close())
@@ -155,15 +160,16 @@ export const PreferencesWindow: Component = () => {
       clearTimeout(scrollTimer)
       subscriptions.splice(0).forEach((stop) => stop())
       const instanceId = request().instanceId
-      if (instanceId) sdkManager.destroyClientsForInstance(instanceId)
+      if (instanceId) destroyClients(instanceId)
     })
   })
 
   return (
     <>
-      <SettingsScreen
+      <Show when={initialized()}><SettingsScreen
         standalone
-        providerContext={{ instanceId: project()?.instanceId ?? "", location: project()?.location }}
+        providerContext={{ instanceId: project()?.instanceId ?? (parseInstanceKey(request().instanceId ?? "").backendId !== "local" ? request().instanceId : "") ?? "", location: project()?.location ?? request().location, serverId: request().serverId }}
+        projectUnavailable={parseInstanceKey(request().instanceId ?? "").backendId !== "local" && !project()}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           scrollTop = top
@@ -181,7 +187,7 @@ export const PreferencesWindow: Component = () => {
           return requestQueue
         }}
         onClose={() => close(false)}
-      />
+      /></Show>
       <AlertDialog />
       <OpenCodeSetup automatic={false} />
       <Toaster

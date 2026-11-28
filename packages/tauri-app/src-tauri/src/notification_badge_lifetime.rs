@@ -1,11 +1,10 @@
 //! Native renderer lifetime signals, installed once on owned primary webviews.
 //! Native subscriptions capture only a weak host, never their COM/GObject or a
 //! strong AppHandle, so there is no runtime/handler ownership cycle.
-use std::sync::Weak;
-use tauri::{AppHandle, Webview};
+use tauri::Webview;
 
 #[cfg(windows)]
-fn clears_badge(
+fn main_renderer_exited(
     kind: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND,
 ) -> bool {
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
@@ -16,48 +15,51 @@ fn clears_badge(
     )
 }
 
-pub(crate) fn bind(webview: &Webview, host: Weak<AppHandle>, binding: u64) {
+pub(crate) fn bind(webview: &Webview, on_terminated: impl Fn() + Send + 'static) {
     #[cfg(any(windows, target_os = "linux"))]
     {
-        let label = webview.label().to_string();
         if let Err(error) = webview.with_webview(move |platform| {
             #[cfg(windows)]
             {
-                use webview2_com::{ProcessFailedEventHandler, Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND};
+                use webview2_com::{
+                    Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND,
+                    ProcessFailedEventHandler,
+                };
                 let result = (|| -> webview2_com::Result<()> {
                     let core = unsafe { platform.controller().CoreWebView2()? };
-                    let handler = ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
-                        let Some(args) = args else { return Ok(()) };
-                        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
-                        unsafe { args.ProcessFailedKind(&mut kind)? };
-                        if clears_badge(kind) {
-                            if let Some(app) = host.upgrade() {
-                                crate::notification_badge::renderer_terminated(&app, &label, binding);
+                    let handler =
+                        ProcessFailedEventHandler::create(Box::new(move |_sender, args| {
+                            let Some(args) = args else { return Ok(()) };
+                            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                            unsafe { args.ProcessFailedKind(&mut kind)? };
+                            if main_renderer_exited(kind) {
+                                on_terminated();
                             }
-                        }
-                        Ok(())
-                    }));
+                            Ok(())
+                        }));
                     let mut token = 0;
                     unsafe { core.add_ProcessFailed(&handler, &mut token)? };
                     Ok(())
                 })();
                 if let Err(error) = result {
-                    eprintln!("[notification-badge] failed to register renderer termination handler: {error}");
+                    eprintln!(
+                        "[renderer-lifetime] failed to register termination handler: {error}"
+                    );
                 }
             }
             #[cfg(target_os = "linux")]
             {
                 use webkit2gtk::WebViewExt;
-                platform.inner().connect_web_process_terminated(move |_view, _reason| {
-                    // All WebKit reasons terminate this view's web process:
-                    // crash, memory limit, or explicit native termination.
-                    if let Some(app) = host.upgrade() {
-                        crate::notification_badge::renderer_terminated(&app, &label, binding);
-                    }
-                });
+                platform
+                    .inner()
+                    .connect_web_process_terminated(move |_view, _reason| {
+                        // All WebKit reasons terminate this view's web process:
+                        // crash, memory limit, or explicit native termination.
+                        on_terminated();
+                    });
             }
         }) {
-            eprintln!("[notification-badge] failed to access renderer termination hook: {error}");
+            eprintln!("[renderer-lifetime] failed to access termination hook: {error}");
         }
     }
     // Without a Builder::on_web_content_process_terminate hook, Tauri's runtime
@@ -65,7 +67,7 @@ pub(crate) fn bind(webview: &Webview, host: Weak<AppHandle>, binding: u64) {
     // resets the count. Registering that app-wide hook would replace the reload.
     // Do not replace WKWebView's runtime-owned navigation delegate or poll it.
     #[cfg(not(any(windows, target_os = "linux")))]
-    let _ = (webview, host, binding);
+    let _ = (webview, on_terminated);
 }
 
 #[cfg(all(test, windows))]
@@ -75,10 +77,10 @@ mod tests {
 
     #[test]
     fn renderer_termination_policy_ignores_frames_hangs_and_auxiliary_processes() {
-        assert!(clears_badge(
+        assert!(main_renderer_exited(
             COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
         ));
-        assert!(clears_badge(
+        assert!(main_renderer_exited(
             COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
         ));
         for kind in [
@@ -92,7 +94,7 @@ mod tests {
             COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED,
             COREWEBVIEW2_PROCESS_FAILED_KIND(-1),
         ] {
-            assert!(!clears_badge(kind));
+            assert!(!main_renderer_exited(kind));
         }
     }
 }

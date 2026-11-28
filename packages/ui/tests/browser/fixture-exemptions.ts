@@ -4,6 +4,9 @@
  * heavyServers marks entries that still run a full private Vite server. */
 export const exemptions: Record<string, string> = {
   "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
+  "backend-relay-eventsource.test.ts": "real Fastify relay and test-driven upstream SSE; no Vite server",
+  "backend-registry.test.ts": "two real relay destinations with test-controlled metadata and persistent SSE; private Vite proxy",
+  "remote-project-open.test.ts": "real browsing and relay routes with two controlled servers and persistent SSE; private Vite proxy",
   "automation-forms.test.ts": "electron automation harness; its machine-specific a11y flakiness pre-dates the daemon",
   "automation-input.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
   "automation-preview-preparation.test.ts": "mocked Electron preparation; no fixture page",
@@ -14,6 +17,7 @@ export const exemptions: Record<string, string> = {
   "browser-frame-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "compaction-responsiveness.test.ts": "custom Vite transform/load hook",
   "composer-alternate-send.test.ts": "served by a harness that borrows from the daemon",
+  "composer-dictation.test.ts": "served by a harness that borrows from the daemon",
   "composer-draft-safety.test.ts": "served by a harness that borrows from the daemon",
   "composer-history-focus.test.ts": "served by a harness that borrows from the daemon",
   "composer-picker-enter.test.ts": "served by a harness that borrows from the daemon",
@@ -38,6 +42,7 @@ export const exemptions: Record<string, string> = {
   "git-init.test.ts": "Vite config diverges from the canonical daemon config",
   "header-fixture-diagnostics.test.ts": "diagnostic harness owns the server lifecycle",
   "header-windows.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "hex-capture.test.ts": "served by a harness that borrows from the daemon",
   "hotkeys-settings.test.ts": "Vite config diverges from the canonical daemon config",
   "http-admission-responsiveness.test.ts": "Vite config diverges from the canonical daemon config",
   "icon-toggle-active.test.ts": "served by a self-hosting harness or inline server that owns its Vite server",
@@ -46,12 +51,10 @@ export const exemptions: Record<string, string> = {
   "markdown-latest-request.test.ts": "custom Vite transform/load hook",
   "message-scroll.test.ts": "stateful SSE middleware driven by the test",
   "mission-control-feedback.test.ts": "stateful SSE middleware driven by the test",
-  "mission-current-passage.test.ts": "stateful SSE middleware driven by the test",
   "mission-lifecycle-navigation.test.ts": "diagnostic harness owns the server lifecycle",
   "mission-lifecycle-revision.test.ts": "diagnostic harness owns the server lifecycle",
   "mission-native-family.test.ts": "stateful SSE middleware driven by the test",
   "mission-navigation.test.ts": "instruments the server object directly",
-  "mission-recurrence-predispatch.test.ts": "no fixture page of its own",
   "native-mission-integration.qualification.ts": "qualification harness with capture middleware on its own server",
   "notification-icon-badge.test.ts": "Vite config diverges from the canonical daemon config",
   "notification-routing.test.ts": "served by a harness that borrows from the daemon",
@@ -61,6 +64,8 @@ export const exemptions: Record<string, string> = {
   "preferences-startup-state.test.ts": "Vite config diverges from the canonical daemon config",
   "provider-usage.test.ts": "Vite config diverges from the canonical daemon config",
   "remote-control-settings.test.ts": "Vite config diverges from the canonical daemon config",
+  "remote-preview-origin-isolation.test.ts": "real preview-origin HTTP/WS servers; no Vite fixture",
+  "remote-preview-path-isolation.test.ts": "real host path-proxy and remote HTTP/WS servers; no Vite fixture",
   "remote-server-pairing.test.ts": "Vite config diverges from the canonical daemon config",
   "render-cost.test.ts": "custom Vite transform/load hook",
   "reveal-truncated-text.test.ts": "upstream repairs this test separately; borrow migration deferred to that change",
@@ -86,4 +91,4 @@ export const exemptions: Record<string, string> = {
 }
 
 /** Exemptions whose own Vite server makes them the tiered runner's heavy tier. */
-export const heavyServers: ReadonlySet<string> = new Set(["auth-recovery.test.ts", "automation-forms.test.ts", "automation-input.test.ts", "automation-preview.test.ts", "browser-emulation-native.test.ts", "browser-frame-native.test.ts", "compaction-responsiveness.test.ts", "data-profiles.test.ts", "device-upload-lifecycle.test.ts", "device-upload.test.ts", "event-subscriber-isolation.test.ts", "fixtures/device-upload-server.mjs", "git-changes-scale.test.ts", "git-history.test.ts", "git-init.test.ts", "header-fixture-diagnostics.test.ts", "header-windows.test.ts", "hotkeys-settings.test.ts", "http-admission-responsiveness.test.ts", "icon-toggle-active.test.ts", "interruption-dock.test.ts", "markdown-latest-request.test.ts", "message-scroll.test.ts", "mission-control-feedback.test.ts", "mission-current-passage.test.ts", "mission-lifecycle-navigation.test.ts", "mission-lifecycle-revision.test.ts", "mission-native-family.test.ts", "mission-navigation.test.ts", "native-mission-integration.qualification.ts", "notification-icon-badge.test.ts", "panel-extensions.test.ts", "preferences-startup-state.test.ts", "provider-usage.test.ts", "remote-control-settings.test.ts", "remote-server-pairing.test.ts", "render-cost.test.ts", "search-highlight.test.ts", "session-aside-harness.test.ts", "session-aside-harness.ts", "session-aside.test.ts", "session-browser-history.test.ts", "session-rendering.test.ts", "shell-navigation.test.ts", "sidecar-sandbox.test.ts", "streaming-outline.test.ts", "tab-chrome.test.ts", "timeline-sync-session.ts", "timeline-sync.test.ts", "view-menu-electron.test.ts", "workspace-file-refresh.test.ts"])
+export const heavyServers: ReadonlySet<string> = new Set(["auth-recovery.test.ts", "backend-registry.test.ts", "automation-forms.test.ts", "automation-input.test.ts", "automation-preview.test.ts", "browser-emulation-native.test.ts", "browser-frame-native.test.ts", "compaction-responsiveness.test.ts", "data-profiles.test.ts", "device-upload-lifecycle.test.ts", "device-upload.test.ts", "event-subscriber-isolation.test.ts", "fixtures/device-upload-server.mjs", "git-changes-scale.test.ts", "git-history.test.ts", "git-init.test.ts", "header-fixture-diagnostics.test.ts", "header-windows.test.ts", "hotkeys-settings.test.ts", "http-admission-responsiveness.test.ts", "icon-toggle-active.test.ts", "interruption-dock.test.ts", "markdown-latest-request.test.ts", "message-scroll.test.ts", "mission-control-feedback.test.ts", "mission-lifecycle-navigation.test.ts", "mission-lifecycle-revision.test.ts", "mission-native-family.test.ts", "mission-navigation.test.ts", "native-mission-integration.qualification.ts", "notification-icon-badge.test.ts", "panel-extensions.test.ts", "preferences-startup-state.test.ts", "provider-usage.test.ts", "remote-control-settings.test.ts", "remote-project-open.test.ts", "remote-server-pairing.test.ts", "render-cost.test.ts", "search-highlight.test.ts", "session-aside-harness.test.ts", "session-aside-harness.ts", "session-aside.test.ts", "session-browser-history.test.ts", "session-rendering.test.ts", "shell-navigation.test.ts", "sidecar-sandbox.test.ts", "streaming-outline.test.ts", "tab-chrome.test.ts", "timeline-sync-session.ts", "timeline-sync.test.ts", "view-menu-electron.test.ts", "workspace-file-refresh.test.ts"])

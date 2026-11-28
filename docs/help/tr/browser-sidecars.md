@@ -8,17 +8,35 @@ Iframe önizlemeleri ve SideCars, DNS takma adları dahil CodeNomad'ın kendi di
 2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
 3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için aynı sekmede ve görüşmede tekrar açın.
 
+Uzak önizlemelerde service worker devre dışıdır.
+
 Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, önizlemelerin kullanılabildiği her istemcide o oturumun web önizlemesinde açar. Remote Control üzerinden host web önizlemelerini kapalı tuttuğunda veya önizlemelerin başka bir nedenle kullanılamadığı bir istemcide bu bağlantılar normal tarayıcı davranışını korur. Ctrl+tıklama (macOS'ta ⌘+tıklama) veya orta tıklama bağlantıyı bunun yerine tarayıcınızda açar.
 
-Pencere içinde her oturumun tek bir önizlemesi vardır. Yinelenen sekmeler sohbet ile aynı canlı önizleme arasında bağımsız seçim yapar; sayfayı, URL'yi, geçmişi ve görünüm şablonunu paylaşır. Kapat düğmesi yalnızca kendi sekmesini sohbete döndürür. Sekme, konuşma, proje veya Bilgi geçişleri belgeyi korur; bir kopya kapatıldığında oturumun başka bir örneği açık kaldığı sürece belge yaşar. Son örneği veya pencereyi kapatmak ya da arayüzü yeniden başlatmak canlı belgeyi sonlandırır.
+Sohbete döndüğünüzde veya yerel önizlemeyi aynı penceredeki başka bir sekmeye taşıdığınızda açık sayfa korunur.
 
 Her sekme sohbet/önizleme seçimini kaydeder; oturum ortak URL'yi, görünüm şablonunu ve geçmişi kaydeder. Kaydedilen sayfalar yalnızca oturum tarayıcısını açıkça yeniden açtığınızda yüklenir. URL'ler ve imleç saklanır; canlı formlar, DOM, POST gövdeleri ve JavaScript belleği belgeyle birlikte sona erer. Geçmiş, oturum başına 32 URL ve ortak pencere bütçesiyle sınırlıdır; eski girişler kırpılabilir. URL geri yüklendiğinde sayfa yeniden yüklenebilir.
 
+Uzak önizleme, proje sunucusunu kullanır ve uygulamanın URL’sini gösterir. Önizlemeyi veya sekmeyi kapatmak, sunucu bağlantısını kesmek ya da uygulamadan çıkmak canlı sayfayı sonlandırır. Yeniden açtığınızda adres ve geçmiş yüklenir, kaydedilmemiş çalışmalar yüklenmez. Dahili yükleme adreslerini gizli tutun.
+
+Yerel motorlu uzak önizlemeler dahili yükleme adreslerini gizli tutmak için bağlam menülerini, panoya dışa aktarmayı, bağlantı sürüklemeyi, yazdırmayı, açılır pencereleri, indirmeleri, sayfa iletişim kutularını ve izin istemlerini kapatır. Kapatmadan önce sayfadaki çalışmanızı kaydedin.
+
+Önizleme denetimleri, ana bilgisayar ve uzak proje sunucusu önizlemelerin kullanılabildiğini doğruladığında görünür.
+
+Uzaktan Kontrol için **Web önizlemeleri**, ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında varsayılan olarak açıktır. Kapatıldığında önizlemeler ve WebSocket bağlantıları sonlanır; yeniden yüklemeden sonra **Web önizlemesini aç** gizlenir. Oturumu kapatmak veya eşleştirilmiş bir cihazın erişimini iptal etmek, o cihazın önizlemelerini ve WebSocket bağlantılarını sonlandırır.
+
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
+
+Electron ve Windows için Tauri’de otomatik yeniden başlatma (`codenomad.act`, `restart`), incelenen profili, yapılandırmayı ve derlemeyi yeniden açar. Özgün pencere geri yüklenirse yeniden incelenir; yüklenmezse araç pencerenin bulunmadığını bildirir ve başka bir pencereyi incelemez. Yeniden bağlanma sırasında başarıyla tamamlanan inceleme önceliklidir.
+
+Yeniden başlatma iptal edilirse `codenomad.inspect` ile `targets: true` kullanarak açık pencereleri listeleyin, ardından istediğiniz pencereyi `target` değeriyle inceleyin.
 
 Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamındaki projeler/oturumlar arasında çerezleri, oturum açma bilgilerini ve site depolamasını paylaşır; bunlar güvenilir CodeNomad arayüzünden ayrıdır. Önizlemede siteden çıkış yapmak aynı depoyu kullanan diğer önizlemeleri etkiler. Belgeler, formlar, oturum depolaması, gezinme geçmişi ve otomasyon bağlantıları her oturuma aittir.
 
-Ajan, oturumun ortak tarayıcısını onu içeren bir sekmede, mümkünse etkin sekmede açar. Seçilen sekme açılış boyunca sabit kalır; onu kapatmak bu açılışı iptal eder. Sayfa eylemleri oturumun görünür yerel önizlemesini hedefler; gizli önizlemeler dışarıda bırakılır.
+Her oturumun tek bir yerel önizlemesi vardır. Yinelenen sekmede **Önizleme başka bir sekmede açık** görünürse **Sekmeye git** seçeneğini kullanın veya aynı pencere içinde taşımak için **Burada aç** seçeneğini seçin. Önceki sekme aynı mesajı gösterir. Önizlemenin bulunduğu sekmeyi kapattığınızda önizlemeyi başka bir sekmede açabilirsiniz.
+
+Bir masaüstü penceresi bir konuşmayı gösterdiği sürece, konuşmanın ajanları önizlemesini OpenCode'un tarayıcı araçlarıyla (OpenCode 2.4 veya üzeri) kontrol edebilir; sayfada betik çalıştırma reddedilir ve macOS ile Linux'taki Tauri uygulamasında geri, ileri gidemez veya yeniden yükleyemezler. Electron'da ve Windows Tauri uygulamasında önizlemenin konsol iletilerini ve ağ isteklerini de okuyabilirler; önizleme tuttuğu sürece istek ve yanıtların başlıklarını ve metin gövdelerini görürler; çerez ve yetkilendirme başlıklarının değerleri hariç. Ajan önizlemeyi bulunduğu sekmede, açık değilse oturum için en son kullanılan sekmede açar. Sayfa eylemleri görünür yerel önizlemeye uygulanır. Sayfalar, gördüğünüz önizlemede olduğu gibi bu bilgisayarın ağı üzerinden yüklenir; bu yüzden OpenCode WSL'de çalışsa bile `localhost` bu bilgisayardır.
+
+Ajan önizlemede işlem yapmadan veya ekran görüntüsü almadan önce bir anlık görüntü alır. Önizleme değişirse komut başka bir önizlemeyi kullanmak yerine durur.
 
 | İstemci | Önizleme uygulaması | Ajan tarayıcı otomasyonu | Mobil şablonlar |
 | --- | --- | --- | --- |
@@ -58,7 +76,9 @@ Electron ve Windows Tauri'de mobil şablonlar Android/Chromium kimliğini, yöne
 1. Web aracını CodeNomad arka ucunun ana bilgisayarında ayrı olarak başlatıp `127.0.0.1:<port>` adresinde dinlemesini sağlayın.
 2. **Ayarlar → SideCars** öğesini açın. **Ad** ve **Port** öğesini girin; türetilen **Temel yol** öğesini (`/sidecars/<id>`) kontrol edin.
 3. **Protokol** öğesini yukarı akış hizmetiyle eşleşecek şekilde ayarlayın ve **Ön ek modu** öğesini seçin.
-4. Sekmesini açmak için ana sayfadan **SideCar ekle** öğesini ve ardından **SideCar'ı Aç** öğesini seçin.
+4. **SideCar ekle** öğesini seçin, ardından **Gözat** üzerinden açın. [proje sekmeleri](projects.md#open-project).
+
+Çalışan SideCar, sekmesi kapatıldıktan sonra da son sekmeler listesinde kalır.
 
 | Seçim | Kesin etki |
 | --- | --- |
@@ -73,7 +93,7 @@ Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. H
 
 SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur.
 
-SideCar içeriği (`/sidecars/`) ve SideCar WebSocket'leri, ana bilgisayarda loopback bağlantısı gerektirir. Bunları başka cihazlardan da açmak için ana bilgisayarda **Ayarlar → SideCars** içindeki **SideCars'ı HTTPS üzerinden aç** seçeneğini açın: bu sunucunun HTTPS adresleri veya TLS ters proxy gibi `CODENOMAD_ALLOWED_ORIGINS` içindeki bir HTTPS origin üzerinden oturum açmış tarayıcılar SideCars açabilir. Düz HTTP, `localhost` adresleri ve Uzaktan Kontrol yalnızca ana bilgisayarda kalır. `/api/sidecars` üzerinden kayıt, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir; [Uzaktan Kontrol](remote-control.md#remote-surface) web önizlemeleri etkin oldukları sürece yetenek belirteçleriyle kullanılabilir kalır. Doğrudan erişim gereksinimleri için bkz. [Yükseltme](remote-access.md#upgrading).
+SideCar içeriği (`/sidecars/`) ve SideCar WebSocket'leri, ana bilgisayarda loopback bağlantısı gerektirir. Bunları başka cihazlardan da açmak için ana bilgisayarda **Ayarlar → SideCars** içindeki **SideCars'ı HTTPS üzerinden aç** seçeneğini açın: bu sunucunun HTTPS adresleri veya TLS ters proxy gibi `CODENOMAD_ALLOWED_ORIGINS` içindeki bir HTTPS origin üzerinden oturum açmış tarayıcılar SideCars açabilir. Düz HTTP, `localhost` adresleri ve Uzaktan Kontrol yalnızca ana bilgisayarda kalır. `/api/sidecars` üzerinden kayıt, eşleştirilmiş cihazlar ve kimliği doğrulanmış doğrudan LAN istemcileri için kullanılabilir. Etkin önizleme içeriği (`/previews/`), geçerli bir yetenek belirteciyle doğrudan LAN erişiminde kullanılabilir; [Uzaktan Kontrol](remote-control.md#remote-surface) web önizlemeleri etkin oldukları sürece yetenek belirteçleriyle kullanılabilir kalır. Doğrudan erişim gereksinimleri için bkz. [İzin verilen kaynaklar](remote-access.md#upgrading).
 
 ## OpenVSCode Sunucu tarifi {#openvscode}
 

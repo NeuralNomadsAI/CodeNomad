@@ -10,6 +10,7 @@ import {
   readPluginControlDocument,
   replacePluginControlDocument,
   replacePluginControlRules,
+  deletePluginEntries,
 } from "./plugin-control-document"
 
 const temporaryDirectories = new Set<string>()
@@ -118,6 +119,35 @@ describe("plugin control JSONC document", () => {
     const removedOnly = await readPluginControlDocument(target)
     assert.deepEqual((parse(replacePluginControlRules(removedOnly, [2], new Set(["-acme.reviewer"])).slice(1)) as any).plugins,
       [{ package: "@acme/reviewer", options: { a: 1 } }, "other"])
+  })
+
+  it("replaces a trailing rule of a compact array", async () => {
+    const target = temporaryFile()
+    fs.writeFileSync(target, '{"plugins":["@acme/reviewer","-acme.reviewer"],"theme":"dark"}')
+    const document = await readPluginControlDocument(target)
+    assert.deepEqual(parse(replacePluginControlRules(document, [1], new Set(["-acme.reviewer"]), "acme.reviewer")),
+      { plugins: ["@acme/reviewer", "acme.reviewer"], theme: "dark" })
+    assert.deepEqual(parse(replacePluginControlRules(document, [1], new Set(["-acme.reviewer"]))), { plugins: ["@acme/reviewer"], theme: "dark" })
+  })
+
+  it("keeps the same layout when replacing a rule on its own line", async () => {
+    const target = temporaryFile()
+    const text = '{\r\n  "plugins": [\r\n    "keep",\r\n    "-acme.reviewer"\r\n  ]\r\n}\r\n'
+    fs.writeFileSync(target, text)
+    const document = await readPluginControlDocument(target)
+    assert.equal(replacePluginControlRules(document, [1], new Set(["-acme.reviewer"]), "acme.reviewer"),
+      text.replace("-acme.reviewer", "acme.reviewer"))
+  })
+
+  it("keeps comments between array entries when deleting leading, middle, trailing or all entries", () => {
+    const text = `{ "plugins": [/* start */ "a" /* after a */, // before b, not a separator\n "b", /* before c */ "c" /* end */,] }`
+    for (const indexes of [[0], [1], [2], [1, 2], [0, 2], [0, 1, 2]]) {
+      const result = deletePluginEntries(text, indexes)
+      const errors: import("jsonc-parser").ParseError[] = []
+      assert.deepEqual(parse(result, errors, { allowTrailingComma: true }).plugins, ["a", "b", "c"].filter((_, i) => !indexes.includes(i)))
+      assert.deepEqual(errors, [])
+      assert.deepEqual(result.match(/\/\*.*?\*\/|\/\/[^\n]*/g), text.match(/\/\*.*?\*\/|\/\/[^\n]*/g))
+    }
   })
 
   it("refuses to remove an entry that is no longer the expected rule", async () => {

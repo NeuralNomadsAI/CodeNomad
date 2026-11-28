@@ -13,7 +13,6 @@ import type { MissionJsonValue } from "./model"
 export type MissionDocumentStorage = Pick<MissionStorage, "get"> & {
   compareAndSet(key: string, value: MissionJsonValue, expectedRevision: number | null, current: () => true): Promise<void>
 }
-export type MissionDocumentMutation = NativeMissionDocumentStore
 
 /** Point reads/writes use their own namespace. Passage journals retain their
  * existing ranges, per-mission capacity, deletion reserve and activation index. */
@@ -166,12 +165,33 @@ export class NativeMissionDocumentStore {
       if (doc.revision !== expectedRevision || !doc.deletion || doc.state !== "stopped"
          || doc.pending || doc.synchronization || doc.calendars.length || doc.coordinatorReleases.length || doc.blocked === "unknown" || doc.preparation?.pending || doc.calendarOwner?.operation.textEdit
         || doc.dormantJournal && !doc.dormantJournal.deleted
-        || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null
-        || doc.scheduleActivation?.targets.some(target => target.attempted && !target.acknowledged)) throw new Error("Mission deletion reconciliation pending")
+        || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null) throw new Error("Mission deletion reconciliation pending")
       const reservation = await this.reserveDeletionSlot(doc, current)
+      const owner = doc.calendarOwner
+      const completedOriginals = new Set<string>()
+      const settledChecks = new Map<string, { requestID: string; expectedRevision: number }>()
+      for (const receipt of owner?.receipts ?? []) {
+        if (!receipt.pending) {
+          completedOriginals.add(receipt.requestID)
+          if (receipt.action === "check")
+            settledChecks.set(receipt.requestID, { requestID: receipt.requestID, expectedRevision: receipt.expectedRevision })
+        }
+      }
+      if (owner && !owner.operation.pending) {
+        completedOriginals.add(owner.operation.requestID)
+        if (owner.operation.action === "check")
+          settledChecks.set(owner.operation.requestID, { requestID: owner.operation.requestID, expectedRevision: owner.operation.expectedRevision })
+      }
+      for (const check of owner?.checks ?? [])
+        if (completedOriginals.has(check.originalRequestID))
+          settledChecks.set(check.requestID, { requestID: check.requestID, expectedRevision: check.expectedRevision })
+      const checks = [...settledChecks.values()]
+        .sort((a, b) => a.expectedRevision - b.expectedRevision)
+        .slice(-16)
       const tombstone = missionTombstoneSchema.parse({ version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: expectedRevision + 1, requestID: doc.deletion.requestID, expectedRevision: doc.deletion.expectedRevision,
         deleteManagedSessions: doc.deletion.deleteManagedSessions, deletedAt: reservation.deletedAt, timeGeneration: doc.timeGeneration,
+        ...(checks.length ? { checks } : {}),
         ...(doc.creation?.author ? { creation: { requestID: doc.creation.requestID, digest: doc.creation.digest, author: doc.creation.author } } : {}) })
       await this.commit(this.key(id), tombstone, expectedRevision, current)
       return tombstone

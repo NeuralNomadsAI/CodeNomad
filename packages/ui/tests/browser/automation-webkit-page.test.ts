@@ -36,16 +36,22 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const tree = await cdp.send("Page.getFrameTree")
     const world = await cdp.send("Page.createIsolatedWorld", { frameId: tree.frameTree.frame.id, worldName: "codenomad-webkit" })
     const source = readFileSync(new URL("../../../server/src/automation/page/webkit/read.generated.js", import.meta.url), "utf8")
+    let expectedDocument: string
     const read = async (operation: PageOperation) => {
       if (operation.op === "pointer" || operation.op === "wheel") {
         await cdp.send("Input.dispatchMouseEvent", operation.event)
         return {}
       }
+      const request = operation.op === "checkpoint" ? operation : { ...operation, expectedDocument }
       const response = await cdp.send("Runtime.evaluate", { contextId: world.executionContextId,
-        expression: `(function(request){${source}\n})(${JSON.stringify(JSON.stringify(operation))})`, returnByValue: true })
+        expression: `(function(request){${source}\n})(${JSON.stringify(JSON.stringify(request))})`, returnByValue: true })
       assert.equal(response.exceptionDetails, undefined)
-      return JSON.parse(response.result.value).result
+      const { document, result } = JSON.parse(response.result.value)
+      if (operation.op === "checkpoint") expectedDocument = document
+      else assert.equal(document, expectedDocument)
+      return result
     }
+    await read({ op: "checkpoint" })
     const root = (await read({ op: "call", function: "document-root", args: [] })).handle
     const session = { driver: nativeDriver({ driver: "webkit", contractVersion: 1 }, read, async () => {}),
       markAutomation: false, checkpoint: async () => {} }
@@ -64,13 +70,13 @@ test("WebKit reader finds composed text and accepts shadow descendants without a
     const frame = nodes.find((node: any) => node.role === "Iframe")
     await performAction(session, { kind: "click", ref: "frame", backendNodeId: frame.node })
     await page.waitForFunction(() => (document.querySelector("iframe")!.contentDocument!.body.dataset.clicked === "true"))
-    await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, direction: "down", amount: 200 })
+    await performAction(session, { kind: "scroll", target: { ref: "frame", backendNodeId: frame.node }, delta: { x: 0, y: 200 } })
     await page.waitForFunction(() => document.querySelector("iframe")!.contentWindow!.scrollY > 0)
-    // The shared CDP program accepts same-origin document ancestry and rejects unrelated hits.
+    // A frame owns its document's hit; an ancestor outside the frame does not.
     assert.deepEqual(await page.evaluate(source => {
       const frame = document.querySelector("iframe")!, receives = new Function(`return (${source})`)()
       return [receives.call(frame, frame.contentDocument!.body), receives.call(document.body, frame.contentDocument!.body), typeof receives.call(frame, document.body)]
-    }, declaration("receives", false)), [null, null, "string"])
+    }, declaration("receives", false)), [null, 'body "Frame phrase"', "string"])
     await page.locator("iframe").evaluate(frame => {
       frame.setAttribute("aria-disabled", "true")
       frame.contentDocument!.body.insertAdjacentHTML("beforeend", '<input aria-label="Frame disabled field">')

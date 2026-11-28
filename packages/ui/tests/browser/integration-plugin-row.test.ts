@@ -111,19 +111,12 @@ test("one Plugins row per integration: display name, version and accent switches
     assert.equal(await row(page).getAttribute("data-integration"), "blender")
     await row(page).getByRole("checkbox", { name: "Enable or disable OpenCode for Blender — Global" }).waitFor()
 
-    // The default accent switch, exactly like Yolo; only plain plugin and MCP rows use the green variant.
-    const accent = await resolved(page, "--session-yolo-accent")
-    assert.equal(accent, await resolved(page, "--accent-primary"))
+    // Plain plugin and MCP rows use the green variant.
+    const accent = await resolved(page, "--accent-primary")
     // The track animates its colour: wait for it to settle.
     await page.waitForFunction(expected => getComputedStyle(document.querySelector('[data-plugin-id="neuralnomads.blender"] [data-scope="global"] .MuiSwitch-track')!).backgroundColor === expected, accent)
-      .catch(async () => assert.equal(await trackColor(page, "blender"), accent, "an integration's checked switch is the Yolo accent"))
+      .catch(async () => assert.equal(await trackColor(page, "blender"), accent, "an integration's checked switch uses the primary accent"))
     assert.notEqual(await page.locator('[data-plugin-id="other.plugin"] [data-scope="global"] .MuiSwitch-track').evaluate(element => getComputedStyle(element).backgroundColor), accent)
-    // The real Yolo switch, turned on, has exactly the same colour.
-    await page.locator(".yolo-mode-switch input").click()
-    await page.waitForFunction(expected => getComputedStyle(document.querySelector(".yolo-mode-switch .MuiSwitch-track")!).backgroundColor === expected, accent)
-    assert.equal(await page.locator(".yolo-mode-switch .MuiSwitch-thumb").evaluate(element => getComputedStyle(element).backgroundColor),
-      await row(page).locator('[data-scope="global"] .MuiSwitch-thumb').evaluate(element => getComputedStyle(element).backgroundColor))
-    if (screenshots) await page.screenshot({ path: join(screenshots, "integration-plugins-yolo.png"), fullPage: true })
     // The Project switch of a native integration is locked to Global and stays focusable.
     assert.equal(await row(page).locator('[data-scope="project"]').getAttribute("title"), "Global only")
 
@@ -652,6 +645,7 @@ test("ambiguous identities cannot claim a plain row, and inactive panels or unlo
     assert.equal(count("read"), reads)
     assert.equal(count("binding"), 0)
     await fx(page, "active", true)
+    await waitFor(() => count("binding") > 0, "the active panel reads the loaded integration's binding")
     await waitLink(page, "none")
     assert.equal(count("binding"), 1, "only the loaded integration of the active panel")
   } finally { await page.close() }

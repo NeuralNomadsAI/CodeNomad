@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url"
 import { setImmediate as nextTurn } from "node:timers/promises"
 import Fastify from "fastify"
 import { parse } from "jsonc-parser"
+import { hostPluginControlDocumentFileSystem, type PluginControlDocumentFileSystem } from "./plugin-control-document"
 import { PluginControls } from "./plugin-controls"
 import { PluginSources } from "./plugin-sources"
 import { registerPluginSourceRoutes } from "../server/routes/plugin-sources"
@@ -210,7 +211,389 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
-  it("removes exactly the displayed entry, leaves activation rules, and refuses a stale index", async () => {
+  it("removes a plugin's exact rules with its source, in that document only, for active and failed plugins", async () => {
+    const f = await fixture()
+    try {
+      const text = '{\n  // keep\n  "plugins": [\n    "@acme/ponytail@4.13.0",\n    "broken@1",\n    "keep@1",\n    "-ponytail",\n    "ponytail",\n'
+        + '    "-broken.id",\n    "broken.id",\n    "-keep.id",\n    "keep.id",\n    "*",\n    "-ponytail.*"\n  ]\n}\n'
+      await writeFile(f.globalFile, text)
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["-ponytail", "ponytail"] }))
+      f.state.runtime = [
+        { id: "ponytail", source: { type: "package", target: "@acme/ponytail@4.13.0" }, features: {}, state: { status: "active" } },
+        { id: "broken.id", source: { type: "package", target: "broken@1" }, features: {}, state: { status: "failed", error: "incompatible" } },
+        { id: "keep.id", source: { type: "package", target: "keep@1" }, features: {}, state: { status: "active" } },
+      ]
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/ponytail@4.13.0", entryIndex: 0, expectedRevision: await revision(f) })
+      const saved = await readFile(f.globalFile, "utf8")
+      assert.match(saved, /\/\/ keep\n/)
+      assert.deepEqual(parse(saved).plugins, ["broken@1", "keep@1", "-broken.id", "broken.id", "-keep.id", "keep.id", "*", "-ponytail.*"])
+      // Project's bare "ponytail" followed only the removed Global definition: it would become a package spec.
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["-ponytail"], "the Project disable stays, its bare ID goes")
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "broken@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id", "keep.id", "*", "-ponytail.*"])
+    } finally { await f.cleanup() }
+  })
+
+  it("reads a bare name OpenCode loaded as a package as a removable source, and removes orphan rules on request", async () => {
+    const f = await fixture()
+    try {
+      // The state an uninstall used to leave: the rules outlived the package, and OpenCode installed the bare name.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["keep@1", "-ponytail", "ponytail", "-keep.id"] }))
+      f.state.runtime = [
+        { id: "keep.id", source: { type: "package", target: "keep@1" }, features: {}, state: { status: "active" } },
+        { source: { type: "package", target: "ponytail" }, features: {}, state: { status: "failed", error: "Plugin must export a default definition" } },
+      ]
+      let snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, entryIndex }) => ({ target, entryIndex })),
+        [{ target: "keep@1", entryIndex: 0 }, { target: "ponytail", entryIndex: 2 }])
+      // A failed package that exported no ID may still define any ID: nothing is orphan while it is declared.
+      assert.deepEqual(snapshot.controls.map(({ id, orphan }) => ({ id, orphan })), [{ id: "keep.id", orphan: undefined }, { id: "ponytail", orphan: undefined }])
+      for (const pluginId of ["keep.id", "ponytail"]) {
+        await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId, expectedRevision: await revision(f) }), code("stale"), pluginId)
+      }
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "ponytail", entryIndex: 2, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-ponytail", "-keep.id"])
+      f.state.runtime = f.state.runtime.slice(0, 1)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "ponytail")?.orphan, true)
+      const response = await f.sources.remove("w", { location: f.location, scope: "global", pluginId: "ponytail", expectedRevision: await revision(f) })
+      assert.deepEqual(response, { scope: "global", spec: "ponytail", reloadPending: true })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["keep@1", "-keep.id"])
+      // A declaration OpenCode does not report (disabled, installing) may define the ID: its rules stay.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["disabled-package", "-hidden.id"] }))
+      snapshot = await f.controls.read("w", f.location)
+      assert.equal(snapshot.controls.find(control => control.id === "hidden.id")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "hidden.id", expectedRevision: await revision(f) }), code("stale"))
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["disabled-package", "-hidden.id"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule of a declared package that failed before exporting its ID", async () => {
+    const f = await fixture()
+    try {
+      // When the package recovers, removing "-acme.real" now would let it run despite the disable.
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["@acme/real-plugin", "-acme.real"] }))
+      f.state.runtime = [{ source: { type: "package", target: "@acme/real-plugin" }, features: {}, state: { status: "failed", error: "incompatible" } }]
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.real")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.real", expectedRevision: await revision(f) }), code("stale"))
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["@acme/real-plugin", "-acme.real"])
+    } finally { await f.cleanup() }
+  })
+
+  it("removes a bare ID that would precede the remaining definition, keeping its disabling rule", async () => {
+    const f = await fixture()
+    try {
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      for (const [globalPlugins, expected] of [
+        // Only the Project declaration remains, after Global: "acme.plugin" in Global would become a package spec.
+        [["@acme/plugin@1", "-acme.plugin", "acme.plugin"], ["-acme.plugin"]],
+        // An earlier Global declaration still defines it: the bare ID stays a selector.
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin", "acme.plugin"], ["@acme/plugin@1", "-acme.plugin", "acme.plugin"]],
+      ] as const) {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: globalPlugins }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: ["@acme/plugin@^1"] }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1",
+          entryIndex: globalPlugins.length === 3 ? 0 : 1, expectedRevision: await revision(f) })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, expected, String(globalPlugins))
+        assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@acme/plugin@^1"])
+      }
+    } finally { await f.cleanup() }
+  })
+
+  it("deletes the Project's bare ID that loses its Global definition in the same removal, or refuses writing nothing", async () => {
+    const f = await fixture()
+    try {
+      // "keep" is loaded with its own ID, so it cannot be another loader of acme.plugin.
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } },
+        { id: "keep.id", source: { type: "package", target: "keep" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const global = '{\n  // keep\n  "plugins": ["@acme/plugin@1", "-acme.plugin"]\n}\n'
+      const project = '{\n  // project\n  "plugins": ["keep", "acme.plugin", "-acme.plugin"]\n}\n'
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, project)
+      f.state.runtime = runtime
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      const saved = await readFile(f.projectFile, "utf8")
+      assert.match(saved, /\/\/ project/)
+      assert.deepEqual(parse(saved).plugins, ["keep", "-acme.plugin"], "the bare ID would follow no definition: a package spec")
+      // A verified Project declaration before the bare ID still defines it: nothing changes there.
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["@acme/plugin@^1", "acme.plugin"] }))
+      f.state.runtime = [...runtime, { ...runtime[0]!, source: { type: "package", target: "@acme/plugin@^1" } }]
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["@acme/plugin@^1", "acme.plugin"])
+      // A dependent bare ID in a document CodeNomad does not edit (a daemon-reported inline document) refuses the removal.
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, project)
+      f.state.runtime = runtime
+      const inline = { type: "document", info: { plugins: ["acme.plugin"] } }
+      const get = f.connection.client.config.get
+      f.connection.client.config.get = async () => [...await get(), inline]
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) }),
+        code("dependent-rule", "invalid"))
+      assert.equal(await readFile(f.globalFile, "utf8"), global, "a refusal writes nothing")
+      assert.equal(await readFile(f.projectFile, "utf8"), project)
+    } finally { await f.cleanup() }
+  })
+
+  it("commits the dependent cleanup before the source removal, so a failed last commit leaves a valid configuration", async t => {
+    const f = await fixture()
+    try {
+      f.state.runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const global = JSON.stringify({ plugins: ["@acme/plugin@1", "-acme.plugin"] })
+      await writeFile(f.globalFile, global)
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["keep", "acme.plugin"] }))
+      const expectedRevision = await revision(f)
+      let commits = 0
+      const fileSystem = hostPluginControlDocumentFileSystem as Required<PluginControlDocumentFileSystem>
+      const prepare = fileSystem.prepare.bind(fileSystem)
+      t.mock.method(fileSystem, "prepare", async (...args: Parameters<typeof prepare>) => {
+        const write = await prepare(...args)
+        return { ...write, commit: async () => { if (++commits === 2) throw new Error("injected commit failure"); await write.commit() } }
+      })
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision }), /injected/)
+      // The Global source still defines the plugin; the Project's bare ID that depended on it is already gone.
+      assert.equal(await readFile(f.globalFile, "utf8"), global)
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["keep"])
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule while a plugin(s)/ folder still discovers the plugin", async () => {
+    const f = await fixture()
+    try {
+      // Removing the explicit declaration leaves the discovered plugin loaded in every project: its disable still applies.
+      // plugin.list reports the resolved server entrypoint of the discovered plugins/reviewer folder.
+      const discovered = path.join(path.dirname(f.globalFile), "plugins", "reviewer", "index.js")
+      await mkdir(path.dirname(discovered), { recursive: true })
+      await writeFile(discovered, "export default {}\n")
+      f.state.runtime = [{ id: "acme.reviewer", source: { type: "local", path: discovered }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["./plugins/reviewer", "-acme.reviewer"] }))
+      await writeFile(f.projectFile, JSON.stringify({ plugins: ["acme.reviewer"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "./plugins/reviewer", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["-acme.reviewer"])
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, ["acme.reviewer"], "discovery still defines it before Project")
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps the disabling rule unless no other loader is provable: a junctioned discovery child or another inventory entry", async t => {
+    const f = await fixture()
+    try {
+      const external = path.join(f.root, "external-reviewer")
+      await mkdir(external, { recursive: true })
+      await writeFile(path.join(external, "index.js"), "export default {}\n")
+      const reviewer = { id: "acme.reviewer", source: { type: "local", path: path.join(external, "index.js") }, features: {}, state: { status: "active" } }
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      const remove = async (runtime: unknown[]) => {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: [external, "-acme.reviewer"] }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: ["acme.reviewer"] }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: external, entryIndex: 0, expectedRevision: await revision(f) })
+        return parse(await readFile(f.globalFile, "utf8")).plugins
+      }
+      // Provably no other loader: the disabling rule goes with the source.
+      assert.deepEqual(await remove([reviewer]), [])
+      // Another inventory entry of the ID, whatever its path, may still load it.
+      assert.deepEqual(await remove([reviewer, { ...reviewer, source: { type: "local", path: path.join(f.root, "elsewhere", "index.js") } }]), ["-acme.reviewer"])
+      // global/plugins/reviewer junctions to the declared folder: native discovery still loads it in every project.
+      await mkdir(path.join(path.dirname(f.globalFile), "plugins"), { recursive: true })
+      try {
+        await symlink(external, path.join(path.dirname(f.globalFile), "plugins", "reviewer"), process.platform === "win32" ? "junction" : "dir")
+      } catch (error) {
+        t.skip(`symbolic links unavailable: ${(error as NodeJS.ErrnoException).code}`)
+        return
+      }
+      assert.deepEqual(await remove([reviewer]), ["-acme.reviewer"], "the disable still applies to the discovered plugin")
+      // The bare ID lost its only verified definition, so it would be a package spec: it still goes.
+      assert.deepEqual(parse(await readFile(f.projectFile, "utf8")).plugins, [])
+    } finally { await f.cleanup() }
+  })
+
+  it("applies one loader proof to orphan rows, rule-only removal and source removal", async () => {
+    const f = await fixture()
+    try {
+      // A disabled discovered plugin is absent from the inventory, but its file still loads it once the disable goes.
+      const discovered = path.join(path.dirname(f.globalFile), "plugins", "reviewer.js")
+      await mkdir(path.dirname(discovered), { recursive: true })
+      await writeFile(discovered, "export default {}\n")
+      const text = JSON.stringify({ plugins: ["-acme.reviewer"] })
+      await writeFile(f.globalFile, text)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.reviewer")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.reviewer", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text, "the disable stays")
+      // Without the file, nothing can load it: the row is orphan and its rule removable.
+      await rm(discovered)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "acme.reviewer")?.orphan, true)
+      await f.sources.remove("w", { location: f.location, scope: "global", pluginId: "acme.reviewer", expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      // A declaration without an exported ID may be another loader: removing a source keeps the disable.
+      f.state.runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await writeFile(f.globalFile, JSON.stringify({ plugins: ["@acme/plugin@1", "unreported-package", "-acme.plugin"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["unreported-package", "-acme.plugin"])
+    } finally { await f.cleanup() }
+  })
+
+  it("identifies a discovery child only by its own entrypoint, never by a nested plugin's inventory", async () => {
+    const f = await fixture()
+    try {
+      // plugins/bundle/index.js is the disabled outer plugin (absent from the inventory); plugins/bundle/other is a
+      // separate plugin declared in Project. The child "bundle" still loads bundle.disabled once its disable goes.
+      const bundle = path.join(path.dirname(f.globalFile), "plugins", "bundle")
+      await mkdir(path.join(bundle, "other"), { recursive: true })
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "other", "index.js"), "export default {}\n")
+      f.state.runtime = [{ id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [path.join(bundle, "other")] }))
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // The child's own entrypoint identifies it: with the outer plugin reported under another ID, nothing loads bundle.disabled.
+      f.state.runtime.push({ id: "bundle.outer", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } })
+      assert.equal((await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan, true)
+    } finally { await f.cleanup() }
+  })
+
+  it("maps a discovery folder only to its selected entrypoint, server before index", async t => {
+    const f = await fixture()
+    try {
+      // Host.resolve(bundle) selects server.js (the disabled bundle.disabled, absent from the inventory); the index.js
+      // module reported as bundle.other does not identify the child.
+      const plugins = path.join(path.dirname(f.globalFile), "plugins")
+      const bundle = path.join(plugins, "bundle")
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "server.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      f.state.runtime = [{ id: "bundle.other", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } }]
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const orphan = async () => (await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan
+      assert.equal(await orphan(), undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // A separate discovered other.js linked to that index file is identified by it through its resolved path.
+      try {
+        await symlink(path.join(bundle, "index.js"), path.join(plugins, "other.js"), "file")
+        assert.equal(await orphan(), undefined, "the bundle child still selects server.js")
+      } catch (error) {
+        if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+        t.diagnostic("file symbolic links unavailable: other.js case skipped")
+      }
+    } finally { await f.cleanup() }
+  })
+
+  it("decides that discovery skips a folder only on proof; every doubt keeps the disable", async t => {
+    const f = await fixture()
+    try {
+      const bundle = path.join(path.dirname(f.globalFile), "plugins", "bundle")
+      const text = JSON.stringify({ plugins: ["-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const orphan = async () => (await f.controls.read("w", f.location)).controls.find(control => control.id === "bundle.disabled")?.orphan
+      const kept = async (label: string) => {
+        assert.equal(await orphan(), undefined, label)
+        await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"), label)
+        assert.equal(await readFile(f.globalFile, "utf8"), text, label)
+        await rm(bundle, { recursive: true, force: true })
+      }
+      // Proof: a folder with no entry that could resolve as server or index is skipped natively.
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "readme.md"), "")
+      assert.equal(await orphan(), true)
+      await rm(bundle, { recursive: true, force: true })
+      // Case-insensitive file systems resolve Server.js for "server".
+      await mkdir(bundle, { recursive: true })
+      await writeFile(path.join(bundle, "Server.js"), "export default {}\n")
+      await kept("Server.js")
+      // A link to an internal file whose name starts with "..", and a link leaving the folder.
+      for (const [label, target] of [["..entry.js", path.join(bundle, "..entry.js")], ["outside", path.join(f.root, "outside.js")]] as const) {
+        await mkdir(bundle, { recursive: true })
+        await writeFile(target, "export default {}\n")
+        try {
+          await symlink(target, path.join(bundle, "server.js"), "file")
+        } catch (error) {
+          if (!["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error
+          t.diagnostic(`file symbolic links unavailable: ${label} case skipped`)
+          continue
+        }
+        await kept(label)
+      }
+    } finally { await f.cleanup() }
+  })
+
+  it("identifies an explicit local declaration only by its own selected entrypoint", async () => {
+    const f = await fixture()
+    try {
+      // bundle/index.js is the disabled outer plugin (absent from the inventory); bundle/other is a separate plugin.
+      const bundle = path.join(f.root, "bundle")
+      await mkdir(path.join(bundle, "other"), { recursive: true })
+      await writeFile(path.join(bundle, "index.js"), "export default {}\n")
+      await writeFile(path.join(bundle, "other", "index.js"), "export default {}\n")
+      const other = { id: "bundle.other", source: { type: "local", path: path.join(bundle, "other", "index.js") }, features: {}, state: { status: "active" } }
+      f.state.runtime = [other]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [path.join(bundle, "other")] }))
+      const text = JSON.stringify({ plugins: [bundle, "-bundle.disabled"] })
+      await writeFile(f.globalFile, text)
+      const snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, pluginId }) => ({ target, pluginId })),
+        [{ target: bundle, pluginId: undefined }, { target: path.join(bundle, "other"), pluginId: "bundle.other" }], "the nested plugin does not identify the outer declaration")
+      assert.equal(snapshot.controls.find(control => control.id === "bundle.disabled")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "bundle.disabled", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+      // The removed source accounts only for the entry at its own entrypoint: another entry of its ID inside it is
+      // another loader, so its disable stays.
+      const outer = { id: "bundle.outer", source: { type: "local", path: path.join(bundle, "index.js") }, features: {}, state: { status: "active" } }
+      f.state.runtime = [outer, { ...outer, source: { type: "local", path: path.join(bundle, "other", "index.js") } }]
+      await writeFile(f.projectFile, JSON.stringify({ plugins: [] }))
+      await writeFile(f.globalFile, JSON.stringify({ plugins: [bundle, "-bundle.outer"] }))
+      await f.sources.remove("w", { location: f.location, scope: "global", target: bundle, entryIndex: 0, expectedRevision: await revision(f) })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["-bundle.outer"])
+    } finally { await f.cleanup() }
+  })
+
+  it("reads a bare name after its own -rule as a package declaration, never an orphan rule", async () => {
+    const f = await fixture()
+    try {
+      // "-foo" defines nothing: OpenCode installs "foo" from the registry, so it is a source whose ID is unknown.
+      const text = JSON.stringify({ plugins: ["-foo", "foo"] })
+      await writeFile(f.globalFile, text)
+      const snapshot = await f.controls.read("w", f.location)
+      assert.deepEqual(snapshot.configured.sources.map(({ target, entryIndex }) => ({ target, entryIndex })), [{ target: "foo", entryIndex: 1 }])
+      assert.equal(snapshot.controls.find(control => control.id === "foo")?.orphan, undefined)
+      await assert.rejects(f.sources.remove("w", { location: f.location, scope: "global", pluginId: "foo", expectedRevision: await revision(f) }), code("stale"))
+      assert.equal(await readFile(f.globalFile, "utf8"), text)
+    } finally { await f.cleanup() }
+  })
+
+  it("keeps a plugin's rules while another declaration of it remains in any applicable document", async () => {
+    const f = await fixture()
+    try {
+      const runtime = [{ id: "acme.plugin", source: { type: "package", target: "@acme/plugin@1" }, features: {}, state: { status: "active" } }]
+      await mkdir(path.dirname(f.projectFile), { recursive: true })
+      for (const [globalPlugins, projectPlugins, entryIndex, expected] of [
+        // A second Global declaration, enabled only in this Project: other projects keep it disabled.
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin"], ["acme.plugin"], 0, ["@acme/plugin@1", "-acme.plugin"]],
+        [["@acme/plugin@1", "@acme/plugin@1", "-acme.plugin"], ["acme.plugin"], 1, ["@acme/plugin@1", "-acme.plugin"]],
+        // Another spec of the same package in Project.
+        [["@acme/plugin@1", "-acme.plugin"], ["@acme/plugin@^1"], 0, ["-acme.plugin"]],
+      ] as const) {
+        await writeFile(f.globalFile, JSON.stringify({ plugins: globalPlugins }))
+        await writeFile(f.projectFile, JSON.stringify({ plugins: projectPlugins }))
+        f.state.runtime = runtime
+        await f.sources.remove("w", { location: f.location, scope: "global", target: "@acme/plugin@1", entryIndex, expectedRevision: await revision(f) })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, expected, `${globalPlugins} / ${projectPlugins} @${entryIndex}`)
+      }
+    } finally { await f.cleanup() }
+  })
+
+  it("removes exactly the displayed entry, keeps the rules of an unknown plugin ID, and refuses a stale index", async () => {
     const f = await fixture()
     try {
       const text = '{\n  "plugins": [\n    "keep",\n    { "package": "fixture-plugin", "options": { "x": 1 } },\n    "-fixture.package"\n  ]\n}\n'
@@ -247,7 +630,7 @@ describe("plugin source mutations", () => {
         } })
         assert.equal(response.statusCode, 200)
         assert.equal(response.body.includes("SECRET_SENTINEL"), false)
-        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")), { plugins: ["-neuralnomads.fixture"], keep: true })
+        assert.deepEqual(parse(await readFile(f.globalFile, "utf8")), { plugins: [], keep: true }, "its rule goes with the source")
         assert.equal(f.state.runtime.length, 1, "durable removal never claims all runtimes stopped")
       }
       assert.deepEqual(f.state.rpcCalls, [], "zero status, binding, detach or census RPCs")
@@ -414,6 +797,8 @@ describe("plugin source routes", () => {
         assert.equal((await app.inject({ method: "POST", url, payload })).statusCode, 400)
       }
       assert.equal((await app.inject({ method: "DELETE", url, payload: { location: f.location, scope: "global", target: "x", entryIndex: -1 } })).statusCode, 400)
+      assert.equal((await app.inject({ method: "DELETE", url, payload: { location: f.location, scope: "global", target: "x", entryIndex: 0,
+        pluginId: "x", expectedRevision: "a".repeat(64) } })).statusCode, 400, "a source or an ID, never both")
       const local = await app.inject({ method: "POST", url, payload: { location: f.location, scope: "global", spec: "./local" } })
       assert.equal(local.statusCode, 422)
       assert.equal(local.json().code, "local-path")

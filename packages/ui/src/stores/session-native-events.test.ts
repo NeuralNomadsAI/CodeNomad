@@ -2,14 +2,94 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
+import { serverApi } from "../lib/api-client.ts"
+import { serverEvents } from "../lib/server-events.ts"
+import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { createClientSession } from "../types/session.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
+import { refreshSessionRuntimeStatus } from "./session-api.ts"
 import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
+import { emptyLatestWindow } from "./message-v2/message-window.ts"
+import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
 
 describe("native session event reducer", () => {
+  it("projects rename titles and reads only missing metadata, retaining the latest title in flight", async () => {
+    const instanceId = "native-session-rename"
+    let reads = 0
+    let reply!: (info: any) => void
+    const client = { session: { get: () => {
+      reads++
+      return new Promise(resolve => { reply = resolve })
+    } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    sseManager.seedStatus(instanceId, "connected")
+    const rename = (sessionID: string, title: string) => {
+      const event = { id: title, type: "session.renamed", created: 2, location: { directory: "/work" },
+        data: { sessionID, title } } as const
+      handleInstanceInvalidation(instanceId, event as any)
+      handleNativeSessionEvent(instanceId, event as any)
+    }
+    try {
+      const info = { id: "known", location: { directory: "/work" }, projectID: "project", title: "Old",
+        time: { created: 1, updated: 1 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map([["known", { ...info, parentId: null, instanceId, status: "idle" } as any]])))
+      rename("known", "New")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(reads, 0)
+      assert.equal(sessions().get(instanceId)?.get("known")?.title, "New")
+      const archive = (sessionID: string, type: "session.archived" | "session.unarchived", created: number) =>
+        handleNativeSessionEvent(instanceId, { id: type, type, created, data: { sessionID } } as any)
+      rename("cold", "First")
+      rename("cold", "Second")
+      archive("cold", "session.archived", 3)
+      assert.equal(reads, 1)
+      reply({ ...info, id: "cold", parentID: "known" })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Second")
+      assert.equal(sessions().get(instanceId)?.get("cold")?.time.archived, 3)
+      rename("cold", "Third")
+      assert.equal(reads, 1)
+      assert.equal(sessions().get(instanceId)?.get("cold")?.title, "Third")
+
+      rename("listed", "Rename before list")
+      const listRow = { ...info, id: "listed", parentId: "known", instanceId, status: "idle" } as any
+      setSessions(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(listRow.id, listRow)))
+      archive("listed", "session.archived", 3)
+      archive("listed", "session.unarchived", 4)
+      reply({ ...info, id: "listed", parentID: "known", time: { ...info.time, archived: 1 } })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(reads, 2)
+      assert.equal(sessions().get(instanceId)?.get("listed")?.title, "Rename before list")
+      assert.equal(sessions().get(instanceId)?.get("listed")?.time.archived, undefined)
+
+      rename("newer", "Superseded rename")
+      archive("newer", "session.archived", 3)
+      reply({ ...info, id: "newer", title: "Newer snapshot", time: { ...info.time, updated: 5 } })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("newer")?.title, "Newer snapshot")
+      assert.equal(sessions().get(instanceId)?.get("newer")?.time.archived, undefined)
+
+      rename("newer-list", "Superseded rename")
+      const newerRow = { ...listRow, id: "newer-list", title: "Newer list", time: { ...info.time, updated: 5 } }
+      setSessions(previous => new Map(previous).set(instanceId, new Map(previous.get(instanceId)).set(newerRow.id, newerRow)))
+      rename("newer-list", "Late event")
+      archive("newer-list", "session.archived", 3)
+      reply({ ...info, id: "newer-list", parentID: "known" })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sessions().get(instanceId)?.get("newer-list")?.title, "Newer list")
+      assert.equal(sessions().get(instanceId)?.get("newer-list")?.time.archived, undefined)
+    } finally {
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("preserves durable session metadata and recognizes the streamed step boundary", () => {
     const instanceId = "native-session-metadata"
     const sessionId = "session"
@@ -33,6 +113,49 @@ describe("native session event reducer", () => {
     } finally {
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  for (const retry of [false, true]) it(`drops ${retry ? "backoff after a new attempt" : "compaction after settlement"} from a shared cold read`, async () => {
+    const instanceId = `shared-status-read-${retry}`
+    const sessionId = "cold"
+    let reads = 0
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const info = {
+      id: sessionId, title: "old", projectID: "project", version: "1",
+      location: { directory: "/work" }, time: { created: 1, updated: 1 },
+      cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    }
+    const client = { session: { active: async () => ({}), get: async () => { reads++; await gate; return info } } } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    let seq = 0
+    const emit = (type: string, extra = {}) => handleNativeSessionEvent(instanceId, {
+      id: `event-${++seq}`, type, created: seq + 1, location: info.location,
+      durable: { aggregateID: sessionId, seq, version: 1 }, data: { sessionID: sessionId, ...extra },
+    } as any)
+    const row = () => sessions().get(instanceId)?.get(sessionId)
+    try {
+      emit("session.renamed", { title: "Renamed" })
+      if (retry) emit("session.retry.scheduled", { assistantMessageID: "msg_retry", attempt: 1, at: Date.now() + 5_000,
+        error: { name: "UnknownError", message: "Provider backoff" } })
+      else emit("session.compaction.started")
+      assert.equal(reads, 1)
+      setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, createClientSession(info as any, instanceId)]])))
+      await emit(retry ? "session.execution.started" : "session.execution.succeeded")
+      const expectedStatus = retry ? "working" : "idle"
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+      release()
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(row()?.title, "Renamed")
+      assert.equal(row()?.status, expectedStatus)
+      assert.equal(row()?.retry, null)
+    } finally {
+      release()
       removeInstance(instanceId, { authoritative: false })
       sdkManager.destroyClientsForInstance(instanceId)
     }
@@ -354,6 +477,204 @@ describe("native session event reducer", () => {
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.generationRecovery, null)
     } finally {
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reloads a watched transcript when a pending prompt settles without any SSE events", async () => {
+    const instanceId = "native-pending-settlement-reload"
+    const sessionId = "session"
+    const prompt = { id: "user-1", type: "user", text: "first prompt", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "reply without events" }],
+    }
+    let messageReads = 0
+    const client = {
+      session: {
+        active: async () => ({}),
+        get: async () => ({
+          id: sessionId, title: sessionId, projectID: "project", location: { directory: "/work" },
+          time: { created: 1, updated: 3, idle: 3 }, outcome: "succeeded",
+        }),
+      },
+      message: {
+        list: async () => {
+          messageReads += 1
+          return { data: [reply, prompt], cursor: {} }
+        },
+      },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const normalized = normalizeSessionMessage(sessionId, prompt as any)
+    seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+    store.setMessageWindow(sessionId, emptyLatestWindow())
+    setMessagesLoaded((previous) => new Map(previous).set(instanceId, new Set([sessionId])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "idle", retry: null,
+      idleSince: 1, generationRecovery: "pending", generationAdmissionEpoch: 1,
+      generationAdmissionIdleBoundary: 1, runtimeStatusKnown: true,
+      projectID: "project", location: { directory: "/work" }, time: { created: 1, updated: 1, idle: 1 },
+    } as any]])))
+    setActiveSession(instanceId, sessionId)
+
+    try {
+      await refreshSessionRuntimeStatus(instanceId)
+      for (let attempt = 0; attempt < 20 && !store.getSessionMessageIds(sessionId).includes("assistant-1"); attempt += 1) {
+        await delay(5)
+      }
+      assert.equal(messageReads, 1)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["user-1", "assistant-1"])
+      assert.equal(sessions().get(instanceId)?.get(sessionId)?.generationRecovery, null)
+    } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reloads a watched transcript when execution succeeds while only the user prompt is visible", async () => {
+    const instanceId = "native-succeeded-missing-reply"
+    const sessionId = "session"
+    const prompt = { id: "user-1", type: "user", text: "first prompt", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "reloaded reply" }],
+    }
+    let messageReads = 0
+    const client = {
+      session: { active: async () => ({}) },
+      message: {
+        list: async () => {
+          messageReads += 1
+          return { data: [reply, prompt], cursor: {} }
+        },
+      },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const normalized = normalizeSessionMessage(sessionId, prompt as any)
+    seedSessionMessagesV2(instanceId, { id: sessionId }, [normalized.message], new Map([[normalized.info.id, normalized.info]]))
+    store.setMessageWindow(sessionId, emptyLatestWindow())
+    setMessagesLoaded((previous) => new Map(previous).set(instanceId, new Set([sessionId])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, {
+      id: sessionId, instanceId, parentId: null, title: sessionId, agent: "build",
+      model: { providerId: "provider", modelId: "model" }, status: "working", retry: null,
+      idleSince: null, generationRecovery: null, runtimeStatusKnown: true,
+      projectID: "project", location: { directory: "/work" }, time: { created: 1, updated: 1 },
+    } as any]])))
+    setActiveSession(instanceId, sessionId)
+
+    try {
+      handleNativeSessionEvent(instanceId, {
+        id: "succeeded", created: 3, type: "session.execution.succeeded",
+        durable: { aggregateID: sessionId, seq: 1, version: 1 },
+        data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      for (let attempt = 0; attempt < 20 && !store.getSessionMessageIds(sessionId).includes("assistant-1"); attempt += 1) {
+        await delay(5)
+      }
+      assert.equal(messageReads, 1)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["user-1", "assistant-1"])
+    } finally {
+      messageStoreBus.unregisterInstance(instanceId)
+      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+      clearInstanceDeletedSessionAuthority(instanceId)
+      removeInstance(instanceId, { authoritative: false })
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconnect resync keeps syncing inboxes for all loaded sessions while reloading the active transcript in parallel", async () => {
+    const instanceId = "native-reconnect-inbox-and-active"
+    const activeId = "session-1"
+    const backgroundId = "session-2"
+    const inboxReads: string[] = []
+    let messageReads = 0
+    let releasePending!: () => void
+    const pendingGate = new Promise<void>((resolve) => { releasePending = resolve })
+    const originalPending = serverApi.getPendingRequests
+    const originalWorktrees = serverApi.fetchWorktrees
+    const prompt = { id: "user-1", type: "user", text: "prompt", time: { created: 1, completed: 1 } }
+    const reply = {
+      id: "assistant-1", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 2, completed: 3 },
+      content: [{ type: "text", text: "after reconnect" }],
+    }
+    const nativeRow = (id: string) => ({
+      id, title: id, projectID: "project", location: { directory: "/work" },
+      time: { created: 1, updated: 3 }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    })
+    const client = {
+      session: {
+        list: async () => ({ data: [nativeRow(activeId), nativeRow(backgroundId)], cursor: {} }),
+        active: async () => ({}),
+        inbox: {
+          list: async ({ sessionID }: { sessionID: string }) => {
+            inboxReads.push(sessionID)
+            return { data: [] }
+          },
+        },
+      },
+      message: {
+        list: async () => {
+          messageReads += 1
+          return { data: [reply, prompt], cursor: {} }
+        },
+      },
+      agent: { list: async () => ({ data: [] }) },
+      provider: { list: async () => ({ data: { all: [], connected: [], default: {} } }) },
+      command: { list: async () => ({ data: [] }) },
+      location: { get: async () => ({ directory: "/work", project: { id: "project", directory: "/work", canonical: "/work" } }) },
+    } as any
+    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+    const store = messageStoreBus.getOrCreate(instanceId)
+    store.setMessageWindow(activeId, emptyLatestWindow())
+    setMessagesLoaded((previous) => new Map(previous).set(instanceId, new Set([activeId, backgroundId])))
+    setSessions((previous) => new Map(previous).set(instanceId, new Map([
+      [activeId, { ...nativeRow(activeId), instanceId, parentId: null, status: "idle", agent: "build", model: { providerId: "provider", modelId: "model" } } as any],
+      [backgroundId, { ...nativeRow(backgroundId), instanceId, parentId: null, status: "idle", agent: "build", model: { providerId: "provider", modelId: "model" } } as any],
+    ])))
+    setActiveSession(instanceId, activeId)
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [{ slug: "root", directory: "/work", kind: "root" }] })
+    serverApi.getPendingRequests = async (_id, directories) => {
+      await pendingGate
+      return {
+        supported: true,
+        directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }] })),
+      }
+    }
+
+    try {
+      ;(serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "error", reason: "event routing failed" })
+      ;(serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId, status: "connected" })
+      for (let attempt = 0; attempt < 40 && (messageReads === 0 || inboxReads.length < 2); attempt += 1) {
+        await delay(5)
+      }
+      assert.equal(messageReads, 1, "active session reloads without waiting for pending-request recovery")
+      assert.deepEqual([...inboxReads].sort(), [activeId, backgroundId], "every loaded session still gets its inbox synced")
+      assert.deepEqual(store.getSessionMessageIds(activeId), ["user-1", "assistant-1"])
+      assert.equal(messagesLoaded().get(instanceId)?.has(backgroundId), false, "inactive loaded session was invalidated")
+    } finally {
+      releasePending()
+      serverApi.getPendingRequests = originalPending
+      serverApi.fetchWorktrees = originalWorktrees
+      messageStoreBus.unregisterInstance(instanceId)
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })

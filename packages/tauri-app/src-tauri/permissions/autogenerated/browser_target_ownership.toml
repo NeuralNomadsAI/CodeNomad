@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-target-ownership"
+description = "Enables the browser_target_ownership command without any pre-configured scope."
+commands.allow = ["browser_target_ownership"]
+
+[[permission]]
+identifier = "deny-browser-target-ownership"
+description = "Denies the browser_target_ownership command without any pre-configured scope."
+commands.deny = ["browser_target_ownership"]

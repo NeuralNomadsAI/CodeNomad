@@ -8,105 +8,57 @@ export async function blobToBase64(blob: Blob): Promise<string> {
   return btoa(binary)
 }
 
-export function createMediaRecorder(stream: MediaStream): MediaRecorder {
-  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]
-  const supported = candidates.find(
-    (candidate) => typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate),
+export function supportedRecordingType() {
+  return ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"].find(
+    candidate => typeof MediaRecorder !== "undefined" &&
+      (typeof MediaRecorder.isTypeSupported !== "function" || MediaRecorder.isTypeSupported(candidate)),
   )
-  return supported ? new MediaRecorder(stream, { mimeType: supported }) : new MediaRecorder(stream)
 }
 
-export function stopTracks(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => track.stop())
+export function createMediaRecorder(stream: MediaStream): MediaRecorder {
+  const supported = supportedRecordingType()
+  return new MediaRecorder(stream, { audioBitsPerSecond: 128_000, ...(supported ? { mimeType: supported } : {}) })
 }
 
-export function createObjectUrlFromBase64(audioBase64: string, mimeType: string): string {
-  const binary = atob(audioBase64)
-  const bytes = new Uint8Array(binary.length)
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index)
-  }
-  return URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/mpeg" }))
-}
-
-export async function streamToMediaSource(options: {
-  mediaSource: MediaSource
-  stream: ReadableStream<Uint8Array>
-  mimeType: string
-  onPlayable: () => Promise<void>
-  onComplete?: () => void
-  onError: (error: unknown) => void
-  appendErrorMessage: () => string
-}) {
+export async function streamToMediaSource(
+  media: MediaSource, stream: ReadableStream<Uint8Array>, mime: string,
+  signal: AbortSignal, play: () => void, error: () => Error,
+) {
+  if (signal.aborted) throw signal.reason
+  const source = media.addSourceBuffer(mime)
+  const reader = stream.getReader()
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener("abort", cancel, { once: true })
   try {
-    const sourceBuffer = options.mediaSource.addSourceBuffer(options.mimeType)
-    const reader = options.stream.getReader()
-    const queue: Uint8Array[] = []
-    let processing = false
-    let startedPlayback = false
-
-    const flushQueue = async () => {
-      if (processing || sourceBuffer.updating || queue.length === 0) return
-      processing = true
-      const chunk = queue.shift()!
-      await appendChunk(sourceBuffer, chunk, options.appendErrorMessage)
-      if (!startedPlayback) {
-        startedPlayback = true
-        await options.onPlayable()
-      }
-      processing = false
-      await flushQueue()
-    }
-
+    let started = false
     while (true) {
       const { done, value } = await reader.read()
+      if (signal.aborted) throw signal.reason
       if (done) break
-      if (value && value.byteLength > 0) {
-        queue.push(value)
-        await flushQueue()
+      if (!value.byteLength) continue
+      await appendChunk(source, value, signal, error)
+      if (!started) {
+        started = true
+        play()
       }
     }
-
-    while (queue.length > 0 || sourceBuffer.updating) {
-      if (queue.length > 0) {
-        await flushQueue()
-      } else {
-        await waitForUpdateEnd(sourceBuffer)
-      }
-    }
-
-    if (options.mediaSource.readyState === "open") {
-      options.mediaSource.endOfStream()
-    }
-    options.onComplete?.()
-  } catch (error) {
-    options.onError(error)
+    if (media.readyState === "open") media.endOfStream()
+  } finally {
+    signal.removeEventListener("abort", cancel)
+    if (!signal.aborted) cancel()
+    reader.releaseLock()
   }
 }
 
-function appendChunk(sourceBuffer: SourceBuffer, chunk: Uint8Array, errorMessage: () => string): Promise<void> {
+function appendChunk(source: SourceBuffer, chunk: Uint8Array, signal: AbortSignal, error: () => Error): Promise<void> {
   return new Promise((resolve, reject) => {
-    const handleUpdateEnd = () => {
-      cleanup()
-      resolve()
-    }
-    const handleError = () => {
-      cleanup()
-      reject(new Error(errorMessage()))
-    }
-    const cleanup = () => {
-      sourceBuffer.removeEventListener("updateend", handleUpdateEnd)
-      sourceBuffer.removeEventListener("error", handleError)
-    }
-
-    sourceBuffer.addEventListener("updateend", handleUpdateEnd, { once: true })
-    sourceBuffer.addEventListener("error", handleError, { once: true })
-    sourceBuffer.appendBuffer(new Uint8Array(chunk).buffer)
-  })
-}
-
-function waitForUpdateEnd(sourceBuffer: SourceBuffer): Promise<void> {
-  return new Promise((resolve) => {
-    sourceBuffer.addEventListener("updateend", () => resolve(), { once: true })
+    if (signal.aborted) throw signal.reason
+    const listeners = new AbortController()
+    const once = { once: true, signal: listeners.signal }
+    const fail = (cause: unknown) => { listeners.abort(); reject(cause) }
+    source.addEventListener("updateend", () => { listeners.abort(); resolve() }, once)
+    source.addEventListener("error", () => fail(error()), once)
+    signal.addEventListener("abort", () => fail(signal.reason), once)
+    try { source.appendBuffer(new Uint8Array(chunk).buffer) } catch (cause) { fail(cause) }
   })
 }

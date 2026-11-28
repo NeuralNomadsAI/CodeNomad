@@ -33,7 +33,6 @@ patches.length = 0
 let newInstances = 0
 let temporaryInstances = 0, redos = 0
 const [visible, setVisible] = createSignal(true)
-const [home, setHome] = createSignal(false)
 const [hasInstance, setHasInstance] = createSignal(true)
 const [hasClient, setHasClient] = createSignal(true)
 const [sessionId, setSessionId] = createSignal<string | null>("session")
@@ -50,7 +49,7 @@ function Fixture() {
   const commands = useCommands({ ...config, ...actions })
   useAppLifecycle({
     ...actions, commands: commands.commands, executeCommand: commands.executeCommand,
-    setEscapeInDebounce: () => {}, showFolderSelection: home, setShowFolderSelection: setHome,
+    setEscapeInDebounce: () => {},
   })
   ;(window as any).commandFixture = {
     commands: () => commands.commands().map(({ id, shortcutId }) => ({ id, shortcutId })),
@@ -72,7 +71,7 @@ render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigPro
 ;(window as any).fixture = {
   newInstances: () => newInstances, config: () => config, patches: () => patches,
   isRecording: isHotkeyRecording, setVisible, failSave: (value: boolean) => { failSave = value },
-  temporaryInstances: () => temporaryInstances, redos: () => redos, setHome, setHasInstance, setHasClient, setSessionId,
+  temporaryInstances: () => temporaryInstances, redos: () => redos, setHasInstance, setHasClient, setSessionId,
   setMessages: (messages: { id: string; role: "user" | "assistant"; created?: number }[]) => {
     const store = messageStoreBus.getOrCreate("fixture")
     store.hydrateMessages("session",

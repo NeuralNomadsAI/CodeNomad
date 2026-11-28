@@ -189,7 +189,7 @@ function sql(input) {
       const { body, ...status } = row
       if (body === null) return { ...status, error: "sql-message-overflow" }
       const data = bounded(body), text = data.text
-      const schedule = data.metadata?.schedule
+      const schedule = data.metadata?.automation ?? data.metadata?.schedule
       return { ...status, textBytes: typeof text === "string" ? Buffer.byteLength(text) : null,
         textSHA256: typeof text === "string" ? hash(text) : null,
         schedule: schedule && { id: typeof schedule.id === "string" ? schedule.id : null,
@@ -201,8 +201,12 @@ function sql(input) {
       const column = table === "session_message" ? "data" : "payload"
       return proof(db.prepare(`SELECT ${textColumn("id")},${textColumn("type", 64)},time_created,length(CAST(${column} AS BLOB)) AS bytes,CASE WHEN length(CAST(${column} AS BLOB))<=262144 THEN ${column} END AS body FROM ${table} WHERE id=? AND session_id=?`).get(messageID, sessionID))
     }
+    const automation = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='automation'").get()
+    const table = automation ? "automation" : "schedule", timing = automation ? "trigger" : "when"
+    const calendarRow = db.prepare(`SELECT ${textColumn("id")},${textColumn("session_id")},${textColumn("status", 64)},next_due_at,run_count,time_created,time_updated,length(CAST("${timing}" AS BLOB)) AS when_bytes,CASE WHEN length(CAST("${timing}" AS BLOB))<=4096 THEN "${timing}" END AS native_when,${textColumn("last_outcome", 4096)},retry_at,${textColumn("last_message_id")} FROM ${table} WHERE id=?`)
     const schedules = slots.map(slot => {
-      const schedule = db.prepare(`SELECT ${textColumn("id")},${textColumn("session_id")},${textColumn("status", 64)},next_due_at,run_count,time_created,time_updated,length(CAST("when" AS BLOB)) AS when_bytes,CASE WHEN length(CAST("when" AS BLOB))<=4096 THEN "when" END AS native_when,${textColumn("last_outcome", 4096)},retry_at,${textColumn("last_message_id")} FROM schedule WHERE id=?`).get(slot.scheduleID)
+      const id = automation ? slot.scheduleID.replace(/^sch_/, "aut_") : slot.scheduleID
+      const schedule = calendarRow.get(id)
       if (schedule) {
         schedule.whenSHA256 = typeof schedule.native_when === "string" ? hash(schedule.native_when) : null
         delete schedule.native_when

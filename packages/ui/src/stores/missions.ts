@@ -1,13 +1,16 @@
-import { serverApi } from "../lib/api-client"
+import { backendOf } from "../lib/backend-client"
+import { captureBackendOperation } from "../lib/backend-operation"
 import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-refresh-scheduler"
-import { serverEvents } from "../lib/server-events"
+import { backendEvents as serverEvents } from "../lib/server-events"
 import { createMissionPanelInventory } from "./mission-panel-inventory"
 import { instances } from "./instances"
+import { projectScope, parseInstanceKey } from "../lib/backend-identity"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { createRoot, createComputed, untrack } from "solid-js"
 
 export const missionStore = createMissionPanelInventory({
-  scope: instanceId => instances().get(instanceId)?.folder ?? instanceId,
+  signal: id => captureBackendOperation(id).signal,
+  scope: instanceId => { const instance = instances().get(instanceId); return instance ? projectScope(instance) : instanceId },
   projectID: instanceId => instances().get(instanceId)?.metadata?.project?.id,
   capture: instanceId => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, projectID = origin?.metadata?.project?.id, generation = getOpenCodeInstanceGeneration(instanceId)
@@ -16,12 +19,12 @@ export const missionStore = createMissionPanelInventory({
   },
   read: (instanceId, selector, scope) => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
-    return serverApi.fetchMissionPanel(instanceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
+    return backendOf(instanceId).api.fetchMissionPanel(parseInstanceKey(instanceId).workspaceId, selector, { ...scope, projectID: scope.projectID ?? origin?.metadata?.project?.id,
       current: () => scope.current() && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   },
   tasks: (instanceId, missionId, request, scope) => {
     const origin = instances().get(instanceId), client = origin?.client, folder = origin?.folder, generation = getOpenCodeInstanceGeneration(instanceId)
-    return serverApi.fetchMissionTasks(instanceId, missionId, request, { ...scope, current: () => scope.current()
+    return backendOf(instanceId).api.fetchMissionTasks(parseInstanceKey(instanceId).workspaceId, missionId, request, { ...scope, current: () => scope.current()
       && instances().get(instanceId)?.client === client && instances().get(instanceId)?.folder === folder && getOpenCodeInstanceGeneration(instanceId) === generation })
   } })
 
@@ -30,9 +33,9 @@ export const missionStore = createMissionPanelInventory({
 export const MISSION_URGENT_REFRESH_INTERVAL_MS = 1_500
 
 // Every native status change of a large running family is an invalidation:
-// activity revalidates at a bounded rate, journal changes promptly but spaced.
-const refreshes = createEventRefreshScheduler((instanceId) => {
-  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false)
+// Activity revalidates at a bounded rate, journal changes promptly but spaced.
+const refreshes = createEventRefreshScheduler((instanceId, signal) => {
+  if (missionStore.demandedInstanceIds().includes(instanceId)) return missionStore.refresh(instanceId, false, signal)
 }, { urgentIntervalMs: MISSION_URGENT_REFRESH_INTERVAL_MS })
 
 export function activateMissionDemand(instanceId: string): void {
@@ -68,15 +71,24 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
     || event.type.startsWith("permission.")
 }
 
+/** Native activity changes the panel only while a Mission may still run: an active or
+ * failed (recoverable) one, an unread later summary page, or an errored inventory. */
+export function missionActivityMatters(instanceId: string): boolean {
+  const state = missionStore.state(instanceId)
+  return state.status === "error" || missionStore.progress(instanceId, "summaries").more
+    || state.summaries.some(row => row.status === "active" || row.status === "failed")
+}
+
 function scheduleRefresh(instanceId: string, urgency: RefreshUrgency): void {
-  if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency)
+  if (missionStore.demandedInstanceIds().includes(instanceId)) refreshes.schedule(instanceId, urgency, captureBackendOperation(instanceId).signal)
 }
 
 serverEvents.on("instance.event", (event) => {
   if (event.type !== "instance.event") return
   const urgent = isMissionChangedEvent(event.event) || event.event.type === "plugin.updated"
   if (event.event.type === "plugin.updated") missionStore.invalidateTasks(event.instanceId)
-  if (urgent || isMissionActivityEvent(event.event)) scheduleRefresh(event.instanceId, urgent ? "urgent" : "activity")
+  if (urgent) scheduleRefresh(event.instanceId, "urgent")
+  else if (isMissionActivityEvent(event.event) && missionActivityMatters(event.instanceId)) scheduleRefresh(event.instanceId, "activity")
 })
 
 serverEvents.on("instance.eventStatus", (event) => {
@@ -85,9 +97,9 @@ serverEvents.on("instance.eventStatus", (event) => {
   scheduleRefresh(event.instanceId, "urgent")
 })
 
-serverEvents.onOpen(() => {
-  for (const instanceId of missionStore.trackedInstanceIds()) missionStore.invalidateTasks(instanceId)
-  for (const instanceId of missionStore.demandedInstanceIds()) scheduleRefresh(instanceId, "urgent")
+serverEvents.onOpen(backendId => {
+  for (const instanceId of missionStore.trackedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) missionStore.invalidateTasks(instanceId)
+  for (const instanceId of missionStore.demandedInstanceIds()) if (parseInstanceKey(instanceId).backendId === backendId) scheduleRefresh(instanceId, "urgent")
 })
 
 serverEvents.on("workspace.stopped", (event) => {

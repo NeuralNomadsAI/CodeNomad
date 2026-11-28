@@ -1,4 +1,5 @@
 import { Show, createMemo, createEffect, createSignal, on, onCleanup, type Component, type JSXElement } from "solid-js"
+import { captureBackendOperation } from "../../lib/backend-operation"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
@@ -15,6 +16,7 @@ import PromptContextControls from "../prompt-input/PromptContextControls"
 import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceReady } from "../../stores/instances"
+import { parseInstanceKey, projectScope } from "../../lib/backend-identity"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, loadMessageAnchor, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
 import { canMarkSessionIdleSeen, createDocumentAttention } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
@@ -25,7 +27,8 @@ import { useI18n } from "../../lib/i18n"
 import type { PromptDelivery, PromptInputApi, PromptInsertMode } from "../prompt-input/types"
 import { clearConversationPlaybackForSession } from "../../stores/conversation-speech"
 import { useConfig } from "../../stores/preferences"
-import { getSessionPreview } from "../../stores/session-previews"
+import { getSessionPreview, previewBlockedByOwner } from "../../stores/session-previews"
+import { holdNativeBrowser } from "../../lib/native-browser-hold"
 import { SessionPreviewSlot } from "../session-preview-view"
 import { FilesPreviewView } from "../files-preview-view"
 import { closeFilePreview } from "../../stores/files-preview"
@@ -105,7 +108,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)
     .filter((item): item is SessionInboxUser => item.type === "user"))
   const pendingPromptById = createMemo(() => new Map(pendingUserPrompts().map((item) => [item.id, item])))
-  const preview = createMemo(() => getSessionPreview(props.sessionId))
+  const preview = createMemo(() => getSessionPreview(props.sessionId, props.instanceId))
+  holdNativeBrowser(() => props.instanceId, () => props.sessionId, () => props.isActive !== false)
   const surface = createMemo(() => getSessionSurface({ instanceId: props.instanceId, sessionId: props.sessionId }))
   const missionReader = () => {
     const current = surface()
@@ -116,7 +120,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // contains has nothing to show: release the central surface to the transcript.
   createEffect(() => {
     const target = missionReader()
-    if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
+    if (!target || target.kind === "playbook") return
     if (missionStore.mapMissing(props.instanceId, target.missionId))
       updateMissionProjectView(props.instanceId, { reader: undefined })
   })
@@ -125,7 +129,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return current.kind === "file" ? current.target : null
   })
   // A restored web choice has metadata only until explicit opening allocates its guest.
-  const centralPreview = () => props.isActive !== false && surface().kind === "web" && Boolean(preview())
+  const centralPreview = () => props.isActive !== false && surface().kind === "web"
+    && Boolean(preview() || previewBlockedByOwner(props.sessionId, props.instanceId))
 
   let promptInputApi: PromptInputApi | null = null
   let pendingPromptText: string | null = null
@@ -356,6 +361,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // the effect runs once per real session change instead of on every mutation
   // of the reactive sessions map (see the hook for the full rationale).
   useActiveSessionMessageLoad({
+    captureOperation: captureBackendOperation,
     isActive: () => Boolean(props.isActive),
     instanceId: () => props.instanceId,
     session,
@@ -374,7 +380,9 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   function handleReloadMessages() {
     const currentSession = session()
     if (!currentSession) return
-    loadMessages(props.instanceId, currentSession.id, { force: true }).catch((error) =>
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
+    loadMessages(props.instanceId, currentSession.id, { force: true, signal: operation.signal }).catch((error) =>
       log.error("Failed to reload messages", error),
     )
   }
@@ -429,26 +437,41 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     attachments: Attachment[],
     delivery: PromptDelivery,
     restoredPayload?: SessionInboxUserPayload,
+    admitDelivery?: () => PromptDelivery,
   ) {
-    if (!isLatestMessageWindow(props.instanceId, props.sessionId)) {
-      await loadLatestMessageWindow(props.instanceId, props.sessionId)
+    const { instanceId, sessionId } = props
+    const operation = captureBackendOperation(instanceId, undefined, () => props.instanceId === instanceId && props.sessionId === sessionId)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
+    const preparePin = () => {
+      const messageCount = visibleMessageCount()
+      const target = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
+      return { messageCount, target, intent: startSubmitBottomPinIntent(target, { createdMessageCount: messageCount }) }
     }
-    const messageCount = visibleMessageCount()
-    const submittedExchangeTargetCount = getSubmitBottomPinTargetCount(messageCount, sessionStreamingActive())
-    const initialPinIntent = startSubmitBottomPinIntent(submittedExchangeTargetCount, { createdMessageCount: messageCount })
+    let pin = isLatestMessageWindow(instanceId, sessionId) ? preparePin() : undefined
     try {
-      await sendMessage(props.instanceId, props.sessionId, prompt, attachments, { delivery, restoredPayload })
+      await sendMessage(instanceId, sessionId, prompt, attachments, {
+        delivery: admitDelivery ?? delivery,
+        pendingDelivery: delivery,
+        admissionCurrent: operation.current,
+        restoredPayload,
+        prepareAdmission: pin ? undefined : async () => {
+          if (!isLatestMessageWindow(instanceId, sessionId)) await loadLatestMessageWindow(instanceId, sessionId, operation.signal)
+          if (operation.current()) pin = preparePin()
+        },
+      })
+      operation.signal.throwIfAborted()
+      if (!pin || !operation.current()) return
       const latestMessageCount = visibleMessageCount()
-      if (latestMessageCount < submittedExchangeTargetCount && !sessionStreamingActive()) {
+      if (latestMessageCount < pin.target && !sessionStreamingActive()) {
         setSubmitBottomPinIntent(null)
-      } else if (submitBottomPinIntent()?.token === initialPinIntent.token) {
-        startSubmitBottomPinIntent(Math.max(submittedExchangeTargetCount, latestMessageCount), {
-          createdMessageCount: messageCount,
+      } else if (submitBottomPinIntent()?.token === pin.intent.token) {
+        startSubmitBottomPinIntent(Math.max(pin.target, latestMessageCount), {
+          createdMessageCount: pin.messageCount,
           preserveObservedStreaming: true,
         })
       }
     } catch (error) {
-      setSubmitBottomPinIntent(null)
+      if (operation.current() && pin && submitBottomPinIntent()?.token === pin.intent.token) setSubmitBottomPinIntent(null)
       throw error
     }
   }
@@ -463,12 +486,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
   async function manageQueuedPrompt(item: SessionInboxUser, action: "delivery" | "edit" | "remove") {
     if (queueBusyId()) return
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     setQueueBusyId(item.id)
     try {
       const inbox = instances().get(props.instanceId)?.client?.session.inbox
       if (!inbox) throw new Error("Instance not ready")
       if (action === "remove" || action === "edit") {
-        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id })
+        await inbox.cancel({ sessionID: props.sessionId, inboxID: item.id }, { signal: operation.signal })
+        if (!operation.current()) return
         if (action === "edit") {
           const displayText = item.payload.metadata?.displayText
           const text = typeof displayText === "string" && displayText ? displayText : item.payload.text
@@ -492,23 +518,28 @@ export const SessionView: Component<SessionViewProps> = (props) => {
           }
         }
       } else if (item.delivery === "queue") {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "steer" }, { signal: operation.signal })
       } else {
-        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" })
+        await inbox.update({ sessionID: props.sessionId, inboxID: item.id, delivery: "queue" }, { signal: operation.signal })
       }
     } catch (error) {
-      showQueueError(error)
+      if (operation.current()) showQueueError(error)
     } finally {
-      await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
+      if (operation.current()) await syncOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder).catch(() => undefined)
       setQueueBusyId(undefined)
     }
   }
 
   async function handleRunShell(command: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
     await runShellCommand(props.instanceId, props.sessionId, command)
+    if (!operation.current()) throw new DOMException("Backend detached", "AbortError")
   }
  
   async function handleAbortSession() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const currentSession = session()
     if (!currentSession) return
  
@@ -516,6 +547,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
       await abortSession(props.instanceId, currentSession.id)
       log.info("Abort requested", { instanceId: props.instanceId, sessionId: currentSession.id })
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to abort session", error)
       showAlertDialog(t("sessionView.alerts.abortFailed.message"), {
         title: t("sessionView.alerts.abortFailed.title"),
@@ -526,9 +558,12 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleBackgroundSession() {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     try {
       await backgroundSession(props.instanceId, props.sessionId)
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to move blocking tools to background", error)
       showAlertDialog(t("promptInput.background.error.message"), {
         title: t("promptInput.background.error.title"),
@@ -555,12 +590,15 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
 
   async function handleRevert(messageId: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     const instance = instances().get(props.instanceId)
     if (!instance || !instance.client) return
     const restoredText = getUserMessageText(messageId)
 
     try {
       await stageSessionRevert(props.instanceId, props.sessionId, messageId)
+      if (!operation.current()) return
 
       if (restoredText) {
         if (promptInputApi) {
@@ -571,6 +609,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
         }
       }
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to revert message", error)
       showAlertDialog(t("sessionView.alerts.revertFailed.message"), {
         title: t("sessionView.alerts.revertFailed.title"),
@@ -580,6 +619,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   }
 
   async function handleFork(messageId?: string) {
+    const operation = captureBackendOperation(props.instanceId)
+    if (!operation.current()) return
     if (!messageId) {
       log.warn("Fork requires a message id")
       return
@@ -590,6 +631,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
     try {
       const forkedSession = await forkSession(props.instanceId, props.sessionId, { afterMessageId: messageId })
+      if (!operation.current()) return
 
       renameSession(props.instanceId, forkedSession.id, `Fork: ${parentTitle}`).catch((error) => {
         log.error("Failed to rename forked session", error)
@@ -600,6 +642,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
       await loadMessages(props.instanceId, forkedSession.id).catch((error) => log.error("Failed to load forked session messages", error))
     } catch (error) {
+      if (!operation.current()) return
       log.error("Failed to fork session", error)
       showAlertDialog(t("sessionView.alerts.forkFailed.message"), {
         title: t("sessionView.alerts.forkFailed.title"),
@@ -670,7 +713,8 @@ export const SessionView: Component<SessionViewProps> = (props) => {
 
         </div>
         <Show when={readingMission()}>
-          <MissionReader instanceId={props.instanceId} scope={props.instanceFolder} />
+          <MissionReader instanceId={props.instanceId}
+            scope={projectScope({ folder: props.instanceFolder, backendId: parseInstanceKey(props.instanceId).backendId })} />
         </Show>
         </div>
 

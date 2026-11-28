@@ -67,7 +67,7 @@ function parseGitRemoteUrl(url: string, forIdentity: boolean): ForgeRemote | und
  * The repository to contribute to: `upstream` when the checkout is a fork,
  * otherwise `origin`, otherwise the first remote with a forge URL.
  */
-export async function readForgeRemote(directory: string, signal?: AbortSignal): Promise<ForgeRemote | undefined> {
+export async function readForgeRemote(directory: string, signal?: AbortSignal): Promise<(ForgeRemote & { name: string }) | undefined> {
   const expires = performance.now() + 10_000
   const cleared = Object.fromEntries(Object.keys(process.env).filter(key => key.toUpperCase().startsWith("GIT_")).map(key => [key, undefined]))
   const read = async (args: string[]) => {
@@ -80,13 +80,17 @@ export async function readForgeRemote(directory: string, signal?: AbortSignal): 
     if (performance.now() >= expires) throw new Error("Forge remote discovery timeout")
     return output
   }
-  const names = (await read(["remote"]))
-    .split(/\r?\n/).map(name => name.trim()).filter(Boolean)
-  const ordered = [...["upstream", "origin"].filter(name => names.includes(name)), ...names.filter(name => name !== "upstream" && name !== "origin")]
+  const remotes = new Map<string, string>()
+  for (const line of (await read(["remote", "-v"])).split(/\r?\n/)) {
+    // A partial clone's line ends with its filter: "(fetch) [blob:none]".
+    const match = /^([^\t]+)\t(.+) \(fetch\)(?: \[[^\]]*\])?$/.exec(line.trim())
+    if (match && !remotes.has(match[1]!)) remotes.set(match[1]!, match[2]!)
+  }
+  const names = [...remotes.keys()]
+  const ordered = [...["upstream", "origin"].filter(name => remotes.has(name)), ...names.filter(name => name !== "upstream" && name !== "origin")]
   for (const name of ordered) {
-    const url = await read(["remote", "get-url", name])
-    const remote = parseRemoteUrl(url)
-    if (remote) return remote
+    const remote = parseRemoteUrl(remotes.get(name)!)
+    if (remote) return { ...remote, name }
   }
   return undefined
 }

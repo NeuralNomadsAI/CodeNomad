@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { closeSync, openSync, statSync, unlinkSync } from "node:fs"
 import { basename, join } from "node:path"
 import type { Session } from "electron"
+import { isPrivatePreviewUrl, restrictedBrowserGuest } from "./browser-presentation"
 
 export function reserveBrowserDownload(directory: string, suggested: string): string {
   if (!statSync(directory).isDirectory()) throw new Error("Downloads directory unavailable")
@@ -22,7 +23,7 @@ export function configureBrowserDownloads(target: Session, directory: string): v
     let path: string | undefined
     try {
       const url = new URL(item.getURL())
-      if (!contents || contents.isDestroyed() || !["http:", "https:", "blob:", "data:"].includes(url.protocol)
+      if (!contents || contents.isDestroyed() || restrictedBrowserGuest(contents) || isPrivatePreviewUrl(item.getURL()) || !["http:", "https:", "blob:", "data:"].includes(url.protocol)
         || url.username || url.password) throw new Error("Blocked browser download")
       path = reserveBrowserDownload(directory, item.getFilename())
       item.setSavePath(path)

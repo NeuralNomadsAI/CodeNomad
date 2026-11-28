@@ -51,7 +51,7 @@ export const commandMessages = {
   "commands.closeSession.keywords": "close, stop",
 
   "commands.scrubSessions.label": "Scrub Sessions",
-  "commands.scrubSessions.description": "Remove empty sessions, subagent sessions that have completed their primary task, and extraneous forked sessions.",
+  "commands.scrubSessions.description": "Remove verified empty, inactive sessions.",
   "commands.scrubSessions.keywords": "cleanup, blank, empty, sessions, remove, delete, scrub",
 
   "commands.instanceInfo.label": "Instance Info",

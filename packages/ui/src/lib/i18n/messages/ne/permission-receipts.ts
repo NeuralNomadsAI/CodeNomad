@@ -5,7 +5,7 @@ export const permissionReceiptMessages = {
   "permissionReceipts.always": "सधैँ अनुमति दिइयो",
   "permissionReceipts.reject": "अस्वीकृत",
   "permissionReceipts.origin.codenomad": "CodeNomad मा निर्णय",
-  "permissionReceipts.origin.yolo": "स्वचालित · Yolo",
+  "permissionReceipts.origin.automatic": "स्वचालित निर्णय",
   "permissionReceipts.origin.native": "नेटिभ निर्णय",
   "permissionReceipts.more": "थप निर्णयहरू लोड गर्नुहोस्",
   "permissionReceipts.error": "अनुमति निर्णयहरू लोड गर्न सकिएन।",

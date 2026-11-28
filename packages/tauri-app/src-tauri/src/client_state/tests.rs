@@ -45,7 +45,8 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let request = crate::preferences_window::PreferencesRequest {
         scroll_top: Some(420),
         section: "providers".into(),
-        instance_id: Some("instance-1".into()),
+        instance_id: Some("remote~instance-1".into()),
+        server_id: Some("remote-server".into()),
         workspace_path: Some("C:\\repo".into()),
         location: Some(crate::preferences_window::PreferencesLocation {
             directory: "/mnt/c/repo".into(),
@@ -61,6 +62,7 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
     let persisted: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(persisted["preferences"]["section"], "providers");
+    assert_eq!(persisted["preferences"]["serverId"], "remote-server");
     assert_eq!(persisted["preferences"]["workspacePath"], "C:\\repo");
     assert_eq!(persisted["preferences"]["location"]["directory"], "/mnt/c/repo");
     assert_eq!(
@@ -88,12 +90,13 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     assert_eq!(last.section, "providers");
     assert_eq!(last.scroll_top, Some(420));
     assert_eq!(last.instance_id, None);
+    assert_eq!(last.server_id, None);
     assert_eq!(last.location, None);
     assert_eq!(reopened.state.lock().unwrap().preferences_window, Some(NativeWindowState {
         bounds, maximized: true, fullscreen: false, zoom_factor: 1.25,
     }));
 }
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use url::Url;
 
@@ -144,7 +147,7 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
         directory.path(),
         Arc::new(move |path, bytes, ownership_valid| {
             if writer_flag.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
+                Err("injected write failure".into())
             } else {
                 super::write_atomically(path, bytes, ownership_valid)
             }
@@ -153,6 +156,166 @@ fn failing_state(initially_failing: bool) -> (TempDir, ClientState, Arc<AtomicBo
     .unwrap();
     (directory, state, fail)
 }
+
+#[test]
+fn directory_sync_failure_keeps_the_published_root_and_defers_gc() {
+    let directory = tempfile::tempdir().unwrap();
+    let failing = Arc::new(AtomicBool::new(false));
+    let flag = failing.clone();
+    let state = ClientState::initialize_at_with_writer(directory.path(), Arc::new(move |path, bytes, valid| {
+        super::write_atomically_with_sync(path, bytes, valid, |parent| {
+            if flag.load(Ordering::SeqCst) {
+                return Err("injected directory sync failure".into());
+            }
+            super::partitions::sync_directory(parent)
+        })
+    })).unwrap();
+    enable_restore_in_memory(&state);
+    let commit = |content: &str| {
+        let key = partition_key(content);
+        partition_commit(json!({
+            "protocolVersion": 1,
+            "snapshot": partition_root(std::slice::from_ref(&key), json!({ "revision": content })),
+            "partitionKeys": [&key],
+            "partitions": {(&key): content},
+        }))
+    };
+    let old_partition = state.state_path.parent().unwrap().join("partitions").join(partition_key("old"));
+    assert!(state.commit_partitions_guarded(commit("old"), || true).unwrap());
+    failing.store(true, Ordering::SeqCst);
+    let error = state.commit_partitions_guarded(commit("next"), || true).unwrap_err();
+    assert!(error.contains("durability unconfirmed"), "{error}");
+    assert_eq!(state.load().unwrap().snapshot["revision"], "next");
+    assert_eq!(super::read_client_state(&state.state_path).active().snapshot.as_ref().unwrap()["revision"], "next");
+    assert!(old_partition.is_file());
+    failing.store(false, Ordering::SeqCst);
+    assert!(state.commit_partitions_guarded(commit("next"), || true).unwrap());
+    assert!(!old_partition.exists());
+}
+
+#[test]
+fn shutdown_barrier_seals_admission_and_waits_for_publication_clear_and_ack() {
+    use tauri::{Manager, ipc::{InvokeResponse, CallbackFn}, test, webview::InvokeRequest};
+    let directory = tempfile::tempdir().unwrap();
+    let event_thread = thread::current().id();
+    let (entered, writing) = mpsc::channel();
+    let (resume, paused) = mpsc::channel();
+    let paused = std::sync::Mutex::new(Some(paused));
+    let state = ClientState::initialize_at_with_writer(
+        directory.path(),
+        Arc::new(move |path, bytes, valid| {
+            assert_ne!(event_thread, thread::current().id());
+            if let Some(paused) = paused.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                paused.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+            super::write_atomically(path, bytes, valid)
+        }),
+    ).unwrap();
+    enable_restore_in_memory(&state);
+    let window_id = state.active_window_id().unwrap();
+    let app = test::mock_builder()
+        .manage(state)
+        .manage(super::IpcQueue::new())
+        .invoke_handler(super::commands::with_client_state_commands(|_| false, |_| false))
+        .build(test::mock_context(test::noop_assets())).unwrap();
+    let window = tauri::WebviewWindowBuilder::new(&app, crate::identity::local_window_label(&window_id).unwrap(),
+        tauri::WebviewUrl::App("index.html".into())).build().unwrap();
+    let state = app.state::<ClientState>();
+    let queue = app.state::<super::IpcQueue>();
+    let url = window.url().unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
+    let challenge = state.renderer_access.document_challenge(&window_id, &url).unwrap();
+    let invoke = |command: &str, body: Value| {
+        let (reply, response) = mpsc::channel();
+        window.as_ref().clone().on_message(InvokeRequest {
+            cmd: command.into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: url.clone(),
+            body: body.into(),
+            headers: Default::default(),
+            invoke_key: test::INVOKE_KEY.to_string(),
+        }, Box::new(move |_, _, result, _, _| { let _ = reply.send(result); }));
+        response
+    };
+    let assert_ok = |response: mpsc::Receiver<InvokeResponse>| {
+        match response.recv_timeout(Duration::from_secs(5)).unwrap() {
+            InvokeResponse::Ok(_) => {}
+            InvokeResponse::Err(error) => panic!("Invoke failed: {:?}", error.0),
+        }
+    };
+    assert_ok(invoke("client_state_claim_access", json!({
+        "accessToken": "renderer", "documentChallenge": challenge.to_string()
+    })));
+    let key = partition_key("test partition");
+    let commit = json!({
+        "protocolVersion": 1,
+        "snapshot": partition_root(std::slice::from_ref(&key), json!({"revision": 1})),
+        "partitionKeys": [&key],
+        "partitions": {(&key): "test partition"},
+    });
+    let committed = invoke("client_state_commit_partitions", json!({"accessToken": "renderer", "payload": commit}));
+    writing.recv_timeout(Duration::from_secs(5)).unwrap();
+    let loaded = invoke("client_state_load", json!({"accessToken": "renderer"}));
+    let cleared = invoke("client_state_clear", json!({"accessToken": "renderer"}));
+    let loaded_after_clear = invoke("client_state_load", json!({"accessToken": "renderer"}));
+    state.renderer_flush.windows.lock().unwrap().insert(window_id.clone(), (1, 0));
+    let acknowledged = invoke("client_state_navigation_flushed", json!({"accessToken": "renderer", "generation": 1}));
+
+    assert!(!queue.seal_and_drain_until(Instant::now() + Duration::from_millis(30)));
+    assert!(matches!(invoke("client_state_clear", json!({"accessToken": "renderer"}))
+        .recv_timeout(Duration::from_secs(5)).unwrap(), InvokeResponse::Err(_)));
+    assert_eq!(acknowledged_generation(&state), 0);
+    assert!(state.is_primary());
+    resume.send(()).unwrap();
+    assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
+    assert_ok(committed);
+    let snapshot = |response: mpsc::Receiver<InvokeResponse>| match response.recv_timeout(Duration::from_secs(5)).unwrap() {
+        InvokeResponse::Ok(body) => body.deserialize::<Value>().unwrap()["snapshot"].clone(),
+        InvokeResponse::Err(error) => panic!("Load failed: {:?}", error.0),
+    };
+    assert_eq!(snapshot(loaded)["revision"], 1);
+    assert_ok(cleared);
+    assert_eq!(snapshot(loaded_after_clear), Value::Null);
+    assert_ok(acknowledged);
+    assert_eq!(acknowledged_generation(&state), 1);
+    state.release_locks();
+    let reopened = ClientState::initialize_at(directory.path()).unwrap();
+    assert_eq!(reopened.load_window(&window_id).unwrap().snapshot, Value::Null);
+}
+
+#[test]
+fn queued_same_origin_commit_is_rejected_when_the_next_document_starts() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = Arc::new(ClientState::initialize_at(directory.path()).unwrap());
+    let window_id = state.active_window_id().unwrap();
+    let url = Url::parse("http://127.0.0.1:43123/workspace").unwrap();
+    state.renderer_access.claim_for(&window_id, "outgoing", &url).unwrap();
+    let document = super::commands::LocalDocument {
+        document: state.renderer_access.document_for(&window_id),
+        window_id: window_id.clone(), url: url.clone(),
+    };
+    let queue = super::IpcQueue::new();
+    let (resume, gate) = mpsc::channel();
+    queue.enqueue(Box::new(move || gate.recv_timeout(Duration::from_secs(5)).unwrap())).unwrap();
+    let writing = Arc::clone(&state);
+    queue.enqueue(Box::new(move || {
+        let key = partition_key("stale partition");
+        let result = super::commands::commit_partitions(&document, &writing, "outgoing", partition_commit(json!({
+            "protocolVersion": 1,
+            "snapshot": partition_root(std::slice::from_ref(&key), json!({"stale": true})),
+            "partitionKeys": [&key], "partitions": {(&key): "stale partition"},
+        })));
+        assert_eq!(result.unwrap_err(), "Client state renderer document retired");
+    })).unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
+    resume.send(()).unwrap();
+    assert!(queue.seal_and_drain_until(Instant::now() + Duration::from_secs(5)));
+    assert!(state.renderer_access.claim_for(&window_id, "outgoing", &url).is_err());
+    state.renderer_access.claim_for(&window_id, "incoming", &url).unwrap();
+}
+
 fn window() -> NativeWindowState {
     NativeWindowState {
         bounds: bounds(20, 30, 1400, 900),
@@ -735,7 +898,7 @@ fn future_envelope_is_preserved_until_successful_clear() {
         Arc::new(move |path, bytes, ownership_valid| {
             writer_count.fetch_add(1, Ordering::SeqCst);
             if writer_fail.load(Ordering::SeqCst) {
-                Err("injected write failure".to_string())
+                Err("injected write failure".into())
             } else {
                 super::write_atomically(path, bytes, ownership_valid)
             }
@@ -776,6 +939,7 @@ fn renderer_tokens_and_origins_are_isolated_across_navigation() {
         .renderer_access
         .validate("outgoing", &outgoing)
         .unwrap();
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     assert_access_rejected(&state, "outgoing", &outgoing);
     state
@@ -821,7 +985,7 @@ fn accepted_page_load_stages_renderer_rotation_and_preserves_generation_fencing(
         .validate_for(&window_id, "outgoing", &url)
         .unwrap();
 
-    state.stage_renderer_page_load(&window_id, &url).unwrap();
+    state.renderer_page_started(&window_id, Some(&url));
     state
         .renderer_access
         .claim_for(&window_id, "incoming", &url)
@@ -854,6 +1018,8 @@ fn reload_preserves_pending_cross_origin_authority_until_incoming_claim() {
         .unwrap();
     state.renderer_access.begin_navigation(None).unwrap();
 
+    assert!(state.renderer_access.allows_claim_origin_for("test-window", &incoming));
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -880,6 +1046,9 @@ fn failed_follow_up_navigation_restores_previous_pending_authority() {
         .unwrap();
     state.renderer_access.cancel_navigation(failed_navigation);
 
+    assert!(!state.renderer_access.allows_claim_origin_for("test-window", &failed));
+    assert!(state.renderer_access.allows_claim_origin_for("test-window", &incoming));
+    state.renderer_page_started("test-window", Some(&incoming));
     state.renderer_access.claim("incoming", &incoming).unwrap();
     state
         .renderer_access
@@ -1019,7 +1188,7 @@ fn renderer_rotation_blocks_an_in_flight_old_renderer_replacement() {
         .renderer_access
         .begin_navigation(Some(&incoming))
         .unwrap();
-    state.renderer_access.claim("new", &incoming).unwrap();
+    state.renderer_page_started("test-window", Some(&incoming));
     allow_tx.send(()).unwrap();
     assert!(writer.join().unwrap().is_err());
     assert_eq!(state.load().unwrap().snapshot, Value::Null);
@@ -1084,6 +1253,29 @@ fn v1_and_v2_migrate_in_memory_without_load_rewrites() {
         assert_eq!(persisted["version"], 3);
         assert_eq!(persisted["windowOrder"][0], persisted["activeWindowId"]);
     }
+}
+
+#[test]
+fn file_drafts_survive_secondary_window_removal_without_affecting_window_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let state = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&state);
+    let primary = state.active_window_id().unwrap();
+    let secondary = "11111111-1111-4111-8111-111111111111";
+    assert!(state.add_window(secondary.into()).unwrap());
+    assert!(state.save_snapshot_guarded_for(&primary, json!({"tabs":["project"]}), || true).unwrap());
+    let draft = json!({"fingerprint":"0".repeat(64),"text":"été"});
+    let change = serde_json::from_value(json!({"key":"test","expected":null,"draft":draft})).unwrap();
+    assert!(state.save_file_draft(secondary, change, || true).unwrap());
+    assert!(state.remove_window(secondary).unwrap());
+    assert_eq!(serde_json::to_value(state.load_file_drafts(&primary).unwrap()).unwrap(),
+        json!([{"key":"test","fingerprint":"0".repeat(64),"text":"été"}]));
+    let stale = serde_json::from_value(json!({"key":"test","expected":null,"draft":null})).unwrap();
+    assert!(state.save_file_draft(&primary, stale, || true).unwrap());
+    assert_eq!(state.load_file_drafts(&primary).unwrap().len(), 1);
+    fs::write(directory.path().join("workspace-file-drafts.json"), b"{corrupt").unwrap();
+    assert!(state.load_file_drafts(&primary).unwrap().is_empty());
+    assert_eq!(state.load_window(&primary).unwrap().snapshot, json!({"tabs":["project"]}));
 }
 
 #[test]
@@ -1302,6 +1494,64 @@ fn partition_protocol_and_hashes_are_validated() {
             || true,
         )
         .unwrap());
+}
+
+#[test]
+fn partition_subset_verifies_omitted_data_and_retains_shared_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = ClientState::initialize_at(directory.path()).unwrap();
+    enable_restore(&manager);
+    let a = manager.active_window_id().unwrap();
+    let b = "11111111-1111-4111-8111-111111111111";
+    assert!(manager.add_window(b.to_string()).unwrap());
+    let shared = "shared";
+    let key = partition_key(shared);
+    let added = "added";
+    let added_key = partition_key(added);
+    let mut keys = vec![key.clone(), added_key.clone()];
+    keys.sort();
+    let root = partition_root(&keys, json!({}));
+    assert!(manager
+        .commit_partitions_guarded_for(
+            &a,
+            partition_commit(json!({
+                "protocolVersion": 1, "snapshot": partition_root(std::slice::from_ref(&key), json!({})),
+                "partitionKeys": [key.clone()], "partitions": { key.clone(): shared }
+            })),
+            || true,
+        )
+        .unwrap());
+    let delta = |content: &str| {
+        partition_commit(json!({
+            "protocolVersion": 1, "snapshot": root, "partitionKeys": keys,
+            "partitions": { added_key.clone(): content }
+        }))
+    };
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta("wrong"), || true)
+        .unwrap_err()
+        .contains("digest mismatch"));
+    let path = directory.path().join("partitions").join(&key);
+    fs::write(&path, "corrupt").unwrap();
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta(added), || true)
+        .unwrap_err()
+        .contains("Missing or invalid"));
+    fs::write(&path, shared).unwrap();
+    assert!(manager
+        .commit_partitions_guarded_for(b, delta(added), || true)
+        .unwrap());
+    assert!(manager.remove_window(&a).unwrap());
+    assert_eq!(
+        manager
+            .load_partition_guarded_for(b, &key, || true)
+            .unwrap()
+            .as_deref(),
+        Some(shared)
+    );
+    assert!(manager.remove_window(b).unwrap());
+    assert!(!path.exists());
+    assert!(!directory.path().join("partitions").join(added_key).exists());
 }
 
 #[test]

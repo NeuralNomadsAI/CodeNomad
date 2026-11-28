@@ -2,6 +2,7 @@ import type { ForgeProvider, ForgeRepository, ForgeUnavailableReason, ForgeWorkI
 import { FORGE_APIS, forgeWebUrl, type ForgeApi } from "./providers"
 import { readForgeRemote, type ForgeRemote } from "./remote"
 import { RequestBudget, SharedLoads } from "./shared-loads"
+import type { WorkItemBranchSource } from "./work-item-branches"
 import {
   anonymousTransport, findTeaLogin, ForgeCliUnavailable, includedCliTransport, preferCli, runProcess, teaTransport,
   type ForgeResponse, type ForgeTransport, type ProcessRunner,
@@ -29,7 +30,7 @@ export interface ForgeWorkItemsQuery {
   fresh?: boolean
 }
 
-type Resolved = { remote: ForgeRemote; api: ForgeApi; transport: ForgeTransport } | ForgeUnavailableReason
+type Resolved = { remote: ForgeRemote & { name: string }; api: ForgeApi; transport: ForgeTransport } | ForgeUnavailableReason
 
 export class ForgeRequestError extends Error {}
 
@@ -78,6 +79,12 @@ export class ForgeWorkItems {
     const resolved = await this.resolve(directory, false, signal)
     if (typeof resolved === "string") return undefined
     return forgeWebUrl(resolved.api.provider, resolved.remote.host, resolved.remote.path, kind, number)
+  }
+
+  /** The repository, as items are listed, and the remote it is fetched from; undefined when unavailable. */
+  async branchSource(directory: string, signal?: AbortSignal): Promise<WorkItemBranchSource | undefined> {
+    const resolved = await this.resolve(directory, false, signal)
+    return typeof resolved === "string" ? undefined : { provider: resolved.api.provider, ...resolved.remote }
   }
 
   private async read(directory: string, kind: ForgeWorkItemKind, query: string, page: number, fresh: boolean, signal: AbortSignal): Promise<ForgeWorkItemsResult> {

@@ -8,6 +8,7 @@ import {
   type TextSource,
 } from "../lib/render-text-window"
 import {
+  getRecordPartSearchReveal,
   getRevealedRecordText,
   revealHiddenRecordText,
   type RecordTextRevealTarget,
@@ -36,7 +37,10 @@ export function createTextWindow(options: {
   const [localSteps, setLocalSteps] = createSignal(0)
   const steps = () => {
     const target = options.target()
-    return target ? getRevealedRecordText(target) : localSteps()
+    if (!target) return localSteps()
+    // Search navigation reveals the whole part once; the reader's own reveals
+    // stack on top of that base step.
+    return getRevealedRecordText(target) + getRecordPartSearchReveal(target.instanceId, target.messageId, target.partId)
   }
   const window = createMemo(() => getRenderTextWindow(options.source(), options.limit(), steps()), undefined, { equals: sameWindow })
   const reveal = () => {
