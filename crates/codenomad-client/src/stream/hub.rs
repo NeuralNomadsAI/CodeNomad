@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{Receiver, bounded, http::StreamDropGuard, runtime};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
     sync::{
         Arc, Mutex,
@@ -499,19 +499,29 @@ impl SharedStream {
                 return;
             }
             match &class {
-                FrameClass::ReplayStatus(id) => {
+                FrameClass::ReplayStatus { id, connected } => {
                     if inner.replays.len() < MAX_REPLAY_STATUSES || inner.replays.contains_key(id) {
                         inner.replays.insert(id.clone(), frame.clone());
                     } else {
                         inner.replays_overflowed = true;
                     }
+                    hub.note_workspace_upstream_status(id, *connected);
                 }
-                FrameClass::ReplayStopped(id) => {
+                FrameClass::ReplayStopped { id, error } => {
                     inner.replays.remove(id);
+                    if *error {
+                        hub.note_workspace_upstream_status(id, false);
+                    } else {
+                        hub.note_workspace_stopped(id);
+                    }
                 }
-                FrameClass::SessionMoved { .. }
-                | FrameClass::SessionDeleted { .. }
-                | FrameClass::None => {}
+                FrameClass::WorkspaceLocationChanged(id) => {
+                    hub.note_workspace_location_change(id);
+                }
+                FrameClass::SessionMoved { workspace, session } => {
+                    hub.note_session_location_change(workspace, session);
+                }
+                FrameClass::SessionDeleted { .. } | FrameClass::None => {}
             }
             inner.subscribers.retain(|sub| {
                 let session_moved = matches!(
@@ -680,8 +690,9 @@ impl SharedStream {
 
 enum FrameClass {
     None,
-    ReplayStatus(String),
-    ReplayStopped(String),
+    ReplayStatus { id: String, connected: bool },
+    ReplayStopped { id: String, error: bool },
+    WorkspaceLocationChanged(String),
     SessionMoved { workspace: String, session: String },
     SessionDeleted { workspace: String, session: String },
 }
@@ -692,6 +703,8 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
     }
     if !data.contains("\"instance.eventStatus\"")
         && !data.contains("\"workspace.stopped\"")
+        && !data.contains("\"workspace.worktreesChanged\"")
+        && !data.contains("\"worktree.updated\"")
         && !data.contains("\"session.moved\"")
         && !data.contains("\"session.deleted\"")
     {
@@ -710,27 +723,54 @@ fn classify_frame(kind: &str, data: &str) -> FrameClass {
                 Some("workspace stopped" | "workspace error")
             )
         {
-            return FrameClass::ReplayStopped(id.to_owned());
+            return FrameClass::ReplayStopped {
+                id: id.to_owned(),
+                error: value["reason"] == "workspace error",
+            };
         }
-        return FrameClass::ReplayStatus(id.to_owned());
+        return FrameClass::ReplayStatus {
+            id: id.to_owned(),
+            connected: value["status"] == "connected",
+        };
     }
     if value["type"] == "workspace.stopped"
         && let Some(id) = value["workspaceId"].as_str()
         && crate::history::valid_id(id)
     {
-        return FrameClass::ReplayStopped(id.to_owned());
+        return FrameClass::ReplayStopped {
+            id: id.to_owned(),
+            error: false,
+        };
+    }
+    if value["type"] == "workspace.worktreesChanged"
+        && let Some(id) = value["workspaceId"].as_str()
+        && crate::history::valid_id(id)
+    {
+        return FrameClass::WorkspaceLocationChanged(id.to_owned());
+    }
+    if value["type"] == "instance.event"
+        && value["event"]["type"] == "worktree.updated"
+        && let Some(id) = value["instanceId"].as_str()
+        && crate::history::valid_id(id)
+    {
+        return FrameClass::WorkspaceLocationChanged(id.to_owned());
     }
     if value["type"] == "instance.event"
         && let Some(workspace) = value["instanceId"].as_str()
-        && let Some(session) = value["event"]["data"]["sessionID"].as_str()
     {
         if value["event"]["type"] == "session.moved" {
+            let session = value["event"]["data"]["sessionID"]
+                .as_str()
+                .or_else(|| value["event"]["data"]["id"].as_str())
+                .unwrap_or("");
             return FrameClass::SessionMoved {
                 workspace: workspace.to_owned(),
                 session: session.to_owned(),
             };
         }
-        if value["event"]["type"] == "session.deleted" {
+        if value["event"]["type"] == "session.deleted"
+            && let Some(session) = value["event"]["data"]["sessionID"].as_str()
+        {
             return FrameClass::SessionDeleted {
                 workspace: workspace.to_owned(),
                 session: session.to_owned(),
@@ -745,14 +785,131 @@ struct StreamEntry {
     active: bool,
 }
 
+const MAX_TRACKED_LOCATIONS: usize = 1024;
+
+#[derive(Default)]
+struct LocationRevisions {
+    workspace: HashMap<String, u64>,
+    session: HashMap<(String, String), u64>,
+    overflow: u64,
+    upstream_unhealthy: HashSet<String>,
+    upstream_verified_healthy: HashSet<String>,
+    overflow_unhealthy: bool,
+}
+
 #[derive(Default)]
 pub(crate) struct Hub {
     streams: Mutex<HashMap<String, StreamEntry>>,
     next_id: AtomicU64,
     next_connection: AtomicU64,
+    location_revisions: Mutex<LocationRevisions>,
 }
 
 impl Hub {
+    fn bump_workspace_revision(rev: &mut LocationRevisions, workspace: &str) {
+        if let Some(entry) = rev.workspace.get_mut(workspace) {
+            *entry = entry.wrapping_add(1);
+        } else if rev.workspace.len() < MAX_TRACKED_LOCATIONS {
+            rev.workspace.insert(workspace.to_owned(), 1);
+        } else {
+            rev.overflow = rev.overflow.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn note_workspace_location_change(&self, workspace: &str) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+    }
+
+    pub(crate) fn note_workspace_stopped(&self, workspace: &str) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+        rev.upstream_unhealthy.remove(workspace);
+        rev.upstream_verified_healthy.remove(workspace);
+    }
+
+    pub(crate) fn note_workspace_upstream_status(&self, workspace: &str, connected: bool) {
+        let mut rev = self.location_revisions.lock().unwrap();
+        Self::bump_workspace_revision(&mut rev, workspace);
+        if connected {
+            rev.upstream_unhealthy.remove(workspace);
+            if rev.overflow_unhealthy {
+                if rev.upstream_verified_healthy.len() >= MAX_TRACKED_LOCATIONS
+                    && !rev.upstream_verified_healthy.contains(workspace)
+                {
+                    rev.upstream_verified_healthy.clear();
+                }
+                rev.upstream_verified_healthy.insert(workspace.to_owned());
+            }
+        } else {
+            rev.upstream_verified_healthy.remove(workspace);
+            if rev.upstream_unhealthy.len() < MAX_TRACKED_LOCATIONS {
+                rev.upstream_unhealthy.insert(workspace.to_owned());
+            } else if !rev.upstream_unhealthy.contains(workspace) {
+                rev.overflow_unhealthy = true;
+            }
+        }
+    }
+
+    fn workspace_healthy_locked(rev: &LocationRevisions, workspace: &str) -> bool {
+        if rev.upstream_unhealthy.contains(workspace) {
+            return false;
+        }
+        if rev.overflow_unhealthy {
+            return rev.upstream_verified_healthy.contains(workspace);
+        }
+        true
+    }
+
+    fn location_revision_locked(
+        rev: &LocationRevisions,
+        workspace: &str,
+        session: Option<&str>,
+    ) -> u64 {
+        let ws = rev.workspace.get(workspace).copied().unwrap_or(0);
+        let ses = session
+            .and_then(|s| {
+                rev.session
+                    .get(&(workspace.to_owned(), s.to_owned()))
+                    .copied()
+            })
+            .unwrap_or(0);
+        rev.overflow.wrapping_add(ws).wrapping_add(ses)
+    }
+
+    pub(crate) fn workspace_upstream_healthy(&self, workspace: &str) -> bool {
+        let rev = self.location_revisions.lock().unwrap();
+        Self::workspace_healthy_locked(&rev, workspace)
+    }
+
+    pub(crate) fn note_session_location_change(&self, workspace: &str, session: &str) {
+        if session.is_empty() {
+            self.note_workspace_location_change(workspace);
+            return;
+        }
+        let mut rev = self.location_revisions.lock().unwrap();
+        let key = (workspace.to_owned(), session.to_owned());
+        if let Some(entry) = rev.session.get_mut(&key) {
+            *entry = entry.wrapping_add(1);
+        } else if rev.session.len() < MAX_TRACKED_LOCATIONS {
+            rev.session.insert(key, 1);
+        } else {
+            rev.overflow = rev.overflow.wrapping_add(1);
+        }
+    }
+
+    pub(crate) fn location_revision(&self, workspace: &str, session: Option<&str>) -> u64 {
+        let rev = self.location_revisions.lock().unwrap();
+        Self::location_revision_locked(&rev, workspace, session)
+    }
+
+    pub(crate) fn location_state(&self, workspace: &str, session: Option<&str>) -> (u64, bool) {
+        let rev = self.location_revisions.lock().unwrap();
+        (
+            Self::location_revision_locked(&rev, workspace, session),
+            Self::workspace_healthy_locked(&rev, workspace),
+        )
+    }
     async fn subscribe(
         self: &Arc<Self>,
         backend: &Backend,

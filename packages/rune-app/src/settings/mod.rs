@@ -9,6 +9,7 @@ mod host_support;
 mod info;
 mod integrations;
 mod memory;
+mod missions;
 pub(crate) mod notification_routing;
 mod notification_settings;
 mod opencode;
@@ -341,6 +342,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
             )
         });
         let integration_changes = watch.map(|watch| watch.take_integration_changes());
+        let mission_catalog_changes = watch.map(|watch| watch.take_mission_catalog_changes());
         let (changes, stopped, generation) = observation.map_or_else(
             || (Default::default(), Default::default(), None),
             |(changes, stopped, generation)| (changes, stopped, Some(generation)),
@@ -351,10 +353,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .provider_target
                 .as_ref()
                 .map(|target| target.revision());
+            let old_authority = shared
+                .provider_target
+                .as_ref()
+                .map(|target| (target.location().0.to_owned(), target.authority()));
             let mut native_changed = false;
             if let Some(target) = &mut shared.provider_target {
                 if !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation) {
                     shared.provider_target = None;
+                    shared.missions.revoke_location();
                 } else {
                     if let Some((_, status)) = stats_changes.as_ref() {
                         native_changed = target.observe_native_status(*status);
@@ -363,6 +370,14 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                         target.invalidate_location();
                     }
                 }
+            }
+            if old_authority.as_ref().is_some_and(|(w, a)| {
+                shared
+                    .provider_target
+                    .as_ref()
+                    .is_some_and(|t| t.location().0 != w || t.authority() != *a)
+            }) {
+                shared.missions.revoke_location();
             }
             let stats_changed = shared
                 .provider_target
@@ -378,6 +393,15 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .is_some_and(|(target, (changes, session_changes))| {
                     target.integrations_catalogue(changes, session_changes)
                 });
+            let mission_catalog_changed = shared
+                .provider_target
+                .as_mut()
+                .zip(mission_catalog_changes.as_ref())
+                .is_some_and(|(target, changes)| target.mission_catalog_catalogue(changes));
+            let location_state_changed = shared
+                .provider_target
+                .as_mut()
+                .is_some_and(providers::Target::sync_location_state);
             if (old
                 != shared
                     .provider_target
@@ -387,7 +411,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 || native_changed
                 || bound
                 || stats_changed
-                || integrations_changed)
+                || integrations_changed
+                || mission_catalog_changed
+                || location_state_changed)
                 && let Some(wake) = &shared.window_wake
             {
                 wake();

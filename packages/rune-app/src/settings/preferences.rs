@@ -28,6 +28,7 @@ pub(super) struct Preferences {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) open_providers: bool,
     pub(super) memory: super::memory::Setting,
+    pub(super) missions: super::missions::Shared,
     pub(super) startup: super::startup_state::StartupState,
     pub(super) opencode_install: super::opencode::install::Install,
     pub(super) notification_update: Option<String>,
@@ -394,6 +395,7 @@ impl Preferences {
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
+        self.missions.on_transport_lost();
         if !self.transport_lost {
             self.transport_lost = true;
             self.revision += 1;
@@ -467,6 +469,7 @@ impl Preferences {
         self.config.mark_transport_lost();
         self.state.mark_transport_lost();
         self.server.mark_transport_lost();
+        self.missions.on_transport_lost();
         if !self.transport_lost {
             self.transport_lost = true;
             self.revision += 1;
@@ -607,9 +610,16 @@ impl Preferences {
         let server_rev =
             check_revisions.then(|| backend.client.preferences_revision(Owner::Server));
         let atomic = backend.client.supports_atomic_settings_patches();
-        self.config.prepare_drain(config_rev, retry_failed, atomic);
-        self.state.prepare_drain(state_rev, retry_failed, atomic);
-        self.server.prepare_drain(server_rev, retry_failed, atomic);
+        self.config.prepare_drain(
+            config_rev,
+            retry_failed,
+            atomic,
+            self.missions.needs_config_revalidation(),
+        );
+        self.state
+            .prepare_drain(state_rev, retry_failed, atomic, false);
+        self.server
+            .prepare_drain(server_rev, retry_failed, atomic, false);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -625,6 +635,7 @@ impl Preferences {
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn flush(&mut self) -> bool {
         use std::time::{Duration, Instant};
+        self.missions.suspend_reads();
         if self.backend.is_some() && !self.authentication_required {
             self.observe_transport_drops();
             self.take_invalidations();
@@ -638,13 +649,14 @@ impl Preferences {
                     codenomad_client::http::REQUEST_TIMEOUT * 3 + Duration::from_millis(100);
                 let total_budget =
                     codenomad_client::http::REQUEST_TIMEOUT * 6 + Duration::from_millis(100);
+                let max_ops = 16u32.saturating_add(self.missions.pending_ops().saturating_mul(4));
                 platform::block_on(async {
                     let mut last_progress = Instant::now();
                     let mut settled_ops = 0u32;
                     while self.documents_draining()
                         && started.elapsed() < total_budget
                         && last_progress.elapsed() < stall_budget
-                        && settled_ops < 16
+                        && settled_ops < max_ops
                     {
                         let transport_or_watch =
                             self.observe_transport_drops() | self.take_invalidations();
@@ -674,11 +686,26 @@ impl Preferences {
         !self.config.has_unconfirmed()
             && !self.state.has_unconfirmed()
             && !self.server.has_unconfirmed()
+            && !self.missions.has_unconfirmed()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn documents_draining(&self) -> bool {
-        self.config.draining() || self.state.draining() || self.server.draining()
+        let config_refreshing = self.can_retry() && self.config.read_refreshing();
+        let can_start_missions_write = self.can_retry()
+            && (config_refreshing
+                || (self.config_loaded()
+                    && !self.config.busy_for_external_write()
+                    && self
+                        .backend
+                        .as_ref()
+                        .is_some_and(super::ServerOwner::backend_verified)));
+        self.config.draining()
+            || self.state.draining()
+            || self.server.draining()
+            || self
+                .missions
+                .draining(can_start_missions_write, config_refreshing)
     }
     pub fn bind(&mut self, owner: Option<Backend>) -> bool {
         if self.backend.as_ref().map(|b| &b.client_id) == owner.as_ref().map(|b| &b.client_id) {
@@ -706,6 +733,7 @@ impl Preferences {
         self.state.rebind(same_address);
         self.server.rebind(same_address);
         self.memory.bind(same_address);
+        self.missions.rebind(same_address);
         self.opencode_install.cancel_check();
         self.backend = owner;
         self.seen_drop_generation = self
@@ -893,6 +921,7 @@ impl Preferences {
         self.authentication_required = true;
         self.revoke_send_authority();
         self.memory.on_authentication_required();
+        self.missions.on_transport_lost();
         self.state.settle_palette_mutation_on_auth_expired();
         self.opencode_install.cancel_check();
         if let Some(target) = &mut self.provider_target {
@@ -981,6 +1010,112 @@ impl Preferences {
         self.doc(owner).snapshot.as_ref()
     }
 
+    pub(super) fn config_loaded(&self) -> bool {
+        self.saved(Owner::Config).is_some()
+            && !self.config.read_failed()
+            && !self.transport_lost
+            && self.can_retry()
+    }
+
+    pub(super) fn config_read_failed(&self) -> bool {
+        self.config.read_failed() || self.transport_lost || self.authentication_required
+    }
+
+    #[cfg(test)]
+    pub(super) fn apply_mission_config(&mut self, snapshot: Value) {
+        self.config.seed_external_snapshot(snapshot);
+        self.revision += 1;
+        for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+            wake();
+        }
+    }
+
+    pub(super) fn invalidate_config_for_missions(&mut self) {
+        self.config.invalidate_authoritative();
+    }
+
+    fn apply_mission_effects(
+        &mut self,
+        effects: super::missions::ConfigEffects,
+    ) -> (bool, bool, bool) {
+        if effects.revalidate_transport {
+            self.revalidate_transport();
+        }
+        if effects.invalidate {
+            self.invalidate_config_for_missions();
+            for wake in [&self.main_wake, &self.window_wake].into_iter().flatten() {
+                wake();
+            }
+        }
+        (effects.changed, effects.settled, effects.invalidate)
+    }
+
+    fn run_mission_op<R>(
+        &mut self,
+        op: impl FnOnce(&mut super::missions::Shared, &super::missions::ConfigContext<'_>) -> R,
+    ) -> R {
+        let can_retry = self.backend.is_some() && !self.authentication_required;
+        let config_loaded = self.config.snapshot.is_some()
+            && !self.config.read_failed()
+            && !self.transport_lost
+            && can_retry;
+        let ctx = super::missions::ConfigContext {
+            backend: self.backend.as_ref(),
+            config_loaded,
+            config_refreshing: self.config.read_refreshing(),
+            config_busy: self.config.busy_for_external_write(),
+            config_snapshot: self.config.snapshot.as_ref(),
+            prefs_authority: self.authority.clone(),
+            doc_epoch: self.config.write_authority(),
+            transport_lost: self.transport_lost,
+            can_retry,
+        };
+        op(&mut self.missions, &ctx)
+    }
+
+    pub(super) fn poll_missions_writes(&mut self, wake: &rune::Waker) -> bool {
+        let effects = self.run_mission_op(|missions, ctx| missions.poll_writes(ctx, false, wake));
+        self.apply_mission_effects(effects).0
+    }
+
+    pub(super) fn start_mission_defaults_reload(&mut self, _wake: &rune::Waker) {
+        let effects = self.run_mission_op(|missions, ctx| missions.start_defaults_reload(ctx));
+        self.apply_mission_effects(effects);
+    }
+
+    pub(super) fn toggle_mission_delete_sessions(&mut self, next: bool, wake: &rune::Waker) {
+        let _ =
+            self.run_mission_op(|missions, ctx| missions.toggle_delete_sessions(ctx, next, wake));
+    }
+
+    pub(super) fn start_mission_library_reload(&mut self, _wake: &rune::Waker) {
+        let effects = self.run_mission_op(|missions, ctx| missions.start_library_reload(ctx));
+        self.apply_mission_effects(effects);
+    }
+
+    pub(super) fn start_mission_model_remove(
+        &mut self,
+        id: &str,
+        owner: &str,
+        expected: codenomad_client::settings::missions::MissionPreferenceExpectation,
+        wake: &rune::Waker,
+    ) {
+        let _ = self.run_mission_op(|missions, ctx| {
+            missions.start_model_remove(ctx, id, owner, expected, wake)
+        });
+    }
+
+    pub(super) fn start_mission_models_reset(
+        &mut self,
+        owner: &str,
+        expected: codenomad_client::settings::missions::MissionPreferenceExpectation,
+        wake: &rune::Waker,
+    ) {
+        let _ = self.run_mission_op(|missions, ctx| {
+            missions.start_models_reset(ctx, owner, expected, wake)
+        });
+    }
+
     #[cfg(test)]
     pub fn error(&self) -> Option<&'static str> {
         if self.authentication_required {
@@ -1014,6 +1149,7 @@ impl Preferences {
                 self.config.mark_transport_lost();
                 self.state.mark_transport_lost();
                 self.server.mark_transport_lost();
+                self.missions.on_transport_lost();
                 disconnected = true;
                 if !self.transport_lost {
                     self.transport_lost = true;
@@ -1077,7 +1213,9 @@ impl Preferences {
         let (main, window) = (self.main_wake.clone(), self.window_wake.clone());
         #[cfg(not(target_arch = "wasm32"))]
         let (poll_config, poll_state, poll_server) = (
-            revalidate_idle || self.config.has_unconfirmed(),
+            revalidate_idle
+                || self.config.has_unconfirmed()
+                || self.missions.needs_config_revalidation(),
             revalidate_idle || self.state.has_unconfirmed(),
             (self.show_server || self.show_environment || self.server.unsettled())
                 && (revalidate_idle || self.server.has_unconfirmed()),
@@ -1088,13 +1226,14 @@ impl Preferences {
             true,
             self.show_server || self.show_environment || self.server.unsettled(),
         );
-        let (config_changed, config_settled) = if poll_config {
+        let (mut config_changed, mut config_settled) = if poll_config {
             self.config.poll(
                 &backend,
                 Owner::Config,
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                self.missions.config_write_in_flight(),
                 &main,
                 &window,
             )
@@ -1117,6 +1256,7 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                false,
                 &main,
                 &window,
             )
@@ -1130,15 +1270,46 @@ impl Preferences {
                 &active_client_ids,
                 seen_drops,
                 self.transport_lost,
+                false,
                 &main,
                 &window,
             )
         } else {
             (false, false)
         };
+        let (missions_changed, missions_settled, missions_invalidated) = {
+            let fallback_wake: rune::Waker;
+            let wake = match window.as_ref().or(main.as_ref()) {
+                Some(wake) => wake,
+                None => {
+                    fallback_wake = Arc::new(|| {});
+                    &fallback_wake
+                }
+            };
+            let launch_pending_depth = !revalidate_idle || self.provider_target.is_none();
+            let effects = self.run_mission_op(|missions, ctx| {
+                missions.poll_writes(ctx, launch_pending_depth, wake)
+            });
+            self.apply_mission_effects(effects)
+        };
+        if missions_invalidated && poll_config && !self.missions.config_write_in_flight() {
+            let (followup_changed, followup_settled) = self.config.poll(
+                &backend,
+                Owner::Config,
+                &active_client_ids,
+                seen_drops,
+                self.transport_lost,
+                false,
+                &main,
+                &window,
+            );
+            config_changed |= followup_changed;
+            config_settled |= followup_settled;
+        }
         let changed = config_changed
             | state_changed
             | server_changed
+            | missions_changed
             | memory_writes
             | self.memory.poll(
                 &backend,
@@ -1156,7 +1327,7 @@ impl Preferences {
                 &window,
             )
             | install;
-        let settled = config_settled | state_settled | server_settled;
+        let settled = config_settled | state_settled | server_settled | missions_settled;
         let dropped_mid_poll = self.observe_transport_drops();
         if changed {
             self.revision += 1;

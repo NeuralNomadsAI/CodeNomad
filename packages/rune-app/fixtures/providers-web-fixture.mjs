@@ -815,7 +815,8 @@ try {
   }
 
   async function checkStats() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
+    assert.equal(streams.size,1,'Stats shares the single multiplexed EventSource')
+    const stream = Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const emit = value => stream.write(`data: ${JSON.stringify({instanceId:project.id,...value})}\n\n`)
     const hint = type => emit({type:'instance.event',event:{type,data:{sessionID:'ses_unselected'}}})
@@ -880,11 +881,13 @@ try {
     await page.waitForFunction(()=>!document.body.innerText.includes('Daily activity'))
     assert.equal(aggregates.length,6)
     assert.deepEqual(unexpected,[])
+    assert.equal(streams.size,1,'Stats keeps the single multiplexed EventSource')
     console.log(JSON.stringify({fixture:'settings-stats',mobile:true,aggregates,restoredOtherWindow:true,emptyBreakdowns:true,hiddenAbort:true,hiddenRefresh:false}))
   }
 
   async function checkNotifications() {
-    const stream = Array.from(streams).find(([client])=>!client.endsWith('-preferences'))?.[1] ?? Array.from(streams.values())[0]
+    assert.equal(streams.size,1,'Notifications shares the single multiplexed EventSource')
+    const stream = Array.from(streams.values())[0]
     assert(stream,'Project catalogue stream must be attached')
     const message = 'Short announcement from the fixture'
     const envelope = {type:'instance.event',instanceId:project.id,event:{
@@ -946,6 +949,7 @@ try {
     assert.equal(notificationRouting.copy.history,true)
     assert.equal(notificationRouting.copy.system,true)
     assert.equal(notifyFocused,true)
+    assert.equal(streams.size,1,'Notifications keeps the single multiplexed EventSource')
     console.log(JSON.stringify({fixture:'notifications-preferences',cells:27,permissionGesture:true,foregroundSaved:true,bubbleAnnounced:true,bubbleExpired:true,accessibleUnread:true}))
   }
 
@@ -1068,7 +1072,7 @@ try {
   async function checkProviders() {
   await click('Settings')
   const memory = page.getByRole('switch',{name:'Memory',exact:true})
-  await memory.waitFor({state:'attached'})
+  await memory.and(page.locator(':not([disabled], [aria-disabled="true"])')).waitFor({state:'attached'})
   assert.equal(await memory.getAttribute('aria-checked'),'false')
   await memory.click({force:true})
   await page.getByRole('switch',{name:'Memory',checked:true,exact:true}).waitFor({state:'attached'})
@@ -1337,8 +1341,11 @@ try {
   assert.equal(reads.length,0,'General and Chat do not load the provider catalogue')
   await radio('Providers').click({force:true})
   await visible(account)
-  assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
-  const nonConversation = () => Array.from(streams.values())[0]
+  const nonConversation = () => {
+    assert.equal(streams.size,1,'The catalogue shares the single multiplexed EventSource without a conversation')
+    return Array.from(streams.values())[0]
+  }
+  nonConversation()
   account = 'default'
   nonConversation().write(`data: ${JSON.stringify({type:'instance.event',instanceId:'catalogue',event:{type:'credential.switched'}})}\n\n`)
   await visible('account@example.test')

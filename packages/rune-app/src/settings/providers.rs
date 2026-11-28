@@ -21,8 +21,11 @@ pub(super) struct Target {
     session: Option<String>,
     owned_tab: bool,
     revision: u64,
+    mission_catalog: u64,
     location_epoch: u64,
     observed: Option<u64>,
+    observed_location_revision: u64,
+    observed_upstream_healthy: bool,
     authority: u64,
     native_authority: u64,
     online: bool,
@@ -35,40 +38,76 @@ pub(super) struct Target {
 
 impl Target {
     pub fn capture(s: &State) -> Option<Self> {
-        let (backend, workspace, session, owned_tab, host_online, native_online) =
+        let (backend, workspace, session, owned_tab, observed, host_online, native_online) =
             if let Some(l) = s.screen.launcher() {
                 let backend = l.connection.clone()?;
                 let workspace = l.project.as_ref()?.id.clone();
                 let session = crate::workspace::active_session(s).map(str::to_owned);
+                let (observed, host_online) = match l.catalogue_watch.as_ref() {
+                    Some(watch) => {
+                        let generation = watch.generation();
+                        (Some(generation), generation % 2 == 1)
+                    }
+                    None => (None, true),
+                };
                 let native_online = l
                     .catalogue_watch
                     .as_ref()
                     .and_then(|watch| watch.native_connected(&workspace))
                     .unwrap_or(true);
-                (backend, workspace, session, true, true, native_online)
+                (
+                    backend,
+                    workspace,
+                    session,
+                    true,
+                    observed,
+                    host_online,
+                    native_online,
+                )
             } else {
                 let backend = super::bound_backend(s)?;
                 let (workspace, session) = (backend.workspace.clone(), backend.session.clone());
                 let prefs = s.settings.shared.borrow();
-                let host_online = !prefs.is_transport_lost();
+                let transport_lost = prefs.is_transport_lost();
+                let host_online = if s.incoming.is_some()
+                    || s.conversation_client_id.is_some()
+                    || s.stream_offline
+                    || s.phase.reconnecting()
+                    || s.phase == crate::Phase::Failed
+                {
+                    s.conversation_stream_connected
+                        && !s.stream_offline
+                        && !s.phase.reconnecting()
+                        && s.phase != crate::Phase::Failed
+                        && !transport_lost
+                } else {
+                    !transport_lost
+                };
                 let native_online = prefs.is_native_stream_online(&workspace);
                 (
                     backend,
                     workspace,
                     (!session.is_empty()).then_some(session),
                     false,
+                    None,
                     host_online,
                     native_online,
                 )
             };
+        let (observed_location_revision, observed_upstream_healthy) = backend
+            .client
+            .location_state(&workspace, session.as_deref());
         Some(Self {
             backend,
             workspace,
             session,
             owned_tab,
             revision: 0,
+            mission_catalog: 0,
             location_epoch: 0,
-            observed: None,
+            observed,
+            observed_location_revision,
+            observed_upstream_healthy,
             authority: 0,
             native_authority: 0,
             online: host_online,
@@ -104,6 +143,12 @@ impl Target {
         if !self.backend.client.same_connection(&current.client) {
             self.backend = current.clone();
             self.observed = None;
+            let (rev, healthy) = self
+                .backend
+                .client
+                .location_state(&self.workspace, self.session.as_deref());
+            self.observed_location_revision = rev;
+            self.observed_upstream_healthy = healthy;
             self.native_online = true;
             self.authority = self.authority.wrapping_add(1);
         } else if self.matches(changes) {
@@ -153,6 +198,10 @@ impl Target {
         } else {
             false
         }
+    }
+
+    pub(super) fn authority(&self) -> u64 {
+        self.authority
     }
 
     pub(super) fn provider_authority(&self) -> u64 {
@@ -269,6 +318,38 @@ impl Target {
         self.provider_authority().wrapping_add(self.revision)
     }
 
+    pub(super) fn sync_location_state(&mut self) -> bool {
+        let (rev, healthy) = self
+            .backend
+            .client
+            .location_state(&self.workspace, self.session.as_deref());
+        let changed =
+            self.observed_location_revision != rev || self.observed_upstream_healthy != healthy;
+        self.observed_location_revision = rev;
+        self.observed_upstream_healthy = healthy;
+        changed
+    }
+
+    pub(super) fn mission_catalog_revision(&self) -> u64 {
+        self.revision().wrapping_add(self.mission_catalog)
+    }
+
+    pub(super) fn mission_catalog_catalogue(&mut self, changes: &CatalogueChanges) -> bool {
+        if !self.matches(changes) {
+            return false;
+        }
+        self.mission_catalog = self.mission_catalog.wrapping_add(1);
+        true
+    }
+
+    pub(super) fn mission_catalog_hint(&mut self, workspace: &str) -> bool {
+        if !self.is_workspace(workspace) {
+            return false;
+        }
+        self.mission_catalog = self.mission_catalog.wrapping_add(1);
+        true
+    }
+
     pub fn location_epoch(&self) -> u64 {
         self.location_epoch
     }
@@ -315,14 +396,19 @@ impl Target {
 
     #[cfg(test)]
     pub(super) fn fixture(backend: Backend, workspace: &str, session: Option<&str>) -> Self {
+        let observed_location_revision = backend.client.location_revision(workspace, session);
+        let observed_upstream_healthy = backend.client.workspace_upstream_healthy(workspace);
         Self {
             backend,
             workspace: workspace.to_owned(),
             session: session.map(str::to_owned),
             owned_tab: false,
             revision: 0,
+            mission_catalog: 0,
             location_epoch: 0,
             observed: None,
+            observed_location_revision,
+            observed_upstream_healthy,
             authority: 0,
             native_authority: 0,
             online: true,
