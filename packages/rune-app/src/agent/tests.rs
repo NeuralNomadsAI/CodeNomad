@@ -217,6 +217,7 @@ fn settled_requests_and_removed_models_reject_late_actions_before_dispatch() {
         reference: json!({"id":"model","providerID":"fixture"}),
         label: "Model".into(),
         included: false,
+        limit: None,
     };
     ui.models.push(model);
     let model = ui.models.pop().unwrap();
@@ -1720,6 +1721,7 @@ fn stale_catalog_response_for_previous_directory_or_generation_is_discarded() {
         reference: json!({"id": id, "providerID": "p"}),
         label: id.into(),
         included: false,
+        limit: None,
     };
 
     ui.refresh_catalog("/repo-a".into());
@@ -1781,6 +1783,7 @@ fn directory_change_via_session_or_action_clears_old_models_and_fetches_new_cata
         reference: json!({"id": id, "providerID": "p"}),
         label: id.into(),
         included: false,
+        limit: None,
     };
     let snap = |dir: &str| agent_api::Snapshot {
         models: None,

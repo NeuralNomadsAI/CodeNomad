@@ -282,6 +282,10 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
     let focus_within = ui.actions.focus.as_ref().is_some_and(|focus| {
         *focus == format!("file-row-{path}") || focus.starts_with(&format!("{row_key}:"))
     });
+    let reveal_at_rest = touch
+        || cfg!(any(target_os = "android", target_os = "ios"))
+        || s.shell.has_floating()
+        || (s.shell.width() > 0.0 && s.shell.width() < 768.0);
     let (buttons, popup) = controls::view(
         ui.actions.rows.get(&row_key).unwrap_or(&empty),
         row_at,
@@ -289,7 +293,7 @@ pub(super) fn row(s: &State, ui: &Ui, row: &Row, width: f32, touch: bool) -> (El
         menu_at,
         actions.clone(),
         controls::Visibility {
-            coarse_pointer: touch,
+            coarse_pointer: reveal_at_rest,
             focus_within,
         },
         width,

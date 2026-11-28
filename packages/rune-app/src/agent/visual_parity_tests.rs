@@ -276,11 +276,13 @@ fn global_form_uses_project_request_eyebrow_and_model_picker_highlights_active_m
             reference: json!("m-1"),
             label: "Model Alpha".into(),
             included: true,
+            limit: None,
         },
         Model {
             reference: json!("m-2"),
             label: "Model Beta".into(),
             included: true,
+            limit: None,
         },
     ];
     ui.current = Some(json!("m-2"));

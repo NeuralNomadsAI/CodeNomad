@@ -241,6 +241,7 @@ fn question_fields_model_list_and_composer_remain_scroll_reachable() {
                     reference: json!(format!("model{i}")),
                     label: format!("Synthetic model {i}"),
                     included: false,
+                    limit: None,
                 })
                 .collect();
             tx.instant();
@@ -1436,6 +1437,7 @@ fn ultra_short_touch_drag_cases_10_to_13() {
         reference: serde_json::json!("m-wrap-12"),
         label: "Model · Long Name For Wrap".into(),
         included: true,
+        limit: None,
     });
     ui.current = Some(serde_json::json!("m-wrap-12"));
     let mut rt = Runtime::new(s, view, (720.0, 260.0), Env::new(false, 1.0));
@@ -1706,6 +1708,7 @@ fn ultra_short_touch_drag_cases_14_to_17() {
         reference: "provider/very-long-model-name-for-wrapping".into(),
         label: "provider · Very Long Model Name That Wraps Narrow Dock".into(),
         included: true,
+        limit: None,
     });
     ui.current = Some("provider/very-long-model-name-for-wrapping".into());
     ui.selected = "perm-wrap".into();
@@ -2346,6 +2349,7 @@ fn wheel_after_bottom_clamped_resize_cases_22_to_25() {
                 format!("Model {i}")
             },
             included: true,
+            limit: None,
         })
         .collect();
     // Select a model label long enough to wrap `agent-actions` at 220px and unwrap at 600px
@@ -2507,6 +2511,7 @@ fn wheel_after_bottom_clamped_resize_cases_26_to_30() {
             reference: serde_json::json!(format!("m27-{i}")),
             label: format!("Model 27-{i}"),
             included: true,
+            limit: None,
         })
         .collect();
     ui.selected = "perm-27a".into();

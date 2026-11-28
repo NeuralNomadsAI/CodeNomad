@@ -8,11 +8,31 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 const CONTROL_READ_BUDGET: Duration = Duration::from_secs(15);
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct ModelLimit {
+    #[serde(default)]
+    pub input: Option<u64>,
+    #[serde(default)]
+    pub context: Option<u64>,
+    #[serde(default)]
+    pub output: Option<u64>,
+}
+
+impl ModelLimit {
+    /// Preferred context budget: positive `limit.input`, falling back to positive `limit.context`.
+    pub fn available(&self) -> Option<u64> {
+        self.input
+            .filter(|&limit| limit > 0)
+            .or_else(|| self.context.filter(|&limit| limit > 0))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Model {
     pub reference: Value,
     pub label: String,
     pub included: bool,
+    pub limit: Option<ModelLimit>,
 }
 #[derive(Clone)]
 pub struct Permission {
@@ -1021,6 +1041,26 @@ fn string(value: &Value, max: usize) -> Result<String> {
         .map(str::to_string)
         .ok_or_else(|| "invalid control string".into())
 }
+fn limit_u64(value: &Value) -> Option<u64> {
+    if let Some(n) = value.as_u64() {
+        return Some(n);
+    }
+    value
+        .as_f64()
+        .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0 && *n <= 9_007_199_254_740_991.0)
+        .map(|n| n as u64)
+}
+
+fn decode_model_limit(value: &Value) -> Option<ModelLimit> {
+    let map = value.as_object()?;
+    let limit = ModelLimit {
+        input: map.get("input").and_then(limit_u64),
+        context: map.get("context").and_then(limit_u64),
+        output: map.get("output").and_then(limit_u64),
+    };
+    (limit.input.is_some() || limit.context.is_some() || limit.output.is_some()).then_some(limit)
+}
+
 pub fn models(value: &Value) -> Result<Vec<Model>> {
     let rows = value["data"]
         .as_array()
@@ -1036,18 +1076,22 @@ pub fn models(value: &Value) -> Result<Vec<Model>> {
         }
         let cost = &row["cost"][0];
         let included = cost["input"].as_f64() == Some(0.0) && cost["output"].as_f64() == Some(0.0);
+        let limit = decode_model_limit(&row["limit"]);
         out.push(Model {
             reference: json!({"id":id,"providerID":provider}),
             label: format!("{provider} · {name}"),
             included,
+            limit,
         });
         if let Some(variants) = row["variants"].as_array().filter(|v| v.len() <= 32) {
             for variant in variants {
                 let v = string(&variant["id"], 256)?;
+                let variant_limit = decode_model_limit(&variant["limit"]).or(limit);
                 out.push(Model {
                     reference: json!({"id":id,"providerID":provider,"variant":v}),
                     label: format!("{provider} · {name} · {v}"),
                     included,
+                    limit: variant_limit,
                 });
             }
         }
@@ -2215,5 +2259,112 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         let _ = TcpStream::connect(addr);
         let _ = handle.join();
+    }
+
+    #[test]
+    fn models_decode_limits_and_available_budget() {
+        let payload = json!({
+            "data": [
+                {
+                    "id": "claude-sonnet-4-5",
+                    "providerID": "anthropic",
+                    "name": "Claude Sonnet 4.5",
+                    "enabled": true,
+                    "cost": [{"input": 3.0, "output": 15.0}],
+                    "limit": {"input": 168_000, "context": 200_000, "output": 32_000},
+                    "variants": [
+                        {"id": "high"},
+                        {"id": "extended", "limit": {"context": 1_000_000, "output": 64_000}}
+                    ]
+                },
+                {
+                    "id": "gpt-5",
+                    "providerID": "openai",
+                    "name": "GPT-5",
+                    "enabled": true,
+                    "cost": [{"input": 0.0, "output": 0.0}],
+                    "limit": {"input": 0, "context": 128_000.0}
+                },
+                {
+                    "id": "no-limit",
+                    "providerID": "local",
+                    "name": "Local",
+                    "enabled": true,
+                    "cost": [{"input": 0.0, "output": 0.0}]
+                },
+                {
+                    "id": "malformed-limit",
+                    "providerID": "local",
+                    "name": "Malformed",
+                    "enabled": true,
+                    "cost": [{"input": 0.0, "output": 0.0}],
+                    "limit": {"input": -1, "context": "bad", "output": 8192}
+                }
+            ]
+        });
+
+        let decoded = models(&payload).unwrap();
+        assert_eq!(decoded.len(), 6);
+
+        let base = &decoded[0];
+        assert_eq!(
+            base.limit,
+            Some(ModelLimit {
+                input: Some(168_000),
+                context: Some(200_000),
+                output: Some(32_000),
+            })
+        );
+        assert_eq!(base.limit.unwrap().available(), Some(168_000));
+
+        // Variant without its own limit inherits the parent model's limit.
+        assert_eq!(decoded[1].limit, base.limit);
+        // Variant with an explicit limit overrides the parent model's limit.
+        assert_eq!(
+            decoded[2].limit,
+            Some(ModelLimit {
+                input: None,
+                context: Some(1_000_000),
+                output: Some(64_000),
+            })
+        );
+        assert_eq!(decoded[2].limit.unwrap().available(), Some(1_000_000));
+
+        // Non-positive input falls back to positive context (including exact integer f64).
+        assert_eq!(
+            decoded[3].limit,
+            Some(ModelLimit {
+                input: Some(0),
+                context: Some(128_000),
+                output: None,
+            })
+        );
+        assert_eq!(decoded[3].limit.unwrap().available(), Some(128_000));
+
+        // Missing limit stays None.
+        assert_eq!(decoded[4].limit, None);
+
+        // Invalid fields are ignored without failing catalog decoding.
+        assert_eq!(
+            decoded[5].limit,
+            Some(ModelLimit {
+                input: None,
+                context: None,
+                output: Some(8192),
+            })
+        );
+        assert_eq!(decoded[5].limit.unwrap().available(), None);
+
+        // Direct serde deserialization honors #[serde(default)].
+        let partial: ModelLimit = serde_json::from_value(json!({"context": 64_000})).unwrap();
+        assert_eq!(
+            partial,
+            ModelLimit {
+                input: None,
+                context: Some(64_000),
+                output: None,
+            }
+        );
+        assert_eq!(partial.available(), Some(64_000));
     }
 }
