@@ -96,9 +96,9 @@ const InstanceServiceStatus: Component<InstanceServiceStatusProps> = (props) => 
         ? { directory: resolved.directory }
         : { directory: instance().folder }
       if (shouldEnable) {
-        await client.mcp.connect({ server: serverName, location }, { signal: operation.signal })
+        await client.experimental.mcp.connect({ server: serverName, location }, { signal: operation.signal })
       } else {
-        await client.mcp.disconnect({ server: serverName, location }, { signal: operation.signal })
+        await client.experimental.mcp.disconnect({ server: serverName, location }, { signal: operation.signal })
       }
       if (operation.current()) await refreshMetadata()
     } catch (error) {

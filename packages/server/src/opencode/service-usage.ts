@@ -115,7 +115,7 @@ export class ServiceUsage {
     try { if (owner && query.restorePeriod) from = query.to - this.cache!.period(owner, query.timezone) * 86_400_000 }
     catch { /* Optional saved period is not a prerequisite for aggregation. */ }
     if (from < 0) throw new PluginControlsError("Restored Stats range starts before the supported epoch", "invalid")
-    const native = connection.client.session.stats({ from, to: query.to, timezone: query.timezone, tools: "none" })
+    const native = connection.client.experimental.session.stats({ from, to: query.to, timezone: query.timezone, tools: "none" })
     const key = JSON.stringify([owner, query.timezone]), days = (query.to - from) / 86_400_000
     const latest = () => order > this.retiredThrough && this.admissions.get(key) === order
     if (order > this.retiredThrough && order > (this.admissions.get(key) ?? 0)) {

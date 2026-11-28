@@ -46,22 +46,25 @@ test("global image settings edit JSONC in place and report project overrides", a
       assertCurrent: () => { if (!current) throw new Error("replaced connection") },
       fetch: async (url: URL, options: RequestInit) => {
         assert.equal(options.redirect, "error")
-        if (url.pathname === "/openapi.json") return Response.json(contract(schema))
-        modelReads++
-        assert.equal(url.pathname, "/api/model")
-        assert.equal(url.searchParams.get("types"), "image")
-        assert.equal(url.searchParams.get("location[directory]"), project)
-        if (catalogFailure) { current = false; if (catalogFailure === "throw") throw new Error("transport") }
-        if (catalogStatus !== 200 || catalogFailure) return new Response("unavailable", { status: catalogFailure ? 503 : catalogStatus })
-        return Response.json({ location: { directory: project }, data: [
-          { providerID: "openai", id: "gpt-image-2", name: "GPT Image 2" }, { providerID: "google", id: "imagen" }, { bad: true },
-        ] })
+        assert.equal(url.pathname, "/openapi.json")
+        return Response.json(contract(schema))
       },
       client: { config: { get: async () => [ { type: "directory", path: global },
         ...(lower ? [{ type: "document", path: lowerFile, info: lower }] : []),
         ...(await readFile(globalFile, "utf8").then(text => [{ type: "document", path: globalFile, info: staleGlobal ?? parse(text) }], () => [])),
         ...(ancestor ? [{ type: "document", path: ancestorFile, info: ancestor }] : []),
         { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
+      model: { list: async (input: unknown, options?: { signal?: AbortSignal }) => {
+        modelReads++
+        assert.deepEqual(input, { location: { directory: project }, types: ["image"] })
+        assert.ok(options?.signal instanceof AbortSignal)
+        if (catalogFailure) { current = false; if (catalogFailure === "throw") throw new Error("transport") }
+        if (catalogStatus !== 200) throw new Error(`HTTP ${catalogStatus}`)
+        if (catalogFailure) return { location: { directory: project }, data: undefined }
+        return { location: { directory: project }, data: [
+          { providerID: "openai", id: "gpt-image-2", name: "GPT Image 2" }, { providerID: "google", id: "imagen" }, { bad: true },
+        ] }
+      } },
       plugin: { list: async () => ({ data: [] }) } },
     }
     const manager: any = {

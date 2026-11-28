@@ -123,7 +123,10 @@ stops before the revert boundary (`id < revert.messageID`).
 
 - `images({ sessionID, cursor?, prompts? })` lists, newest first, one `image` entry
   per image file (`image/png|jpeg|gif|webp|avif`) of a `read` tool part and one
-  `generation` entry per image tool part (`generate_image`, or `experimental_image_generate`, both recognized), in part and file order. A page holds
+  `generation` entry per image tool call — both Code Mode `generate_image` calls
+  recorded in an `execute` part's `metadata.toolCalls` and stored direct
+  `generate_image` / `experimental_image_generate` tool parts — in part, call
+  and file order. A page holds
   at most 32 assistant messages, 32 MiB of stored JSON (each row size-checked
   before it loads; a row over 16 MiB gives `blocked: limit`), 64 entries and 1 MiB
   serialized. Every admitted row is emitted before the cursor advances: a row the
@@ -136,7 +139,8 @@ stops before the revert boundary (`id < revert.messageID`).
   `blocked: not-gallery`; a row over 16 MiB gives `blocked: limit`. Decode bounds
   belong to the caller's channel.
 - `imageReference({ sessionID, target })` takes an image target or a generation
-  target `{ messageID, part, digest: SHA-256(part id, NUL, jobID) }` and returns
+  target `{ messageID, part, call?, digest }` (`call` indexes `metadata.toolCalls`
+  on an `execute` part; `digest` is `SHA-256(part id, [call,] NUL, jobID)`) and returns
   `{ path }` relative to the location, or `refused` with `unverifiable`, `outside`,
   `changed`, `not-gallery` or `missing`. A target is never substituted.
 

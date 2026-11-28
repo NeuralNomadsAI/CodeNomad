@@ -42,7 +42,7 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 Başlatma hatası iletişim kutusunda yürütülebilir dosyayı ve sürümü kontrol etmek için **OpenCode Ayarlarını Aç** seçeneğini kullanın; özel ortam değerleri için **Gelişmiş → Ortam Değişkenleri** bölümüne geçin.
 
 1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode İkili Dosyası** altındaki seçili yürütülebilir dosyayı kontrol edin.
-2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.4.0**; önerilen/doğrulanan sürüm: **2.4.1**.
+2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.4.2**; önerilen/doğrulanan sürüm: **2.4.2**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.
 
 **OpenCode hizmetini yeniden başlat**, **Sorun giderme** altında mevcuttur ve onay gerektirir. Bağlı her istemcideki aktif çalışmayı kesintiye uğratır ancak oturum geçmişini korur. Yapılandırmanın yeniden yüklenmesi ayrı bir eylemdir: süreci korur ancak yüklenen Konumları yeniden oluşturur ve bekleyen soruları/izinleri iptal eder. Zararsız bir yenileme de değildir.
