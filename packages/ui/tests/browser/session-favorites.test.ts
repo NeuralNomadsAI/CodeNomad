@@ -69,7 +69,6 @@ test("favorites persist, keep requests first and synchronize over the real route
     message: { list: async ({ sessionID }: { sessionID: string }) =>
       ({ data: sessionID === "ses_dossier_02" ? [] : [{ type: "user" }], cursor: {} }) },
     permission: { request: { list: async ({ location }: { location: { directory: string } }) => ({ location, data: [] }) } },
-    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
   } }
   const workspaceManager = {
     get: (id: string) => id === "favorites-workspace" || id === "other-window" ? main : id === "unrelated" ? unrelated : undefined,

@@ -1,10 +1,9 @@
 import type { MissionMap } from "./model"
-import type { MissionScheduleRead } from "./mission-schedule-view"
 import { controlOperationID, stableToken } from "./receipt-identity"
 import { z } from "zod"
 
 export type CreationAcknowledgement<T> = { acknowledgement: "fresh" | "recovered"; value: T }
-export type PreparationTarget = { kind: "one-time"; mission: MissionMap } | { kind: "schedule"; document: MissionScheduleRead }
+export type PreparationTarget = { kind: "one-time"; mission: MissionMap }
 export type PreparationResult =
   | { outcome: "prepared" | "activated"; acknowledgement: "fresh" | "recovered"; target: PreparationTarget }
   | { outcome: "refused"; phase: "creation" | "activation" | "start"; code: string; target?: PreparationTarget }
@@ -16,11 +15,6 @@ export const automaticMissionStartID = (creationRequestID: string) => `start_${s
  * independently by the owner instead of forwarding a backend's arbitrary body. */
 export function preparationResult(input: unknown, mission: MissionMap, creationRequestID: string): PreparationResult {
   return validatedPreparationResult(input, { kind: "one-time", mission }, mission.id, creationRequestID)
-}
-
-export function scheduledPreparationResult(input: unknown, document: MissionScheduleRead, creationRequestID: string): PreparationResult {
-  if (!document.document) throw new Error("Mission schedule unavailable")
-  return validatedPreparationResult(input, { kind: "schedule", document }, document.document.id, creationRequestID)
 }
 
 function validatedPreparationResult(input: unknown, target: PreparationTarget, missionID: string, creationRequestID: string): PreparationResult {

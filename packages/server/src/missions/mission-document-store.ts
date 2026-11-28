@@ -13,7 +13,6 @@ import type { MissionJsonValue } from "./model"
 export type MissionDocumentStorage = Pick<MissionStorage, "get"> & {
   compareAndSet(key: string, value: MissionJsonValue, expectedRevision: number | null, current: () => true): Promise<void>
 }
-export type MissionDocumentMutation = NativeMissionDocumentStore
 
 /** Point reads/writes use their own namespace. Passage journals retain their
  * existing ranges, per-mission capacity, deletion reserve and activation index. */

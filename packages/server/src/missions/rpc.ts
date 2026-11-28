@@ -19,7 +19,6 @@ import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSche
 import { missionDocumentSummaryWire } from "./mission-document-wire"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
-export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
 
 const stringArray = {
   type: "array",
@@ -174,8 +173,6 @@ const mission = {
   ],
   additionalProperties: false,
 } as const
-
-export const sharedMissionMap = mission
 
 /** `value` without `keys`, every other property kept. */
 function omit<T extends object, K extends keyof T>(value: T, keys: readonly K[]): Omit<T, K> {

@@ -71,7 +71,6 @@ async function fixture(t: import("node:test").TestContext, reconciliationDeadlin
     },
     message: { list: ({ sessionID }: { sessionID: string }) => controls.message(sessionID) },
     permission: { request: { list: async ({ location }: { location: { directory: string } }) => ({ location, data: await controls.permissions() }) } },
-    rpc: () => ({ scheduleCarrierRead: async () => ({ owned: false }) }),
   } }
   const workspaceManager = {
     get: (id: keyof typeof paths) => paths[id],

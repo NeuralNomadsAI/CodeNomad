@@ -17,10 +17,6 @@ family; the internal bridge accepts only fixed business-control methods and ENV
 preparation, with each mutation entering `executeBusiness` under document exclusion.
 Human lifecycle controls use their separate authenticated control path.
 
-`abortableNativeEffect` races a scoped cancellation signal against a native operation,
-interrupts its Effect and joins finalizers before the invocation retires. Scheduled
-actor controls and explicit coordinator adoption share this boundary.
-
 Native test drivers register Effect RPC handlers and yield registered tool
 executors inside the receiving invocation. Promise setup adapters retain their
 activation context, so tools requiring native services need the receiving Effect

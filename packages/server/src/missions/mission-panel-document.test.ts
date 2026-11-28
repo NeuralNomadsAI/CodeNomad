@@ -1,26 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import Ajv from "ajv"
-import { followedPreparationFixture, scheduledPreparation } from "./mission-preparation-test-fixture"
-import { missionScheduleRpcMethods } from "./mission-schedule-contract"
-import { missionScheduleView } from "./mission-schedule-view"
+import { followedPreparationFixture } from "./mission-preparation-test-fixture"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 import { stableToken } from "./receipt-identity"
 
 test("document ownership and frozen-input digests survive the declared full and paged RPC wires", async () => {
-  const f = await followedPreparationFixture(), ajv = new Ajv({ allErrors: true })
+  const f = await followedPreparationFixture(undefined, true), ajv = new Ajv({ allErrors: true })
   const valid = (schema: object, value: unknown) => {
     const validate = ajv.compile(schema)
     assert.ok(validate(JSON.parse(JSON.stringify(value))), JSON.stringify(validate.errors))
   }
-  const configured = await f.control.configurePreparation({ ...f.request,
-    configuration: { ...scheduledPreparation(f), watchedConversationIDs: [f.source.id] } }, f.native, () => true)
-  const dormant = await f.control.snapshot()
-  assert.equal(dormant.missions[0].document?.dormant, true)
-  valid(CODENOMAD_MISSIONS_RPC.methods.snapshot.output, dormant)
-  valid(missionScheduleRpcMethods.scheduleRead.output, missionScheduleView(configured))
-  await f.control.configurePreparation({ ...f.request, requestID: "return_immediate", expectedRevision: configured.revision,
-    configuration: { ...f.request.configuration, taskMode: "native", watchedConversationIDs: [f.source.id] } }, f.native, () => true)
   let mission = (await f.control.snapshot()).missions[0]
   const played = await f.control.lifecycle({ missionID: mission.id, requestID: "play_followed", expectedRevision: mission.revision, action: "start" })
   valid(CODENOMAD_MISSIONS_RPC.methods.lifecycle.output, played)
@@ -31,7 +21,7 @@ test("document ownership and frozen-input digests survive the declared full and 
   for (let round = 0; round < 3; round++) mission = (await f.control.revise(mission.coordinatorSessionId, {
     missionID: mission.id, requestID: `tasks_${round}`, expectedRevision: mission.revision, reason: "More work",
     retireTasks: [], dependencyUpdates: [], addTasks: Array.from({ length: 24 }, (_, index) => ({
-      taskKey: `work-${round}-${index}`, title: "Work", brief: "Whole brief", role: "developer", blockedBy: [],
+      taskKey: `work-${round}-${index}`, title: "Work", brief: "Whole brief", role: "specialist", blockedBy: [],
       executionMode: { kind: "native" as const, parentTaskKey: null } })),
   })).mission
   const updated = await f.control.update({ missionID: mission.id, requestID: "exact_edit", expectedRevision: mission.revision,

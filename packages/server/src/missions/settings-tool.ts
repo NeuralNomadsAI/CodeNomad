@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { missionProfilesInputSchema } from "./playbook-profiles"
-import { scheduleToolWire } from "./schedule-tool"
+import { missionProgramConfigurationWire } from "./program-tool"
 import { parseMissionModel } from "./model-library"
 import { validMissionDefaults } from "./profile-defaults"
 
@@ -43,7 +43,7 @@ export const missionSettingsInput = z.discriminatedUnion("scope", [
 })
 export type MissionSettingsInput = z.infer<typeof missionSettingsInput>
 
-const configWire = scheduleToolWire.properties.configuration.properties
+const configWire = missionProgramConfigurationWire.properties
 export const missionSettingsWire = {
   type: "object",
   properties: {

@@ -9,7 +9,6 @@ import type { MissionEvent, MissionJsonValue } from "./model"
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { missionRecoveryControlError } from "./recovery-error"
 import { missionPreparationOptionsSchema, preparationAuthorSchema, samePreparationOptions, type MissionPreparationOptions } from "./preparation-input"
-import { stableToken } from "./receipt-identity"
 import { canonicalAuthority } from "./authority-protocol"
 
 type Request = MissionStartInput & MissionPreparationOptions & { startOnCreation?: boolean }
@@ -163,15 +162,4 @@ export class MissionCreationIntents {
     // ponytail: adapters without remove retain null markers; provide remove if scan cost matters.
     await this.storage.set(key, null)
   }
-}
-
-/** Exact retained preparation only; callers revalidate its owned native author. */
-export async function readMissionPreparationBinding(storage: Pick<MissionStorage, "get">, project: { id: string; canonical: string }, nativeRequestID: string) {
-  const token = stableToken(`${project.id}\0${project.canonical}`, 24)
-  const id = `msn_${stableToken(`${project.id}\0${nativeRequestID}`, 24)}`
-  const raw = await storage.get(`codenomad-missions/v2/creation-intents/${token}/${id}`)
-  if (raw === undefined || raw === null) return undefined
-  const saved = parseIntent(raw)
-  if (Date.now() - saved.createdAt >= MISSION_CREATION_INTENT_RETENTION_MS || saved.binding?.creationRequestID !== nativeRequestID) return undefined
-  return saved.binding
 }
