@@ -48,7 +48,16 @@ pub fn fits(width: f32) -> bool {
 }
 
 pub fn transcript_lane(history: El) -> El {
-    rune::col().grow(1.0).min_w(0.0).min_h(0.0).child(history)
+    transcript_lane_with_controls(history, None)
+}
+
+pub fn transcript_lane_with_controls(history: El, controls: Option<El>) -> El {
+    rune::col()
+        .grow(1.0)
+        .min_w(0.0)
+        .min_h(0.0)
+        .child(history)
+        .children(controls)
 }
 
 pub fn conversation(layout: crate::interruption::SessionLayout) -> El {

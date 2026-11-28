@@ -174,6 +174,7 @@ fn footer_separates_compact_navigation_from_trailing_stop_and_primary_send() {
     });
     rt.frame(0.0);
 
+    let composer = rect(&rt, "session-composer");
     let footer = rect(&rt, "composer-footer");
     let oldest = rect(&rt, "oldest");
     let latest = rect(&rt, "latest");
@@ -186,8 +187,14 @@ fn footer_separates_compact_navigation_from_trailing_stop_and_primary_send() {
         "history navigation controls must stay compact icons: oldest={oldest:?}, latest={latest:?}"
     );
     assert!(
-        oldest[0] < latest[0] && latest[0] + latest[2] < more[0],
-        "spacer must separate leading navigation from trailing composer actions: latest={latest:?}, more={more:?}"
+        oldest[0] < latest[0]
+            && oldest[1] + oldest[3] <= composer[1] + 0.5
+            && latest[1] + latest[3] <= composer[1] + 0.5,
+        "floating scroll controls must sit above the composer: oldest={oldest:?}, latest={latest:?}, composer={composer:?}"
+    );
+    assert!(
+        more[0] > footer[0] + footer[2] * 0.5,
+        "spacer must push trailing composer actions to the trailing edge: footer={footer:?}, more={more:?}"
     );
     assert!(
         more[0] < stop[0] && stop[0] < send[0],

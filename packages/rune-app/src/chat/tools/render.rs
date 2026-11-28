@@ -16,10 +16,11 @@ use crate::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole, ansi,
+    Space, ansi,
     layout::{self, Layout},
     markdown,
     timeline::search::Query,
+    transcript,
 };
 use std::sync::Arc;
 
@@ -273,33 +274,55 @@ fn render_body(
     } else {
         super::duration::tool_timing(tool)
     };
-    let status_el = if probe {
-        text(t(status)).text_role(TextRole::Label).role("status")
-    } else {
-        super::duration::view(
-            s,
-            key,
-            timing,
-            text(t(status)).text_role(TextRole::Label).role("status"),
-        )
+    let status_kind = match status {
+        "toolCall.status.completed" => transcript::ToolStatus::Completed,
+        "toolCall.status.running" => transcript::ToolStatus::Running,
+        "toolCall.status.error" => transcript::ToolStatus::Error,
+        "toolCall.status.pending" => transcript::ToolStatus::Pending,
+        _ => transcript::ToolStatus::Unknown,
     };
-    let mut header = layout::action_row()
-        .child(
-            layout::button(
-                &title,
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
-                    if is_task && expanded {
-                        super::children::Children::release(s, &toggle);
-                        s.transcript_display.clear_step_anchors(&toggle);
+    let status_badge = transcript::tool_status(status_kind, t(status));
+    let status_el = if probe {
+        status_badge
+    } else {
+        super::duration::view(s, key, timing, status_badge)
+    };
+    let input_key = format!("{key}-tool_input");
+    let has_input = has_tool_input(tool);
+    let mut input_data = None;
+    let mut input_matched = false;
+    let mut input_visible = false;
+    if expanded && has_input {
+        let input_mode = settings::transcript_mode(s, TranscriptRow::Inputs);
+        let show = s
+            .transcript_display
+            .expanded(&input_key, input_mode == "expanded");
+        let allow_search_reveal = input_mode != "hidden";
+        let resolved = (show || (active && allow_search_reveal))
+            .then(|| {
+                if let Some(raw) = tool.input.as_str() {
+                    return Some((std::borrow::Cow::Borrowed(raw), false));
+                }
+                if let Some(small) = input_json(&tool.input, TOOL_LIMIT, false) {
+                    return Some((std::borrow::Cow::Owned(small), false));
+                }
+                if active && allow_search_reveal {
+                    let expanded = input_json(&tool.input, document::search_limit(query), true)?;
+                    if query.is_some_and(|q| q.matches(&expanded)) {
+                        return Some((std::borrow::Cow::Owned(expanded), true));
                     }
-                }),
-            )
-            .key(format!("toggle-{key}"))
-            .expanded(expanded),
-        )
-        .child(status_el);
+                }
+                None
+            })
+            .flatten();
+        if let Some((text, matched)) = resolved {
+            input_matched = matched
+                || (active && allow_search_reveal && query.is_some_and(|q| q.matches(&text)));
+            input_data = Some(text);
+        }
+        input_visible = show || input_matched;
+    }
+    let mut header_actions = Vec::new();
     if is_task
         && let Some(child_id) = task::watched_child(tool)
         && crate::workspace::active_session(s) != Some(child_id)
@@ -314,16 +337,15 @@ fn render_body(
                 .unavailable(parent_ref, child_id);
         let parent = parent_ref.map(str::to_owned);
         let target = child_id.to_owned();
-        header = header.child(
-            layout::button_tx(
+        header_actions.push(
+            transcript::goto_session_button(
                 t("messageBlock.tool.goToSession.label"),
-                false,
+                unavailable || !crate::launcher::can_open_child_session(s),
                 screen::action_tx(&s.input_scope, move |s, tx| {
                     super::children::Children::open_child(s, parent.as_deref(), &target, tx);
                 }),
             )
-            .key(format!("goto-{key}"))
-            .disabled(unavailable || !crate::launcher::can_open_child_session(s)),
+            .key(format!("goto-{key}")),
         );
     }
     let owner_parent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
@@ -362,10 +384,9 @@ fn render_body(
             "bash" | "shell" | "task" | "subagent"
         );
     if backgroundable {
-        header = header.child(
-            layout::button(
+        header_actions.push(
+            transcript::background_button(
                 t("promptInput.background.title"),
-                false,
                 screen::action(&s.input_scope, |s| {
                     super::children::Children::background_session(s);
                 }),
@@ -374,7 +395,7 @@ fn render_body(
         );
     }
     if shared_wrap {
-        header = header.child(wrap_control(s, &wrap_key, wrap));
+        header_actions.push(wrap_control(s, &wrap_key, wrap));
     }
     if has_output
         || report_truncated
@@ -387,55 +408,93 @@ fn render_body(
                 .as_array()
                 .is_some_and(|todos| !todos.is_empty())
     {
-        header = header.child(copy(s, message, key, &tool.id, Section::Output, ancestors));
+        header_actions.push(copy(s, message, key, &tool.id, Section::Output, ancestors));
     }
-    let input_key = format!("{key}-tool_input");
-    if !expanded && has_tool_input(tool) {
-        let open_card = key.to_owned();
-        let open_input = input_key.clone();
-        header = header.child(
-            layout::button(
-                t("toolCall.header.showInputTitle"),
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &open_card, true);
-                    Display::set_expanded(s, &open_input, true);
-                }),
-            )
-            .key(format!("header-input-{key}")),
-        );
+    if has_input {
+        if !expanded {
+            let open_card = key.to_owned();
+            let open_input = input_key.clone();
+            header_actions.push(
+                transcript::arguments_button(
+                    t("toolCall.header.showInputTitle"),
+                    None,
+                    screen::action(&s.input_scope, move |s| {
+                        Display::set_expanded(s, &open_card, true);
+                        Display::set_expanded(s, &open_input, true);
+                    }),
+                )
+                .key(format!("header-input-{key}")),
+            );
+        } else if tool.name != "question"
+            && tool.name != "todowrite"
+            && !(pending && tool.input.as_str().is_none_or(str::is_empty))
+        {
+            let toggle_input = input_key.clone();
+            let show = input_visible;
+            header_actions.push(
+                transcript::arguments_button(
+                    t(if show {
+                        "toolCall.header.hideInputTitle"
+                    } else {
+                        "toolCall.header.showInputTitle"
+                    }),
+                    Some(show),
+                    screen::action(&s.input_scope, move |s| {
+                        Display::set_expanded(s, &toggle_input, !show)
+                    }),
+                )
+                .key(format!("toggle-{input_key}"))
+                .expanded(show),
+            );
+        }
     }
-    let mut block = col()
-        .full_width()
-        .pad(Space::Sm)
-        .separate(Space::Sm)
-        .inset_surface()
-        .child(header);
+    let header = transcript::tool_header(
+        format!("toggle-{key}"),
+        &title,
+        expanded,
+        status_el,
+        header_actions,
+        screen::action(&s.input_scope, move |s| {
+            Display::set_expanded(s, &toggle, !expanded);
+            if is_task && expanded {
+                super::children::Children::release(s, &toggle);
+                s.transcript_display.clear_step_anchors(&toggle);
+            }
+        }),
+    );
     let diagnostics = || diagnostics::view(s, key, tool);
     if !expanded {
-        return block.children(diagnostics());
+        return transcript::tool_card(header, None, diagnostics());
     }
     let failure = render_error(s, message, key, tool, ancestors, query);
     if tool.name == "question"
         && let Some(questions) = question::view(s, key, tool)
     {
-        return block
+        let body = col()
+            .full_width()
+            .separate(Space::Sm)
             .child(questions)
-            .children(media::tool(s, key, &tool.pictures))
-            .children(diagnostics());
+            .children(media::tool(s, key, &tool.pictures));
+        return transcript::tool_card(header, Some(body), diagnostics());
     }
     if pending && tool.name != "todowrite" && tool.input.as_str().is_none_or(str::is_empty) {
-        return block
-            .child(text(t("toolCall.pending.waitingToRun")))
-            .children(diagnostics());
+        return transcript::tool_card(
+            header,
+            Some(text(t("toolCall.pending.waitingToRun"))),
+            diagnostics(),
+        );
     }
     if tool.name == "todowrite" {
-        return block
+        let body = col()
+            .full_width()
+            .separate(Space::Sm)
             .children(failure)
             .child(todo::view(tool))
-            .children(media::tool(s, key, &tool.pictures))
-            .children(diagnostics());
+            .children(media::tool(s, key, &tool.pictures));
+        return transcript::tool_card(header, Some(body), diagnostics());
     }
+    let mut block = col().full_width().separate(Space::Sm);
+    let mut has_body_content = false;
     let task_body = (is_task && !probe)
         .then(|| {
             task::body(
@@ -499,85 +558,34 @@ fn render_body(
     let execute_details = (tool.name == "execute")
         .then(|| execute::view(s, key, tool, query))
         .flatten();
-    let mut input_visible = false;
-    if has_tool_input(tool) {
-        let input_mode = settings::transcript_mode(s, TranscriptRow::Inputs);
-        let show = s
-            .transcript_display
-            .expanded(&input_key, input_mode == "expanded");
-        let allow_search_reveal = input_mode != "hidden";
-        let input = (show || (active && allow_search_reveal))
-            .then(|| {
-                if let Some(raw) = tool.input.as_str() {
-                    return Some((std::borrow::Cow::Borrowed(raw), false));
-                }
-                if let Some(small) = input_json(&tool.input, TOOL_LIMIT, false) {
-                    return Some((std::borrow::Cow::Owned(small), false));
-                }
-                if active && allow_search_reveal {
-                    let expanded = input_json(&tool.input, document::search_limit(query), true)?;
-                    if query.is_some_and(|q| q.matches(&expanded)) {
-                        return Some((std::borrow::Cow::Owned(expanded), true));
-                    }
-                }
-                None
-            })
-            .flatten();
-        let (input, input_matched) = match input {
-            Some((text, matched)) => {
-                let matched = matched
-                    || (active && allow_search_reveal && query.is_some_and(|q| q.matches(&text)));
-                (Some(text), matched)
-            }
-            None => (None, false),
-        };
-        let show = show || input_matched;
-        input_visible = show;
-        let toggle = input_key.clone();
-        block = block.child(
-            layout::button(
-                t(if show {
-                    "toolCall.header.hideInputTitle"
-                } else {
-                    "toolCall.header.showInputTitle"
-                }),
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !show)
-                }),
-            )
-            .key(format!("toggle-{input_key}"))
-            .expanded(show),
-        );
-        if show {
-            block = block.child(copy(s, message, key, &tool.id, Section::Input, ancestors));
-            if let Some(input) = input {
-                let limit = if input_matched {
-                    document::search_limit(query)
-                } else {
-                    TOOL_LIMIT
-                };
-                block = block.child(crate::chat::reading::inner_scroller(
-                    markdown::tool_pane(
-                        window(s, input_key, &[&input], limit, |shown, units| {
-                            markdown::search_code(
-                                shown,
-                                "json",
-                                units <= HIGHLIGHT_LIMIT,
-                                true,
-                                query,
-                            )
-                        }),
-                        false,
-                    ),
-                    false,
-                ));
+    if input_visible {
+        has_body_content = true;
+        block = block.child(transcript::io_section_label(
+            t("toolCall.io.input"),
+            false,
+            Some(copy(s, message, key, &tool.id, Section::Input, ancestors)),
+        ));
+        if let Some(input) = input_data {
+            let limit = if input_matched {
+                document::search_limit(query)
             } else {
-                block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
-            }
+                TOOL_LIMIT
+            };
+            block = block.child(crate::chat::reading::inner_scroller(
+                markdown::tool_pane(
+                    window(s, input_key, &[&input], limit, |shown, units| {
+                        markdown::search_code(shown, "json", units <= HIGHLIGHT_LIMIT, true, query)
+                    }),
+                    false,
+                ),
+                false,
+            ));
+        } else {
+            block = block.child(text(t("toolCall.output.tooLarge")).key(input_key));
         }
     }
     if let Some(details) = task_body.or(execute_details) {
+        has_body_content = true;
         block = block.child(details);
     }
     let lang = if tool.name == "read" {
@@ -597,25 +605,25 @@ fn render_body(
         has_apply_patch_body || skill || ((has_output || is_tool_truncated) && !specialized_task);
     let output_section_key = format!("{key}-tool_output_section");
     let output_expanded = if input_visible && has_collapsible_output && !active {
+        has_body_content = true;
         let expanded = s.transcript_display.expanded(&output_section_key, true);
         let toggle = output_section_key.clone();
-        block = block.child(
-            layout::button(
-                t("toolCall.io.output"),
-                false,
-                screen::action(&s.input_scope, move |s| {
-                    Display::set_expanded(s, &toggle, !expanded);
-                }),
-            )
-            .key(format!("toggle-{key}-tool_output"))
-            .expanded(expanded),
-        );
+        block = block.child(transcript::io_section_header(
+            format!("toggle-{key}-tool_output"),
+            t("toolCall.io.output"),
+            expanded,
+            None,
+            screen::action(&s.input_scope, move |s| {
+                Display::set_expanded(s, &toggle, !expanded);
+            }),
+        ));
         expanded
     } else {
         true
     };
     if output_expanded {
         if let Some(patch) = apply_patch_body {
+            has_body_content = true;
             block = block.child(patch);
         }
         if patch_native_fallback || !has_apply_patch_body {
@@ -624,9 +632,11 @@ fn render_body(
                 && is_patch(tool)
                 && let Some(patch) = tool_patch::view(s, tool, key, query)
             {
+                has_body_content = true;
                 block = block.child(patch);
             }
             if skill {
+                has_body_content = true;
                 let output_key = format!("{key}-tool_output");
                 if probe {
                     if let Some(q) = query
@@ -661,6 +671,7 @@ fn render_body(
                     ));
                 }
             } else if tool.name == "apply_patch" && has_output && !is_tool_truncated {
+                has_body_content = true;
                 let output_key = format!("{key}-tool_output");
                 if probe {
                     if let Some(q) = query
@@ -704,6 +715,7 @@ fn render_body(
                     structured.map(|value| super::format::format_unknown(value, Some(TOOL_LIMIT)))
                 };
                 if matches!(structured_out, Some(super::format::Formatted::TooLarge)) {
+                    has_body_content = true;
                     block = block.child(text(t("toolCall.output.tooLarge")));
                 } else if !matches!(structured_out, Some(super::format::Formatted::Empty)) {
                     let (formatted, formatted_lang) =
@@ -735,6 +747,7 @@ fn render_body(
                     };
                     let output_key = format!("{key}-tool_output");
                     if has_output || expanded_tool_output.is_some() {
+                        has_body_content = true;
                         let terminal =
                             shell::matches(tool) && parts.iter().any(|text| ansi::present(text));
                         let highlight = tool.status != "running"
@@ -745,45 +758,46 @@ fn render_body(
                                     .nth(TOOL_LIMIT)
                                     .is_none());
                         let fallback = || {
-                            col()
-                                .full_width()
-                                .separate(Space::Sm)
-                                .children((!shared_wrap).then(|| {
-                                    layout::action_row()
-                                        .child(wrap_control(s, &wrap_key, wrap))
-                                        .child(text(lang).text_role(TextRole::Label))
-                                }))
-                                .child(crate::chat::reading::inner_scroller(
-                                    markdown::tool_pane(
-                                        window(
-                                            s,
-                                            output_key.clone(),
-                                            &parts,
-                                            document::search_limit_for(s, key, query),
-                                            |shown, units| {
-                                                if !probe
-                                                    && tool.status == "running"
-                                                    && shell::matches(tool)
-                                                {
-                                                    s.transcript_display
-                                                        .live_ansi(key, shown, wrap, query)
-                                                } else if terminal {
-                                                    ansi::search_code(shown, wrap, query)
-                                                } else {
-                                                    markdown::search_code(
-                                                        shown,
-                                                        lang,
-                                                        highlight && units <= HIGHLIGHT_LIMIT,
-                                                        wrap,
-                                                        query,
-                                                    )
-                                                }
-                                            },
-                                        ),
-                                        matches!(tool.name.as_str(), "edit" | "write"),
+                            let pane = crate::chat::reading::inner_scroller(
+                                markdown::tool_pane(
+                                    window(
+                                        s,
+                                        output_key.clone(),
+                                        &parts,
+                                        document::search_limit_for(s, key, query),
+                                        |shown, units| {
+                                            if !probe
+                                                && tool.status == "running"
+                                                && shell::matches(tool)
+                                            {
+                                                s.transcript_display
+                                                    .live_ansi(key, shown, wrap, query)
+                                            } else if terminal {
+                                                ansi::search_code(shown, wrap, query)
+                                            } else {
+                                                markdown::search_code(
+                                                    shown,
+                                                    lang,
+                                                    highlight && units <= HIGHLIGHT_LIMIT,
+                                                    wrap,
+                                                    query,
+                                                )
+                                            }
+                                        },
                                     ),
-                                    !wrap,
-                                ))
+                                    matches!(tool.name.as_str(), "edit" | "write"),
+                                ),
+                                !wrap,
+                            );
+                            if !shared_wrap {
+                                transcript::code_block_frame(
+                                    Some(lang),
+                                    vec![wrap_control(s, &wrap_key, wrap)],
+                                    pane,
+                                )
+                            } else {
+                                pane
+                            }
                         };
                         block = block.child(if let Some(results) = result_list {
                             results
@@ -794,6 +808,7 @@ fn render_body(
                         });
                     }
                     if let Some(expand_key) = tool_expand_key {
+                        has_body_content = true;
                         let copy_target = super::children::CopyKey::ToolSection(expand_key.clone());
                         if expanded_tool_output.is_none() {
                             let failed = s
@@ -839,28 +854,37 @@ fn render_body(
             }
         }
     }
-    block = block.children(failure);
-    if tool.name == "execute" {
-        block = block.children(execute::notice(tool));
+    if let Some(err) = failure {
+        has_body_content = true;
+        block = block.child(err);
     }
-    let block = block
-        .children(media::tool(s, key, &tool.pictures))
-        .children(diagnostics());
+    if tool.name == "execute"
+        && let Some(notice) = execute::notice(tool)
+    {
+        has_body_content = true;
+        block = block.child(notice);
+    }
+    for picture in media::tool(s, key, &tool.pictures) {
+        has_body_content = true;
+        block = block.child(picture);
+    }
+    let card = transcript::tool_card(header, has_body_content.then_some(block), diagnostics());
     if !probe && can_watch_child {
-        task::observe(s, key, task::parent_child(message), tool, block)
+        task::observe(s, key, task::parent_child(message), tool, card)
     } else {
-        block
+        card
     }
 }
 
 fn wrap_control(s: &State, key: &str, wrap: bool) -> El {
     let key = key.to_owned();
-    layout::button(
+    transcript::wrap_button(
         t(if wrap {
             "toolCall.diff.disableWordWrap"
         } else {
             "toolCall.diff.enableWordWrap"
         }),
+        wrap,
         false,
         screen::action(&s.input_scope, {
             let key = key.clone();
@@ -868,7 +892,6 @@ fn wrap_control(s: &State, key: &str, wrap: bool) -> El {
         }),
     )
     .key(key)
-    .checked(wrap)
 }
 
 fn render_error(
@@ -884,11 +907,11 @@ fn render_error(
         col()
             .full_width()
             .separate(Space::Sm)
-            .child(
-                layout::action_row()
-                    .child(text(t("toolCall.error.label")))
-                    .child(copy(s, message, key, &tool.id, Section::Error, ancestors)),
-            )
+            .child(transcript::io_section_label(
+                t("toolCall.error.label"),
+                true,
+                Some(copy(s, message, key, &tool.id, Section::Error, ancestors)),
+            ))
             .child(crate::chat::reading::inner_scroller(
                 markdown::tool_pane(
                     window(
