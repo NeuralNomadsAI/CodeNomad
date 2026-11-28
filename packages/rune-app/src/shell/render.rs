@@ -14,6 +14,9 @@ pub(crate) fn view(s: &State, cx: &mut Cx<State>) -> El {
         }
         let base = shell::view(s, cx, chat::view::chat_view);
         let mut layer = Vec::new();
+        if shell::launcher_replaces_project(s) {
+            crate::launcher_view::overlays(s, &mut layer);
+        }
         if !s.screen.is_launcher() {
             composer::view::overlays(s, &mut layer);
         }

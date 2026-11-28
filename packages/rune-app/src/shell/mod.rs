@@ -5,7 +5,7 @@ mod panels;
 pub(crate) mod render;
 mod right_panel;
 mod shortcuts;
-pub(crate) use shortcuts::global_blocked as shortcut_blocked;
+pub(crate) use shortcuts::{global_blocked as shortcut_blocked, open_sponsor_page};
 mod sidebar;
 pub(crate) mod status_permissions;
 pub(crate) mod status_services;
