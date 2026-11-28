@@ -218,7 +218,8 @@ fn reopening_web_preferences_with_steady_catalogue_watch_keeps_queued_depth_writ
         let _ = watch.take_mission_catalog_changes();
 
         let mut root = crate::init();
-        root.screen = crate::screen::Screen::Launcher(crate::launcher::Launcher::fixture());
+        root.screen =
+            crate::screen::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         root.workspace = Some(crate::workspace::Ui::new());
         let project = crate::catalog::Project {
             id: "captured".into(),
@@ -750,7 +751,8 @@ fn worktrees_changed_wakes_open_preferences_window_without_manual_tick() {
         let _ = watch.take_mission_catalog_changes();
 
         let mut root = crate::init();
-        root.screen = crate::screen::Screen::Launcher(crate::launcher::Launcher::fixture());
+        root.screen =
+            crate::screen::Screen::Launcher(Box::new(crate::launcher::Launcher::fixture()));
         root.workspace = Some(crate::workspace::Ui::new());
         let project = crate::catalog::Project {
             id: "captured".into(),

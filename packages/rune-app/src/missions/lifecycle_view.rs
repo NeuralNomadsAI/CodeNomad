@@ -1,12 +1,8 @@
 use super::{Gesture, Lifecycle, Panel, Source};
 use crate::{State, strings::t};
 use codenomad_client::missions::{LifecycleAction, RunState, Status};
-use rune::{El, Tx, col};
-use rune_theme_codenomad::{
-    document_reader::editor,
-    git_panel as theme,
-    layout::{self, Layout},
-};
+use rune::{El, Tx};
+use rune_theme_codenomad::{document_reader::editor, git_panel as theme, layout};
 
 pub(crate) type Act = fn(&mut State, &Source, Gesture);
 
@@ -105,7 +101,7 @@ pub(crate) fn controls(panel: &Panel, owner: &Lifecycle, occurrence: &str, act: 
             .key("mission-control-stop"),
         );
     }
-    let mut view = col().full_width().child(row);
+    let mut view = theme::context().child(row);
     if owner.busy(&source) {
         view = view.child(theme::note(t("missions.control.run.checking"), "status"));
     } else if owner.unresolved(&source, header) {

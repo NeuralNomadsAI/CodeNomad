@@ -29,16 +29,21 @@ pub(crate) fn reader(s: &State) -> El {
         ),
     };
     let image = matches!(&ui.reader.content, Some(Diff::Image { .. }));
+    let mut subtitle = theme::clipped(format!("{} · {label}", ui.slug), TextRole::Label);
+    if let Some(directory) = ui.tree().map(|tree| tree.directory.as_str()) {
+        subtitle = subtitle.help(directory);
+    }
     let mut header = theme::chrome()
         .child(
             col()
                 .remaining()
                 .separate(Space::Xs)
-                .child(theme::clipped(path, TextRole::Body).literal_direction())
-                .child(theme::clipped(
-                    format!("{} · {label}", ui.slug),
-                    TextRole::Label,
-                )),
+                .child(
+                    theme::clipped(path, TextRole::Body)
+                        .literal_direction()
+                        .help(path),
+                )
+                .child(subtitle),
         )
         .child(icon(
             "git-diff-mode",
@@ -134,17 +139,19 @@ pub(crate) fn reader(s: &State) -> El {
     let lane = ui.requests.slot(Lane::Preview);
     if let Some(error) = &lane.error {
         root = root.child(theme::note(error.localized(), "alert")).child(
-            button(
-                s,
-                t("instanceShell.rightPanel.actions.refresh"),
-                Neutral,
-                !ui.online,
-                |ui, _| {
-                    ui.dirty(&[Lane::Preview]);
-                    ui.demand();
-                },
-            )
-            .key("git-diff-retry"),
+            layout::action_row().pad(Space::Md).child(
+                button(
+                    s,
+                    t("instanceShell.rightPanel.actions.refresh"),
+                    Neutral,
+                    !ui.online,
+                    |ui, _| {
+                        ui.dirty(&[Lane::Preview]);
+                        ui.demand();
+                    },
+                )
+                .key("git-diff-retry"),
+            ),
         );
     }
     if let Some(notice) = ui.reader.notice {
@@ -167,12 +174,12 @@ pub(crate) fn reader(s: &State) -> El {
             let action = selected
                 .filter(|range| range.start.side == Side::New && range.end.side == Side::New)
                 .map(|range| {
-                    theme::button(
+                    theme::tools().child(theme::button(
                         t("instanceShell.gitChanges.actions.insertContext"),
                         Flat,
                         false,
                         move |s, tx| comment(s, range, tx),
-                    )
+                    ))
                 })
                 .unwrap_or_else(el);
             col()

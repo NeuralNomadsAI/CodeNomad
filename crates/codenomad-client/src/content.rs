@@ -127,6 +127,16 @@ pub struct Text {
     pub provenance: TextProvenance,
     pub(crate) bounded: bool,
 }
+impl Text {
+    pub fn new(part_index: Option<usize>, text: String, provenance: TextProvenance) -> Self {
+        Self {
+            part_index,
+            text,
+            provenance,
+            bounded: false,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextEvent {
     Start {

@@ -5,9 +5,10 @@ use super::{
 };
 use crate::strings::{locale, t};
 use codenomad_client::missions::{RunState, Status};
-use rune::{El, Tx, col, edit::TextEdit, row, text};
+use rune::{El, Tx, col, edit::TextEdit, text};
 use rune_theme_codenomad::{
-    Space, TextRole, catalogue, field_kit, git_panel as theme,
+    Space, TextRole, attachment, catalogue, field_kit,
+    git_panel::{self as theme, ButtonLook::Flat},
     layout::{self, Layout},
     shell,
 };
@@ -70,9 +71,9 @@ pub(crate) fn panel_body<S: 'static>(
         let active_eye = ui.reader.is_overview_open(&id);
         let scoped_row = scoped.clone();
         let scoped_eye = scoped.clone();
+        let row_status = status(item.status, item.run_state);
         list = list.child(
-            row()
-                .full_width()
+            theme::file_row(selected)
                 .key(format!("mission-row-container-{}", item.id))
                 .child(
                     shell::session_row(name, selected, false, move |state, tx| {
@@ -83,8 +84,9 @@ pub(crate) fn panel_body<S: 'static>(
                     })
                     .remaining()
                     .key(format!("mission-row-{}", item.id))
-                    .description(status(item.status, item.run_state)),
+                    .description(row_status),
                 )
+                .child(attachment::status_badge(row_status))
                 .child(
                     theme::icon_button(
                         &theme::EYE,
@@ -139,12 +141,10 @@ pub(crate) fn panel_body<S: 'static>(
     }
     body = body.child(super::calendars::view(ui, scoped.clone(), open_task));
     if !ui.cleanups.is_empty() {
-        body = body.child(
-            text(t("missions.progress.cleanupHistory"))
-                .text_role(TextRole::Small)
-                .pad(Space::Sm)
-                .role("heading"),
-        );
+        let mut cleanups = theme::context()
+            .role("region")
+            .label(t("missions.progress.cleanupHistory"))
+            .child(shell::panel_title(t("missions.progress.cleanupHistory")).role("heading"));
         for cleanup in &ui.cleanups {
             let counts = catalogue::format(
                 locale(),
@@ -158,6 +158,8 @@ pub(crate) fn panel_body<S: 'static>(
             let mut row = col()
                 .full_width()
                 .pad(Space::Sm)
+                .separate(Space::Xs)
+                .inset_surface()
                 .key(format!(
                     "mission-cleanup-{}-{}",
                     cleanup.mission_id, cleanup.deletion_id
@@ -167,12 +169,13 @@ pub(crate) fn panel_body<S: 'static>(
                         .text_role(TextRole::Small)
                         .wrap_anywhere(),
                 )
-                .child(text(counts).text_role(TextRole::Small).wrap_anywhere());
+                .child(text(&counts).text_role(TextRole::Small).wrap_anywhere());
             if cleanup.document_pending == Some(true) {
                 row = row.child(theme::note(t("missions.cleanup.documentPending"), "status"));
             }
-            body = body.child(row);
+            cleanups = cleanups.child(row);
         }
+        body = body.child(cleanups);
     }
     body = body.child(page_footer(ui, scoped.clone(), Kind::Cleanups));
     let refresh = scoped.clone();
@@ -199,16 +202,24 @@ pub(crate) fn panel_body<S: 'static>(
         .role("region")
         .label(heading)
         .child(
-            theme::header()
+            theme::context()
                 .child(
-                    layout::action_row()
+                    theme::file_row(false)
                         .child(shell::panel_title(heading).role("heading"))
+                        .child(shell::spacer())
                         .child(
-                            layout::button(t("missions.control.refresh"), false, move |s| {
-                                if let Some(panel) = refresh.get(s).0 {
-                                    panel.refresh();
-                                }
-                            })
+                            theme::icon_button(
+                                &theme::REFRESH_CW,
+                                t("missions.control.refresh"),
+                                false,
+                                None,
+                                move |s, tx| {
+                                    if let Some(panel) = refresh.get(s).0 {
+                                        panel.refresh();
+                                        tx.instant();
+                                    }
+                                },
+                            )
                             .key("missions-refresh"),
                         ),
                 )
@@ -224,25 +235,29 @@ fn page_footer<S: 'static>(ui: &Panel, owner: Scoped<S>, kind: Kind) -> El {
     } else if ui.failed(kind) {
         footer = footer
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
-            .child(layout::button(
+            .child(layout::action_row().pad(Space::Sm).child(theme::button(
                 t("missionsPanel.reader.retry"),
+                Flat,
                 false,
-                move |s| {
+                move |s, tx| {
                     if let Some(panel) = owner.get(s).0 {
                         panel.more(kind);
+                        tx.instant();
                     }
                 },
-            ));
+            )));
     } else if ui.has_more(kind) {
-        footer = footer.child(layout::button(
+        footer = footer.child(layout::action_row().pad(Space::Sm).child(theme::button(
             t("missionsPanel.pages.more"),
+            Flat,
             false,
-            move |s| {
+            move |s, tx| {
                 if let Some(panel) = owner.get(s).0 {
                     panel.more(kind);
+                    tx.instant();
                 }
             },
-        ));
+        )));
     }
     footer
 }
@@ -254,9 +269,7 @@ fn detail<S: 'static>(
     on_reader_open: fn(&mut S, &mut Tx),
 ) -> El {
     let detail = &ui.detail;
-    let mut result = col()
-        .full_width()
-        .pad(Space::Sm)
+    let mut result = theme::context()
         .key("mission-detail")
         .role("region")
         .label(t("missions.control.overview"));
@@ -274,9 +287,19 @@ fn detail<S: 'static>(
             })
             .unwrap_or(t("missions.control.overview"));
         result = result
-            .child(text(name).role("heading").wrap_anywhere())
-            .child(text(status(header.status, header.run_state)).text_role(TextRole::Small))
-            .child(text(&header.excerpt).wrap_anywhere());
+            .child(
+                layout::action_row()
+                    .child(text(name).role("heading").wrap_anywhere().remaining())
+                    .child(attachment::status_badge(status(
+                        header.status,
+                        header.run_state,
+                    ))),
+            )
+            .child(
+                text(&header.excerpt)
+                    .text_role(TextRole::Small)
+                    .wrap_anywhere(),
+            );
         if let Some(attention) = &snapshot.header.tasks.page.attention {
             let (remaining, exact) = snapshot.attention_remaining();
             let counts = &attention.counts;
@@ -307,14 +330,22 @@ fn detail<S: 'static>(
                 );
                 let attention_owner = owner.clone();
                 result = result.child(
-                    layout::button(&label, detail.busy() || detail.failed, move |s| {
-                        if let Some(panel) = attention_owner.get(s).0 {
-                            panel.detail.attention();
-                        }
-                    })
-                    .key("mission-attention-more")
-                    .help(&help)
-                    .description(help),
+                    layout::action_row().child(
+                        theme::button(
+                            &label,
+                            Flat,
+                            detail.busy() || detail.failed,
+                            move |s, tx| {
+                                if let Some(panel) = attention_owner.get(s).0 {
+                                    panel.detail.attention();
+                                    tx.instant();
+                                }
+                            },
+                        )
+                        .key("mission-attention-more")
+                        .help(&help)
+                        .description(help),
+                    ),
                 );
             }
         }
@@ -364,12 +395,20 @@ fn detail<S: 'static>(
         result = result
             .child(theme::note(t("missionsPanel.pages.failed"), "alert"))
             .child(
-                layout::button(t("missionsPanel.reader.retry"), false, move |s| {
-                    if let Some(panel) = owner.get(s).0 {
-                        panel.detail.retry();
-                    }
-                })
-                .key("mission-detail-retry"),
+                layout::action_row().child(
+                    theme::button(
+                        t("missionsPanel.reader.retry"),
+                        Flat,
+                        false,
+                        move |s, tx| {
+                            if let Some(panel) = owner.get(s).0 {
+                                panel.detail.retry();
+                                tx.instant();
+                            }
+                        },
+                    )
+                    .key("mission-detail-retry"),
+                ),
             );
     } else if detail
         .snapshot
@@ -377,12 +416,15 @@ fn detail<S: 'static>(
         .is_some_and(|s| s.end < s.header.tasks.page.total)
     {
         result = result.child(
-            layout::button(t("missionsPanel.pages.more"), false, move |s| {
-                if let Some(panel) = owner.get(s).0 {
-                    panel.detail.more();
-                }
-            })
-            .key("mission-tasks-more"),
+            layout::action_row().child(
+                theme::button(t("missionsPanel.pages.more"), Flat, false, move |s, tx| {
+                    if let Some(panel) = owner.get(s).0 {
+                        panel.detail.more();
+                        tx.instant();
+                    }
+                })
+                .key("mission-tasks-more"),
+            ),
         );
     }
     result

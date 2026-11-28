@@ -211,4 +211,68 @@ fn the_read_only_panel_exposes_the_search_status_and_selection() {
     assert!(tree.contains("Search filters loaded missions only"));
     assert!(!tree.contains("No missions yet"));
     assert!(!tree.contains("No matching mission"));
+
+    // Visual parity: header refresh is a compact right-aligned icon button, and selected row
+    // renders a visible status badge inside a highlighted full-row container.
+    let elements = rt.elements();
+    let refresh = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some("missions-refresh"))
+        .expect("missions-refresh icon button");
+    assert!(
+        refresh.rect[2] <= 36.0 && refresh.rect[3] <= 36.0,
+        "missions-refresh must be a compact icon button: {:?}",
+        refresh.rect
+    );
+    let heading = elements
+        .iter()
+        .find(|el| el.role == "heading" && el.rect[1] < 60.0)
+        .expect("missions header heading");
+    assert!(
+        (refresh.rect[1] + refresh.rect[3] / 2.0 - (heading.rect[1] + heading.rect[3] / 2.0)).abs()
+            <= 8.0
+            && refresh.rect[0] > heading.rect[0] + heading.rect[2],
+        "missions-refresh must align on the header row to the right of the heading: refresh={:?} heading={:?}",
+        refresh.rect,
+        heading.rect
+    );
+    let container = elements
+        .iter()
+        .find(|el| el.key.as_deref() == Some("mission-row-container-a"))
+        .expect("mission-row-container-a");
+    assert!(
+        container.fill.a > 0.0,
+        "selected mission row container must highlight the entire row: {:?}",
+        container.fill
+    );
+    assert!(
+        elements.iter().any(|el| el.role == "status"
+            && el.rect[1] >= container.rect[1] - 1.0
+            && el.rect[1] <= container.rect[1] + container.rect[3]),
+        "mission row must display a visible status badge"
+    );
+
+    // Refresh stays enabled even while a summaries read is in flight so coalesced refresh
+    // can queue a trailing read and refresh detail/activity/calendars immediately.
+    let (cancel, _cancelled) = bounded(1);
+    rt.state.0.lanes[Kind::Summaries as usize].active = Some((1, cancel));
+    rt.frame(0.04);
+    assert!(rt.state.0.busy(Kind::Summaries));
+    fn find_key<'a>(tree: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+        if tree["key"] == key {
+            Some(tree)
+        } else {
+            tree["children"]
+                .as_array()?
+                .iter()
+                .find_map(|child| find_key(child, key))
+        }
+    }
+    let busy_tree = rt.accessibility_json();
+    let refresh_node = find_key(&busy_tree, "missions-refresh").expect("missions-refresh node");
+    assert_ne!(
+        refresh_node["disabled"],
+        serde_json::Value::Bool(true),
+        "missions-refresh must remain enabled while Kind::Summaries is busy: {refresh_node}"
+    );
 }
