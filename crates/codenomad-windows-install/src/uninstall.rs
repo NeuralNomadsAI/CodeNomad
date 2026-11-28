@@ -34,29 +34,28 @@ pub fn run_if_asked(p: &Product) {
         return;
     }
     let quiet = args.iter().any(|arg| arg == "--quiet");
-    let root = std::env::current_exe()
+    let Some(root) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf));
-    let code = match root.ok_or("the running program has no folder".to_owned()) {
-        Ok(root) if !quiet && !ask(p, MB_YESNO | MB_ICONQUESTION, &question(p, &root)) => 2,
-        Ok(root) => match uninstall(p, &root) {
-            Ok(()) => 0,
-            Err(why) => {
-                if !quiet {
-                    ask(
-                        p,
-                        MB_ICONERROR,
-                        &format!("{} was not uninstalled: {why}.", p.name),
-                    );
-                }
-                1
-            }
-        },
-        Err(_) => 1,
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        std::process::exit(1);
     };
+    // Refused before the question: a copy that is not the install has nothing to ask about.
+    let outcome = check(p, &root).and_then(|()| {
+        if !quiet && !ask(p, MB_YESNO | MB_ICONQUESTION, &question(p, &root)) {
+            return Ok(2);
+        }
+        remove(p, &root).map(|()| 0)
+    });
+    let code = outcome.unwrap_or_else(|why| {
+        if !quiet {
+            let text = format!("{} was not uninstalled: {why}.", p.name);
+            ask(p, MB_ICONERROR, &text);
+        }
+        1
+    });
     std::process::exit(code);
 }
-
 fn question(p: &Product, root: &Path) -> String {
     format!(
         "Uninstall {} from {}?\n\nYour settings and conversations are kept.",
@@ -70,12 +69,15 @@ fn ask(p: &Product, style: MESSAGEBOX_STYLE, text: &str) -> bool {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(&p.name), style) == IDYES }
 }
 
-fn uninstall(p: &Product, root: &Path) -> Result<(), String> {
+fn check(p: &Product, root: &Path) -> Result<(), String> {
     if !installed_root(p).is_some_and(|r| same_path(&r, root)) {
         return Err("this copy was not installed by its setup".into());
     }
     // The entry is the user's to write: what it names must still be an install folder.
-    check_root(root)?;
+    check_root(root)
+}
+
+fn remove(p: &Product, root: &Path) -> Result<(), String> {
     if !crate::close_running(root, CLOSE_GRACE) {
         return Err("a running copy did not close".into());
     }
