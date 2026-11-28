@@ -451,4 +451,50 @@ describe("session automations store", () => {
     releaseShell()
     releasePrompt()
   })
+
+  it("ignores paused or completed shell automations and coalesces rapid shell.exited bursts", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] })
+    const f = fixture()
+    const releaseDone = f.store.demand("i", "ses_done")
+    const releasePaused = f.store.demand("i", "ses_paused")
+    const releaseActive = f.store.demand("i", "ses_active")
+    const doneShell = automation("aut_done", {
+      status: "done",
+      action: { type: "shell", command: "npm test" },
+      lastOutcome: "fired",
+      lastOutput: "ok",
+    })
+    const pausedShell = automation("aut_paused", {
+      status: "paused",
+      action: { type: "shell", command: "npm test" },
+    })
+    const activeShell = automation("aut_active", {
+      status: "active",
+      action: { type: "shell", command: "npm test" },
+      nextDueAt: Date.now() + 3_600_000,
+    })
+    f.reads[0]!.resolve({ status: "ok", automations: [doneShell] })
+    f.reads[1]!.resolve({ status: "ok", automations: [pausedShell] })
+    f.reads[2]!.resolve({ status: "ok", automations: [activeShell] })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const firstExit = f.store.noteShellExited("i")
+    assert.equal(f.reads.length, 4, "skips paused and already-finished shell automations")
+    assert.equal(f.reads[3]!.sessionId, "ses_active")
+    f.reads[3]!.resolve({ status: "ok", automations: [activeShell] })
+    await firstExit
+
+    // A second unrelated shell.exited while the 1.5s settle follow-up is armed coalesces into that timer.
+    await f.store.noteShellExited("i")
+    assert.equal(f.reads.length, 4, "does not fire another immediate read while follow-up is armed")
+    t.mock.timers.tick(1_500)
+    assert.equal(f.reads.length, 5, "fires the single coalesced follow-up")
+    f.reads[4]!.resolve({ status: "ok", automations: [activeShell] })
+    await Promise.resolve()
+
+    releaseDone()
+    releasePaused()
+    releaseActive()
+  })
 })
