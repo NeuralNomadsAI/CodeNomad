@@ -1,5 +1,6 @@
 //! One serialized opening action at a time; HTTP never runs on the UI thread.
 mod connection;
+mod folders;
 pub(crate) mod linked;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod managed_renewal_tests;
@@ -21,6 +22,15 @@ use crate::{
 };
 use codenomad_client::{Receiver, bounded, runtime::Instant};
 pub use connection::{connect, refresh_projects};
+
+/// Browse: this machine's folder picker where it has one, else the connected server's folders.
+pub fn browse(s: &mut State, tx: &mut Tx) {
+    if crate::platform::folder_picker_available() {
+        crate::platform::browse(s, tx);
+    } else {
+        folders::toggle(s);
+    }
+}
 pub(crate) use placement::place;
 pub(crate) use projects::set_project;
 pub use projects::{choose_project, open, open_temporary_folder, restore};
@@ -98,6 +108,7 @@ pub struct Launcher {
     managed_renewal_attempts: u8,
     pub(crate) projects_stale: bool,
     projects_refresh: Option<(u64, Receiver<connection::ProjectsRefresh>)>,
+    folders: folders::Browser,
     wake: rune::Waker,
 }
 enum Reply {
@@ -273,6 +284,7 @@ impl Launcher {
             managed_renewal_attempts: 0,
             projects_stale: false,
             projects_refresh: None,
+            folders: Default::default(),
             wake,
         }
     }
@@ -683,7 +695,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         tx.instant();
         return true;
     }
-    if connection::poll_projects_refresh(s) {
+    if connection::poll_projects_refresh(s) | folders::poll(s) {
         relayed = true;
     }
     let blocked = !can_change_session(s)
@@ -768,6 +780,7 @@ pub fn poll(s: &mut State, tx: &mut Tx) -> bool {
         }
         Ok(Reply::Opened(opening, rows, restored)) => {
             let project = opening.project.clone();
+            l.folders = Default::default();
             if stale_connection && temporary_cleanup.is_some() {
                 drop(opening);
                 if let Some((backend, path, req_id)) = temporary_cleanup {
@@ -1336,6 +1349,7 @@ fn apply_connected(
     l.managed_renewal_failed_for = None;
     l.managed_renewal_attempts = 0;
     l.projects_refresh = None;
+    l.folders = Default::default();
     l.connection_generation = l.connection_generation.wrapping_add(1);
     l.connection = Some(b);
     l.server_id = Some(server_id);

@@ -56,8 +56,8 @@ pub fn view(s: &State) -> El {
         let mut browse = button_tx(
             "browse",
             t("folderSelection.browseMenu.title"),
-            l.pending || waiting || !crate::platform::folder_picker_available(),
-            crate::screen::action_tx(&scope, crate::platform::browse),
+            l.pending || waiting,
+            crate::screen::action_tx(&scope, launcher::browse),
         );
         if crate::platform::folder_picker_available() {
             browse = browse.help(crate::settings::with_shortcut_label(
@@ -102,7 +102,8 @@ pub fn view(s: &State) -> El {
                     .build(&field_kit(layout::dark()))
                     .key("folder-path"),
             )
-            .child(actions);
+            .child(actions)
+            .children(launcher::folders::rows(l, &scope, l.pending || waiting));
         if l.projects_stale {
             body = body.child(button_tx(
                 "refresh-projects",
