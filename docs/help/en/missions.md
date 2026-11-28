@@ -104,7 +104,7 @@ Events at the beginning can launch a passage on each new occurrence; trigger eve
 
 ### Counts and history {#scheduling-limits}
 
-**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**. The conversation must use the coordinator's agent, model and thinking: saving refuses it otherwise, and a launch that finds them changed uses another session.
+**Coordinator session** defaults to **New session** for every passage. With a schedule or event, **Existing session** lets you select a root conversation in this project and execution Location. Each passage continues there with the configured agent and model, preserving its transcript, title and permissions. Mission controls also affect work already in that conversation. Each passage keeps its own result and journal in **Past runs**. At each launch the conversation is put on the coordinator's agent, model and thinking.
 
 You can ask an agent to prepare the schedule using its current root conversation. Passages wait for the conversation to be idle.
 

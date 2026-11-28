@@ -21,6 +21,9 @@ export interface NativeMissionSession extends MissionExecution {
 export interface MissionSessionAdapter {
   get(input: { sessionID: string }): Promise<NativeMissionSession>
   remove?(input: { sessionID: string }): Promise<void>
+  /** Put a conversation on an agent, or on a model with its variant. */
+  switchAgent?(input: { sessionID: string; agent: NonNullable<MissionExecution["agent"]> }): Promise<unknown>
+  switchModel?(input: { sessionID: string; model: NonNullable<MissionExecution["model"]> }): Promise<unknown>
   list?(input: { parentID: string; limit: number }): Promise<{ data: readonly { id: string }[]; cursor?: { next?: string | null } }>
   create(input: {
     id: string

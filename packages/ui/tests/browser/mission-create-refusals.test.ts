@@ -108,7 +108,6 @@ test("daily refusals and failures keep the draft and Create available, and save 
   const refusals = [
     { status: 400, json: { error: "Invalid Mission calendar request", code: "calendar-input-invalid" }, message: /could not be saved/ },
     { status: 422, json: { error: "Launch criteria a calendar cannot carry", code: "calendar-unsupported", reason: "event" }, message: /cannot be scheduled/ },
-    { status: 422, json: { error: "The conversation does not run the coordinator's agent and model", code: "calendar-coordinator-profile" }, message: /does not use the coordinator's agent, model and thinking/ },
     { status: 503, json: { error: "Mission calendars unavailable", code: "calendar-unavailable" }, message: /could not be saved/ },
   ]
   try {
