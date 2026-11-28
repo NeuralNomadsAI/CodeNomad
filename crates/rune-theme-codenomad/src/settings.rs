@@ -11,6 +11,11 @@ use rune_kit::{Checkbox, SegmentedControl, Select, SelectAppearance, Sidebar, Si
 
 pub const WINDOW_SIZE: (f32, f32) = (1100.0, 760.0);
 pub const WINDOW_MIN: (f32, f32) = (760.0, 560.0);
+pub const NARROW_BREAKPOINT: f32 = 600.0;
+
+pub fn is_narrow(viewport_width: f32) -> bool {
+    viewport_width > 0.0 && viewport_width < NARROW_BREAKPOINT
+}
 
 pub fn spec<S: 'static>(
     title: &'static str,
@@ -297,6 +302,179 @@ pub fn nav<S: 'static>(
         );
     }
     sidebar.build(kit)
+}
+
+fn header_icon_button<S: 'static>(
+    glyph: &'static rune::Icon,
+    label: &str,
+    help: &str,
+    touch: bool,
+    press: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let action = std::rc::Rc::new(press);
+    let click = action.clone();
+    let mut button = rune_kit::IconButton::new(glyph)
+        .variant(rune_kit::IconButtonVariant::GhostMuted)
+        .control_size(if touch {
+            rune_kit::ControlSize::Regular
+        } else {
+            rune_kit::ControlSize::Small
+        })
+        .label(label)
+        .help(help)
+        .on_press_tx(move |s, tx| click(s, tx))
+        .build(&crate::kit(layout::dark()))
+        .on_key(layout::enter_action(action));
+    if touch {
+        button = button.min_w(44.0).min_h(44.0);
+    }
+    button
+}
+
+pub fn narrow_header<S: 'static>(
+    title: &str,
+    back: Option<(&str, &str, bool, impl Fn(&mut S, &mut rune::Tx) + 'static)>,
+    close_label: &str,
+    touch: bool,
+    on_close: impl Fn(&mut S, &mut rune::Tx) + 'static,
+) -> El {
+    let t = tokens(layout::dark());
+    let height = if touch {
+        t.length(crate::Length::Chrome).px().max(48.0)
+    } else {
+        t.length(crate::Length::Chrome).px()
+    };
+    let mut bar = row()
+        .key("settings-narrow-header")
+        .full_width()
+        .min_w(0.0)
+        .center_y()
+        .h(height)
+        .fill(t.color("surface-chrome"))
+        .px(t.space(Space::Sm).px())
+        .separate(Space::Sm)
+        .border_sides([0.0, 0.0, 1.0, 0.0], t.color("border-divider"));
+    if let Some((back_label, back_help, rtl, on_back)) = back {
+        let glyph = if rtl {
+            &crate::shell::icons::FORWARD
+        } else {
+            &crate::shell::icons::BACK
+        };
+        bar = bar.child(
+            header_icon_button(glyph, back_label, back_help, touch, on_back)
+                .key("settings-narrow-back"),
+        );
+    }
+    bar.child(
+        text(title)
+            .role("heading")
+            .text_role(TextRole::Title)
+            .grow(1.0)
+            .shrink()
+            .truncate(),
+    )
+    .child(
+        header_icon_button(
+            &crate::window_control::CLOSE,
+            close_label,
+            close_label,
+            touch,
+            on_close,
+        )
+        .key("settings-close"),
+    )
+}
+
+pub fn narrow_nav<S: 'static>(
+    label: &str,
+    sections: impl IntoIterator<Item = (&'static str, &'static str, bool)>,
+    touch: bool,
+    rtl: bool,
+    select: impl Fn(&mut S, &'static str, &mut rune::Tx) + Clone + 'static,
+) -> El {
+    let dark = layout::dark();
+    let t = tokens(dark);
+    let kit = &*crate::kit(dark);
+    let row_height = if touch { 44.0 } else { 36.0 };
+    let chevron_glyph = if rtl {
+        &crate::shell::icons::BACK
+    } else {
+        &crate::git_panel::CHEVRON_RIGHT
+    };
+    let mut list = col()
+        .key("settings-narrow-list")
+        .role("list")
+        .label(label)
+        .focus_group()
+        .full_width()
+        .min_w(0.0)
+        .pad(Space::Sm)
+        .separate(Space::Xxs);
+    for (key, row_label, selected) in sections {
+        let select = select.clone();
+        let chevron = rune::icon(chevron_glyph, 14.0)
+            .color(t.color("text-muted"))
+            .a11y_hidden();
+        list = list.child(
+            SidebarRow::new(row_label)
+                .height(row_height)
+                .trailing(chevron)
+                .selected(selected)
+                .on_select(move |s, tx| select(s, key, tx))
+                .build(kit)
+                .key(key),
+        );
+    }
+    col()
+        .key("settings-narrow-scroll")
+        .full_width()
+        .min_w(0.0)
+        .remaining()
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .child(list)
+}
+
+pub fn narrow_frame(content: El, overlays: Vec<El>) -> El {
+    let t = tokens(layout::dark());
+    el().full_width()
+        .full_height()
+        .min_w(0.0)
+        .fill(t.color("surface-secondary"))
+        .child(content)
+        .children(overlays)
+}
+
+pub fn narrow_list_screen(header: El, list: El) -> El {
+    col()
+        .full_width()
+        .full_height()
+        .min_w(0.0)
+        .child(header)
+        .child(list)
+}
+
+pub fn narrow_pane(section: &str, header: El, children: impl IntoIterator<Item = El>) -> El {
+    let t = tokens(layout::dark());
+    col()
+        .full_width()
+        .full_height()
+        .min_w(0.0)
+        .child(header)
+        .child(
+            col()
+                .key(section)
+                .full_width()
+                .min_w(0.0)
+                .remaining()
+                .scroll(ScrollSpec {
+                    stick_bottom: false,
+                })
+                .px(t.space(Space::Md).px())
+                .py(t.space(Space::Md).px())
+                .children(children),
+        )
 }
 
 const PRESET_NARROW_BREAKPOINT: f32 = 672.0;
@@ -696,12 +874,25 @@ pub fn card(child: El) -> El {
 pub fn card_header(title: &str, status: Option<&str>) -> El {
     let mut header = row()
         .full_width()
+        .min_w(0.0)
+        .flex_wrap()
         .center_y()
         .justify_between()
         .separate(Space::Sm)
-        .child(text(title).role("heading").text_role(TextRole::Button));
+        .child(
+            text(title)
+                .role("heading")
+                .text_role(TextRole::Button)
+                .shrink()
+                .wrap(),
+        );
     if let Some(status) = status {
-        header = header.child(text(status).text_role(TextRole::Small).role("status"));
+        header = header.child(
+            text(status)
+                .text_role(TextRole::Small)
+                .role("status")
+                .wrap(),
+        );
     }
     header
 }
@@ -817,12 +1008,15 @@ pub fn checkbox_cell<S: 'static>(
 
 pub fn setting_row_with_info(label: &str, info: Option<El>, control: El) -> El {
     layout::action_row()
+        .min_w(0.0)
         .justify_between()
         .child(
             row()
                 .center_y()
+                .shrink()
+                .min_w(0.0)
                 .separate(Space::Xs)
-                .child(text(label).text_role(TextRole::Button))
+                .child(text(label).text_role(TextRole::Button).shrink().wrap())
                 .children(info),
         )
         .child(control)

@@ -22,7 +22,7 @@ pub(super) fn view(
             system_more,
             workbench_width,
             actions_width,
-            false,
+            cx.touch_controls(),
             layers,
             |s: &mut Window| &mut s.general,
         ))
