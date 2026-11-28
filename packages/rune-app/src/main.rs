@@ -402,6 +402,16 @@ fn poll_window(s: &mut State, now: f64, tx: &mut Tx) -> bool {
 rune::android_main!(main);
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        let version = option_env!("CODENOMAD_RUNE_VERSION").filter(|v| !v.is_empty());
+        codenomad_windows_install::run_uninstall_if_asked(
+            &codenomad_windows_install::Product::release(
+                version.unwrap_or(env!("CARGO_PKG_VERSION")),
+            ),
+        );
+        rune::set_app_icon_resource(1);
+    }
     #[cfg(feature = "test-support")]
     if probes::dispatch() {
         return;
