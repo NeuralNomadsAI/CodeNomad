@@ -1,13 +1,13 @@
 import { z } from "zod"
 import { canonicalAuthority } from "./authority-protocol"
-import { missionCreationChoices, missionCreationChoicesSchema, missionCreationDefaultsSchema, missionCreationDefaultsWire, missionCreationTemplateSchema } from "./creation-defaults"
+import { missionCreationChoices, missionCreationChoicesSchema, missionCreationDefaultsSchema, missionCreationTemplateSchema, sameMissionCreationChoices } from "./creation-defaults"
 import type { MissionPrepareRequest } from "./control-types"
+import type { MissionDocument } from "./mission-document"
+import { missionRecoveryControlError } from "./recovery-error"
 import { automaticMissionStartID } from "./preparation-result"
 import { stableToken } from "./receipt-identity"
 import { documentID, missionCriteriaLaunchPolicySchema, nativeDocumentID, requiresMissionCalendar } from "./launch-policy"
 import { criteriaLaunchPolicyWire } from "./mission-document-wire"
-import { missionProfilesSchema } from "./playbook-profiles"
-import { missionTaskModeSchema } from "./task-execution-mode"
 
 export const missionPreparationOptionsSchema = z.object({
   launch: missionCriteriaLaunchPolicySchema.optional(),
@@ -42,6 +42,17 @@ export function normalizedPreparationOptions(input: MissionPreparationOptions) {
 export const samePreparationOptions = (left: MissionPreparationOptions, right: MissionPreparationOptions) =>
   canonicalAuthority(normalizedPreparationOptions(left)) === canonicalAuthority(normalizedPreparationOptions(right))
 
+/** A retried preparation names the stored one: same author, request and inputs. */
+export function assertSamePreparation(doc: MissionDocument, author: PreparationAuthor, requestID: string, input: MissionPrepareRequest) {
+  const creation = doc.creation, original = creation?.input
+  if (!creation || creation.requestID !== requestID || !original
+    || canonicalAuthority(creation.author) !== canonicalAuthority(author)
+    || original.objective !== input.objective || original.title !== input.title || original.notes !== input.notes
+    || original.template !== input.template || original.startOnCreation !== Boolean(input.startOnCreation)
+    || !samePreparationOptions(original, input)
+    || !sameMissionCreationChoices(creation.creationDefaults?.request ?? original, input)) throw missionRecoveryControlError("prepare-conflict")
+}
+
 export function missionPreparationCreation(input: MissionPrepareRequest, author: PreparationAuthor, requestID: string) {
   const { kind: _kind, ...options } = normalizedPreparationOptions(input)
   const original = missionPreparationInputSchema.parse({ objective: input.objective, template: input.template,
@@ -60,12 +71,3 @@ export const missionPreparationOptionsWire = {
   coordinatorSessionID: text,
   coordinatorGoal: { type: "boolean" },
 } as const
-export const missionPreparationCreationWire = { type: "object", properties: {
-  requestID: text, digest: text,
-  author: { type: "object", properties: { coordinatorSessionID: text, missionID: text }, required: ["coordinatorSessionID"], additionalProperties: false },
-  input: { type: "object", properties: { objective: text, title: text, notes: text, template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
-    profiles: missionProfilesSchema, taskMode: missionTaskModeSchema, startOnCreation: { type: "boolean" }, ...missionPreparationOptionsWire },
-    required: ["objective", "template", "startOnCreation"], additionalProperties: false },
-  creationDefaults: missionCreationDefaultsWire,
-  automaticStart: { type: "object", properties: { requestID: text, attempted: { type: "boolean" } }, required: ["requestID", "attempted"], additionalProperties: false },
-}, required: ["requestID", "digest"], additionalProperties: false } as const

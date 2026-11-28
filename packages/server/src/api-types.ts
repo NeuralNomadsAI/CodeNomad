@@ -13,8 +13,6 @@ export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionConte
 export type { OpenCodeLogsResponse } from "./opencode/logs"
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
-export type { MissionScheduleList } from "./missions/mission-schedule-list"
-export type { MissionScheduleRead } from "./missions/mission-schedule-view"
 
 export type {
   MissionActor,
