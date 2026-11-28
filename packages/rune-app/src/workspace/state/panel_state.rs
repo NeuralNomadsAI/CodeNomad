@@ -51,14 +51,16 @@ pub fn set_files_tab(s: &mut State, files: bool) {
 }
 
 pub(crate) fn right_panel_tab(s: &State) -> RightPanelTab {
-    let saved = s
-        .workspace
-        .as_ref()
-        .and_then(view_state)
+    let Some(ui) = s.workspace.as_ref() else {
+        // Without a workspace tab manager (shell gallery / direct-chat fixtures),
+        // tab switches cannot persist and no workspace Git/Files owner is mounted.
+        return RightPanelTab::Status;
+    };
+    let saved = view_state(ui)
         .map(|view| view.right_panel)
         .unwrap_or_default();
     if saved == RightPanelTab::Missions && !mission_supported(s) {
-        RightPanelTab::Status
+        RightPanelTab::Files
     } else {
         saved
     }

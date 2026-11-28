@@ -6,9 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 
 /// Advance `inbox` ingress, `upstream` disconnect state, and `history_revision` synchronously on
 /// frame arrival before any routing queue or side send.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn note_inbox_frame(
     workspace: &str,
     session: &str,
+    session_directory: Option<&str>,
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
     upstream: Option<&AtomicBool>,
@@ -39,6 +41,7 @@ pub(super) fn note_inbox_frame(
             note_inbox_value(
                 workspace,
                 session,
+                session_directory,
                 inbox,
                 history_revision,
                 upstream,
@@ -48,7 +51,12 @@ pub(super) fn note_inbox_frame(
         })
 }
 
-fn matches_history_boundary(workspace: &str, session: &str, value: &Value) -> bool {
+fn matches_history_boundary(
+    workspace: &str,
+    session: &str,
+    session_directory: Option<&str>,
+    value: &Value,
+) -> bool {
     if value["instanceId"] != workspace {
         return false;
     }
@@ -62,24 +70,29 @@ fn matches_history_boundary(workspace: &str, session: &str, value: &Value) -> bo
     let own_session =
         native["data"]["sessionID"] == session || native["data"]["form"]["sessionID"] == session;
     own_session
-        && matches!(
-            native["type"].as_str(),
+        && match native["type"].as_str() {
+            Some("session.moved") => session_moved_away_in(session, session_directory, native),
             Some(
-                "session.moved"
-                    | "session.deleted"
-                    | "session.revert.committed"
-                    | "session.revert.staged"
-                    | "session.revert.cleared"
-                    | "session.inbox.cancelled"
-                    | "session.inbox.delivered"
-                    | "session.compaction.started"
-                    | "session.compaction.ended"
-                    | "session.compaction.failed"
-            )
-        )
+                "session.deleted"
+                | "session.revert.committed"
+                | "session.revert.staged"
+                | "session.revert.cleared"
+                | "session.inbox.cancelled"
+                | "session.inbox.delivered"
+                | "session.compaction.started"
+                | "session.compaction.ended"
+                | "session.compaction.failed",
+            ) => true,
+            _ => false,
+        }
 }
 
-fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
+fn matches_inbox_value(
+    workspace: &str,
+    session: &str,
+    session_directory: Option<&str>,
+    value: &Value,
+) -> bool {
     if value["instanceId"] != workspace {
         return false;
     }
@@ -90,27 +103,31 @@ fn matches_inbox_value(workspace: &str, session: &str, value: &Value) -> bool {
                 || (native["data"]["sessionID"] == session
                     && native["type"].as_str().is_some_and(|kind| {
                         kind.starts_with("session.inbox.")
-                            || matches!(
-                                kind,
-                                "session.moved"
-                                    | "session.deleted"
-                                    | "session.revert.staged"
-                                    | "session.revert.cleared"
-                                    | "session.revert.committed"
-                            )
+                            || match kind {
+                                "session.moved" => {
+                                    session_moved_away_in(session, session_directory, native)
+                                }
+                                "session.deleted"
+                                | "session.revert.staged"
+                                | "session.revert.cleared"
+                                | "session.revert.committed" => true,
+                                _ => false,
+                            }
                     }))))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn note_inbox_value(
     workspace: &str,
     session: &str,
+    session_directory: Option<&str>,
     inbox: &InboxWire,
     history_revision: Option<&AtomicU64>,
     upstream: Option<&AtomicBool>,
     disconnect_mark: Option<&AtomicU64>,
     value: &Value,
 ) -> u64 {
-    let mark = if matches_inbox_value(workspace, session, value) {
+    let mark = if matches_inbox_value(workspace, session, session_directory, value) {
         inbox.record_ingress()
     } else {
         0
@@ -127,11 +144,47 @@ pub(super) fn note_inbox_value(
         }
     }
     if let Some(rev) = history_revision
-        && matches_history_boundary(workspace, session, value)
+        && matches_history_boundary(workspace, session, session_directory, value)
     {
         rev.fetch_add(1, SeqCst);
     }
     mark
+}
+
+/// Returns `true` when `native` is a `session.moved` event for `session`
+/// that moves the session away from `bound_directory` (or whose target
+/// cannot be proven equal to `bound_directory`).
+///
+/// A delayed `session.moved` broadcast whose destination already matches
+/// `bound_directory` (with no foreign `workspaceID`) belongs to the
+/// placement that established this binding and must not revoke the live stream.
+pub(crate) fn session_moved_away_in(
+    session: &str,
+    bound_directory: Option<&str>,
+    native: &Value,
+) -> bool {
+    if native["type"] != "session.moved" || native["data"]["sessionID"] != session {
+        return false;
+    }
+    let Some(bound_dir) = bound_directory else {
+        return true;
+    };
+    let dest = &native["data"]["location"];
+    if dest.get("workspaceID").is_some() {
+        return true;
+    }
+    let Some(dest_dir) = dest["directory"].as_str() else {
+        return true;
+    };
+    !crate::server_path::same(bound_dir, dest_dir)
+}
+
+pub(crate) fn session_moved_away(backend: &Backend, native: &Value) -> bool {
+    session_moved_away_in(
+        &backend.session,
+        backend.session_directory.as_deref(),
+        native,
+    )
 }
 
 pub(super) async fn relay(
@@ -148,31 +201,32 @@ pub(super) async fn relay(
         && value["type"] == "instance.event"
         && (native["data"]["sessionID"] == b.session
             || native["data"]["form"]["sessionID"] == b.session);
-    if own_session_event
-        && matches!(
-            native["type"].as_str(),
-            Some("session.moved" | "session.deleted")
-        )
-    {
+    let moved_away = own && value["type"] == "instance.event" && session_moved_away(b, native);
+    let moved_into_bound = own
+        && value["type"] == "instance.event"
+        && native["type"] == "session.moved"
+        && native["data"]["sessionID"] == b.session
+        && !moved_away;
+    if own_session_event && (native["type"] == "session.deleted" || moved_away) {
         // Closing the signal before any send fences reads and prompts even if the relay inbox is full.
         state.close_placement();
     }
     if own_session_event
-        && matches!(
-            native["type"].as_str(),
+        && match native["type"].as_str() {
+            Some("session.moved") => moved_away,
             Some(
-                "session.moved"
-                    | "session.deleted"
-                    | "session.revert.committed"
-                    | "session.revert.staged"
-                    | "session.revert.cleared"
-                    | "session.inbox.cancelled"
-                    | "session.inbox.delivered"
-                    | "session.compaction.started"
-                    | "session.compaction.ended"
-                    | "session.compaction.failed"
-            )
-        )
+                "session.deleted"
+                | "session.revert.committed"
+                | "session.revert.staged"
+                | "session.revert.cleared"
+                | "session.inbox.cancelled"
+                | "session.inbox.delivered"
+                | "session.compaction.started"
+                | "session.compaction.ended"
+                | "session.compaction.failed",
+            ) => true,
+            _ => false,
+        }
     {
         // Bump history_revision before awaiting any channel send so boundary events fence concurrent offers immediately.
         state.history_revision.fetch_add(1, SeqCst);
@@ -219,7 +273,7 @@ pub(super) async fn relay(
         b.client.children().invalidate_all(b);
     }
     // A conversation move revokes its reader before any send and relays SessionMoved itself.
-    if !(own && native["type"] == "session.moved" && native["data"]["sessionID"] == b.session)
+    if !moved_away
         && let Some(event) = mission_events::decode(&b.workspace, b.session.is_empty(), value)
     {
         out.send(Input::Workspace(epoch, event)).await?;
@@ -396,6 +450,10 @@ pub(super) async fn relay(
         {
             out.send(Input::Workspace(epoch, event)).await?;
         }
+        if moved_into_bound {
+            state.inbox.advance_applied(inbox_mark);
+            return Ok(());
+        }
         let version = state.version.fetch_add(1, SeqCst) + 1;
         if matches!(
             native["type"].as_str(),
@@ -403,10 +461,7 @@ pub(super) async fn relay(
         ) {
             state.history_revision.fetch_add(1, SeqCst);
         }
-        if native["type"] == "session.moved"
-            && native["data"]["sessionID"] == b.session
-            && let Some((cancel, _)) = &state.placement
-        {
+        if moved_away && let Some((cancel, _)) = &state.placement {
             // Closing the signal fences the current body and every later read on this wire.
             cancel.close();
         }
@@ -628,6 +683,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
                 let _ = note_inbox_frame(
                     &backend.workspace,
                     &backend.session,
+                    backend.session_directory.as_deref(),
                     &state.inbox,
                     Some(state.history_revision.as_ref()),
                     Some(state.upstream.as_ref()),
@@ -654,6 +710,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
             let earlier_connected_mark = note_inbox_frame(
                 &backend.workspace,
                 &backend.session,
+                backend.session_directory.as_deref(),
                 &state.inbox,
                 Some(state.history_revision.as_ref()),
                 Some(state.upstream.as_ref()),
@@ -669,6 +726,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
             let disconnect_mark = note_inbox_frame(
                 &backend.workspace,
                 &backend.session,
+                backend.session_directory.as_deref(),
                 &state.inbox,
                 Some(state.history_revision.as_ref()),
                 Some(state.upstream.as_ref()),
@@ -719,6 +777,7 @@ fn revert_staged_and_cleared_bump_history_revision_while_normal_deltas_do_not() 
             let later_connected_mark = note_inbox_frame(
                 &backend.workspace,
                 &backend.session,
+                backend.session_directory.as_deref(),
                 &state.inbox,
                 Some(state.history_revision.as_ref()),
                 Some(state.upstream.as_ref()),

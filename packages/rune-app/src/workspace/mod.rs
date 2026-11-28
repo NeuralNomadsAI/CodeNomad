@@ -111,11 +111,21 @@ pub struct Workspace {
     pub(crate) view: ViewState,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ViewState {
     right_panel: RightPanelTab,
     files_mode: Option<&'static str>,
     selected_mission: Option<String>,
+}
+
+impl Default for ViewState {
+    fn default() -> Self {
+        Self {
+            right_panel: RightPanelTab::Files,
+            files_mode: Some("workspace"),
+            selected_mission: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,7 +137,7 @@ pub(crate) enum RightPanelTab {
 
 impl Default for RightPanelTab {
     fn default() -> Self {
-        Self::Status
+        Self::Files
     }
 }
 
@@ -430,8 +440,8 @@ fn view_state(value: Option<&Value>) -> Result<ViewState, Error> {
         return Err(Error::Unsupported);
     }
     let right_panel = match value.get("rightPanelTab").map(|key| key.as_str()) {
-        None | Some(Some("status")) => RightPanelTab::Status,
-        Some(Some("files")) => RightPanelTab::Files,
+        None | Some(Some("files")) => RightPanelTab::Files,
+        Some(Some("status")) => RightPanelTab::Status,
         Some(Some("missions")) => RightPanelTab::Missions,
         _ => return Err(Error::Unsupported),
     };
