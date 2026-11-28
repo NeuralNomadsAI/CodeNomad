@@ -122,7 +122,7 @@ export function MissionRows(props: {
         <button type="button" class="session-item-select mission-row-select" aria-current={highlighted() ? "true" : undefined} title={describe(entry())}
           onClick={() => props.onSelect(entry())}>
           <span class="mission-row-mark" data-mark={entry().mark} aria-hidden="true">
-            <Dynamic component={entry().mark === "paused" ? Pause : entry().mark === "interrupted" ? AlertTriangle
+            <Dynamic component={entry().mark === "paused" || entry().mark === "waiting" ? Pause : entry().mark === "interrupted" ? AlertTriangle
               : key.startsWith("mission:") && !entry().recurring ? Flag : Repeat} class="mission-row-flag w-4 h-4 flex-shrink-0" data-mark={entry().mark} />
           </span>
           <bdi class="session-item-title session-item-title--clamp">{entry().title}</bdi><span class="sr-only">{entry().status}</span>

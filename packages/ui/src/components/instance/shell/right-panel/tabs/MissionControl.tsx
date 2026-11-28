@@ -859,11 +859,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
               openEditor(calendar ? { kind: "create", calendar: calendar.id, draft: missionProgrammingDraft(calendar, directory()) } : { kind: "edit", mission: selected() })
             }}
             onDelete={() => void deleteMission(selected())}
+            programming={programmingOf(id) && { paused: programmingOf(id)!.paused, between: selected().status !== "active" || selected().runState === "prepared",
+              act: action => { setProgrammingFailed(false); return calendars.act(programmingOf(id)!.id, { action }).catch(() => { setProgrammingFailed(true) }) } }}
              task={readTask()} taskPending={taskSelected()} taskReading={Boolean(readTask()) && isReading({ missionId: id, kind: "task", itemId: readTask()!.task.id })}
             onToggleTask={() => { const task = readTask(); if (task) void read({ missionId: id, kind: "task", itemId: task.task.id }) }}
             onOpenTask={sessionId => void onOpenActor(sessionId)} />
-          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} disabled={Boolean(editor())} failed={programmingFailed()}
-            onAct={action => calendars.act(calendar().id, { action })} />}</Show>
+          <Show when={programmingOf(id)}>{calendar => <MissionProgramming calendar={calendar()} failed={programmingFailed()} />}</Show>
           {tracking()}
         </section>
       }}</Show>

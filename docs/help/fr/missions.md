@@ -74,7 +74,7 @@ Une programmation gérée par calendrier nécessite un agent et un modèle expli
 
 ## Programmation {#daily-schedules}
 
-Une Mission avec un horaire répété ou un événement reste une seule ligne de la liste : chaque lancement remplace le précédent dans la même conversation de coordination, et attend tant que le précédent est encore actif. Son détail affiche **Lancer quand**, **État voulu** avec **Pause** ou **Reprendre**, le prochain réveil ou la prochaine vérification, **Passages lancés** et **Exécutions passées** (les 20 derniers lancements). Si **Démarrer automatiquement** est décoché, elle est créée en pause. **Modifier la mission sélectionnée** rouvre le formulaire de création, et le prochain lancement utilise ce que vous enregistrez. **Supprimer la mission sélectionnée…** retire d’abord sa programmation.
+Une Mission avec un horaire répété ou un événement reste une seule ligne de la liste : chaque lancement remplace le précédent dans la même conversation de coordination, et attend tant que le précédent est encore actif. Son détail affiche **Lancer quand**, **État voulu**, le prochain réveil ou la prochaine vérification, **Passages lancés** et **Exécutions passées** (les 20 derniers lancements). Si **Démarrer automatiquement** est décoché, elle est créée en pause. **Modifier la mission sélectionnée** rouvre le formulaire de création, et le prochain lancement utilise ce que vous enregistrez. **Supprimer la mission sélectionnée…** retire d’abord sa programmation. ⏸ de la barre d’outils la met en pause tout entière, lancement en cours et programmation, et ▶ fait repartir les deux. ■ arrête le lancement en cours ; quand plus rien ne tourne, il arrête définitivement la programmation et laisse la Mission dans la liste.
 
 ### Critères {#native-scheduling}
 
@@ -134,10 +134,10 @@ Le drapeau indique l’état de la Mission ; son chevron porte l’attention de 
 | --- | --- |
 | Rouge | Une question ou permission attend votre réponse. Sélectionnez la Mission ou la tâche concernée pour ouvrir le panneau d’interruption. |
 | Jaune | Une activité native a été observée. |
-| Symbole pause orange | En pause. |
+| Symbole pause orange | En pause : rien ne continue ni ne se lance tant que vous ne reprenez pas. |
 | Triangle d’avertissement orange | Interrompue, avec une action pour continuer. |
 | Vert | Une Mission, tâche ou exécution programmée réussie attend votre consultation dans cette fenêtre. |
-| Icône d’accent avec un petit trait neutre statique dessous | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
+| Symbole pause d’accent avec un petit trait neutre statique dessous | **En attente programmée** : le prochain réveil est confirmé. L’accent suit votre palette. |
 | Icône d’accent seule | Mission préparée ou tâche qui n’a pas commencé. |
 | Neutre | Fin consultée, programmation arrêtée ou **État non confirmé** ; lisez le texte d’état. |
 

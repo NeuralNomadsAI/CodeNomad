@@ -108,12 +108,11 @@ test("marks follow the session palette and a completion stays green until this w
     await page.waitForFunction(() => [...document.querySelectorAll(".mission-rows .mission-row-flag")].some(element => element.getAttribute("data-mark") === "working"))
     assert.deepEqual(await Promise.all(["Objective stuck", "Objective working", "Objective history", "Objective failed", "Objective paused", "Objective prepared"]
       .map(title => mark(page, title))), ["interrupted", "working", "idle", "interrupted", "paused", "prepared"])
-    assert.equal(await page.evaluate(() => {
-      const element = [...document.querySelectorAll<HTMLElement>(".mission-rows .mission-row-flag")].find(item => item.dataset.mark === "prepared")!
+    assert.deepEqual(await page.evaluate(() => {
       const probe = document.createElement("span"); probe.style.color = "var(--accent-primary)"; document.body.append(probe)
       const blue = getComputedStyle(probe).color; probe.remove()
-      return getComputedStyle(element).color === blue
-    }), true, "a prepared mission is accent blue, like a composed prompt")
+      return ["prepared", "paused"].map(mark => getComputedStyle([...document.querySelectorAll<HTMLElement>(".mission-rows .mission-row-flag")].find(item => item.dataset.mark === mark)!).color === blue)
+    }), [true, false], "a prepared mission is accent blue, like a composed prompt; a paused one is not")
 
     list = list.map(value => value.id === "working" ? { ...value, status: "completed", updatedAt: 7, finishSequence: 2, revision: 2 } : value)
     activity = activity.filter(item => item.missionId !== "working")

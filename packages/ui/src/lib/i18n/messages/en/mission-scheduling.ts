@@ -110,6 +110,8 @@ export const missionSchedulingMessages = {
   "missions.scheduling.retained.replace": "Replace with a new scheduling policy",
   "missions.scheduling.error.retained": "Keep the stored policy unchanged or explicitly replace it before editing scheduling.",
   "missions.scheduling.title": "Scheduling",
+  "missions.scheduling.stop": "Stop scheduling permanently",
+  "missions.scheduling.stopConfirm": "Stop this scheduling permanently? No further launch will start. The mission stays in the list.",
   "missions.scheduling.when": "Launch when",
   "missions.scheduling.connector.else": "else",
   "missions.scheduling.connector.if": "if",
