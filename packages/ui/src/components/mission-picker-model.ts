@@ -42,12 +42,6 @@ export function missionMark(mission: { status: string; runState?: string }, inpu
   return input.coordinatorState === "idle-without-report" ? "interrupted" : "idle"
 }
 
-export function missionMarkStateKey(mark: MissionMark): string | undefined {
-  return mark === "waiting" ? "missionsPanel.state.waiting" : mark === "done" ? "missionsPanel.state.unreadSuccess"
-    : mark === "prepared" ? "missions.control.run.prepared"
-    : mark === "interrupted" ? "missionsPanel.state.interrupted" : undefined
-}
-
 /** One list for every kind, latest activity first; the key breaks ties stably. */
 export function sortMissionPickerEntries(entries: MissionPickerEntry[]): MissionPickerEntry[] {
   return entries.sort((a, b) => b.activityAt - a.activityAt || a.key.localeCompare(b.key))

@@ -10,7 +10,6 @@ import { recurrenceControlProofSchema, schedulePrincipalWire } from "./recurrenc
 import { missionPreparationCreationSchema, missionPreparationCreationWire } from "./preparation-input"
 
 export const missionScheduleActions = ["create", "play", "pause", "resume", "stop", "check", "run-now", "configure", "delete"] as const
-export type MissionScheduleAction = typeof missionScheduleActions[number]
 const signedProof = { proof: z.string().regex(/^[a-f0-9]{64}$/) }
 export const missionScheduleTransportSchema = z.union([
   recurrenceControlProofSchema.options[0].extend(signedProof),
@@ -43,10 +42,6 @@ export const missionSchedulePayloadDigest = (input: Pick<MissionScheduleRequest,
   stableToken(canonicalAuthority(input.creation === undefined
     ? input.configuration ?? { deleteManagedSessions: input.deleteManagedSessions ?? false }
     : { configuration: input.configuration, creation: input.creation }), 64)
-export const missionScheduleRefusalSchema = z.object({ missionID: documentID, requestID: documentID,
-  expectedRevision: documentCounter, action: z.enum(missionScheduleActions), payloadDigest: z.string().regex(/^[a-f0-9]{64}$/),
-  reason: z.enum(["revision-conflict", "control-conflict", "date-passed", "coordinator-busy", "coordinator-owned", "coordinator-is-source"]),
-}).strict()
 
 const text = { type: "string" } as const
 const counter = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } as const
