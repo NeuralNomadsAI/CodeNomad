@@ -79,6 +79,7 @@ pub(crate) fn invalidate(s: &State, owner: codenomad_client::settings::Owner) {
 pub(super) fn provider_stopped(s: &State, workspace: &str) {
     {
         let mut prefs = s.settings.shared.borrow_mut();
+        prefs.set_native_stream_online(workspace, true);
         if prefs
             .provider_target
             .as_ref()
@@ -186,13 +187,53 @@ pub(crate) fn connection_event(
             workspace_id,
             connected,
         }) => {
-            let prefs = s.settings.shared.borrow();
-            if prefs
-                .provider_target
-                .as_ref()
-                .is_some_and(|target| target.is_workspace(workspace_id))
+            if s.screen
+                .launcher()
+                .is_some_and(|l| l.catalogue_watch.is_some())
             {
-                if !connected {
+                let prefs = s.settings.shared.borrow();
+                if prefs
+                    .provider_target
+                    .as_ref()
+                    .is_some_and(|target| target.is_workspace(workspace_id))
+                {
+                    if !*connected {
+                        prefs.missions.revoke_location();
+                    }
+                    if let Some(wake) = &prefs.window_wake {
+                        wake();
+                    }
+                }
+                return;
+            }
+            let mut prefs = s.settings.shared.borrow_mut();
+            prefs.set_native_stream_online(workspace_id, *connected);
+            if *connected {
+                prefs.set_pending_native_outage(false);
+                if affects_preferences {
+                    prefs.revalidate_transport();
+                    prefs.memory.transport(true);
+                }
+            } else if prefs
+                .backend
+                .as_ref()
+                .is_some_and(|b| b.workspace == *workspace_id)
+            {
+                prefs.set_pending_native_outage(true);
+            }
+            let matched = prefs.provider_target.as_mut().is_some_and(|target| {
+                if !target.is_workspace(workspace_id) {
+                    return false;
+                }
+                if *connected && !target.host_online() {
+                    target.transport(true);
+                } else if !target.native_transport(*connected) {
+                    target.invalidate_location();
+                }
+                true
+            });
+            if matched {
+                if !*connected {
                     prefs.missions.revoke_location();
                 }
                 if let Some(wake) = &prefs.window_wake {
@@ -238,18 +279,27 @@ pub(crate) fn connection_event(
         Event::Workspace(WorkspaceEvent::Stopped { workspace_id, .. }) => {
             provider_stopped(s, workspace_id)
         }
+        Event::Reconnecting => {
+            s.settings
+                .shared
+                .borrow_mut()
+                .set_pending_native_outage(false);
+        }
         Event::AgentHint(true) => {
             if affects_preferences {
-                s.settings.shared.borrow_mut().memory.transport(true);
+                let mut prefs = s.settings.shared.borrow_mut();
+                prefs.clear_native_stream_state();
+                prefs.memory.transport(true);
+                drop(prefs);
                 provider_transport(s, true);
             }
-        }
-        Event::Reconnecting if affects_preferences => {
-            provider_transport(s, false);
         }
         Event::ConnectionLost => {
             if affects_preferences {
                 s.settings.transcript_filters.close_preset_menu();
+                if s.settings.shared.borrow_mut().take_pending_native_outage() {
+                    return;
+                }
                 let other_healthy =
                     crate::workspace::conversation_stream_clients(s)
                         .iter()
@@ -287,7 +337,9 @@ fn provider_transport(s: &State, online: bool) {
     let mut prefs = s.settings.shared.borrow_mut();
     if let Some(target) = &mut prefs.provider_target {
         target.transport(online);
-        if !online {
+        if online {
+            target.native_transport(true);
+        } else {
             prefs.missions.revoke_location();
         }
         if let Some(wake) = &prefs.window_wake {

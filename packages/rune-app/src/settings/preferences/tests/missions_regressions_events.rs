@@ -214,6 +214,7 @@ fn reopening_web_preferences_with_steady_catalogue_watch_keeps_queued_depth_writ
         let _sse_stream = accept_sse_stream(&listener).await;
         wait_until(|| watch.generation() == 1).await;
         let _ = watch.take_provider_changes();
+        let _ = watch.take_provider_location_changes();
         let _ = watch.take_mission_catalog_changes();
 
         let mut root = crate::init();
@@ -554,10 +555,20 @@ fn mission_catalog_events_refresh_missions_without_touching_providers() {
             .await;
 
             let (provider_changes, _, _) = watch.take_provider_changes();
-            assert!(
-                matches!(provider_changes, CatalogueChanges::None),
-                "{event_type} must not trigger Providers panel reload"
-            );
+            if event_type == "agent.updated" {
+                assert!(
+                    matches!(provider_changes, CatalogueChanges::None),
+                    "agent.updated must not trigger Providers panel reload"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        provider_changes,
+                        CatalogueChanges::Workspaces(ref set) if set.contains("captured")
+                    ),
+                    "{event_type} refreshes Providers (Web search / Images) alongside Missions"
+                );
+            }
 
             let provider_rev_before = target.revision();
             let catalog_rev_before = target.mission_catalog_revision();

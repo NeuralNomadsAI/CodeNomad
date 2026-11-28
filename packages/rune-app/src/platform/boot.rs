@@ -81,6 +81,11 @@ impl LocalHost {
             state_directory: None,
         }
     }
+    #[cfg(test)]
+    pub(crate) fn with_state_directory(mut self, directory: PathBuf) -> Self {
+        self.state_directory = Some(directory);
+        self
+    }
 }
 impl Drop for LocalHost {
     fn drop(&mut self) {

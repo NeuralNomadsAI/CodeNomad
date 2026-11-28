@@ -41,18 +41,31 @@ fn help_for_origin(href: &str, origin: Option<&str>) -> Option<String> {
     .then(|| crate::strings::t("markdown.link.loopbackOnHost").into())
 }
 
-pub(super) fn open_external(href: &str, tx: &mut Tx) {
-    if let Some(url) = openable_http(href) {
+pub(crate) fn open_external(href: &str, tx: &mut Tx) {
+    if let Some(url) = openable_external(href) {
         let _ = tx.open_url(&url);
-        return;
     }
+}
+
+fn openable_external(href: &str) -> Option<String> {
+    openable_http(href).or_else(|| openable_mailto(href))
+}
+
+fn openable_mailto(href: &str) -> Option<String> {
     let trimmed = href.trim();
-    if trimmed
+    let rest = trimmed
         .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+        .filter(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
+        .map(|_| &trimmed[7..])?;
+    if rest.is_empty()
+        || rest.starts_with("//")
+        || trimmed.len() > 8192
+        || !valid_percent(trimmed.as_bytes())
+        || has_unsafe_uri_char(trimmed)
     {
-        let _ = tx.open_url(trimmed);
+        return None;
     }
+    Some(trimmed.to_owned())
 }
 
 fn menu(
@@ -115,14 +128,16 @@ fn openable_http(href: &str) -> Option<String> {
         return None;
     }
     let url = external(&url).into_owned();
-    (url.len() <= 8192
-        && valid_percent(url.as_bytes())
-        && !url.chars().any(|c| {
-            c.is_whitespace()
-                || c.is_control()
-                || matches!(c, '\\' | '"' | '<' | '>' | '`' | '^' | '{' | '|' | '}')
-        }))
-    .then_some(url)
+    (url.len() <= 8192 && valid_percent(url.as_bytes()) && !has_unsafe_uri_char(&url))
+        .then_some(url)
+}
+
+fn has_unsafe_uri_char(url: &str) -> bool {
+    url.chars().any(|c| {
+        c.is_whitespace()
+            || c.is_control()
+            || matches!(c, '\\' | '"' | '<' | '>' | '`' | '^' | '{' | '|' | '}')
+    })
 }
 
 fn valid_percent(bytes: &[u8]) -> bool {
@@ -207,6 +222,30 @@ fn only_encode_brackets_after_authority() {
         "https://a..b.com/",
     ] {
         assert!(openable_http(rejected).is_none(), "{rejected:?}");
+    }
+    assert_eq!(
+        openable_external(" mailto:local@example.org ").as_deref(),
+        Some("mailto:local@example.org")
+    );
+    assert_eq!(
+        openable_external("MAILTO:team@example.org?subject=Hello%20World").as_deref(),
+        Some("MAILTO:team@example.org?subject=Hello%20World")
+    );
+    for rejected in [
+        "mailto:",
+        "mailto:   ",
+        "mailto://evil.example/a@b",
+        "mailto:local@example.org%00",
+        "mailto:local@example.org%ZZ",
+        "mailto:local@example.org\nBcc:evil@example.org",
+        "mailto:local@example.org \"arg\"",
+        "mailto:<local@example.org>",
+        "javascript:alert(1)",
+        "data:text/html,hi",
+        "file:///etc/passwd",
+        "file:///C:/Windows/win.ini",
+    ] {
+        assert!(openable_external(rejected).is_none(), "{rejected:?}");
     }
 }
 

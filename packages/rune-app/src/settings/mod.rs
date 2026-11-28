@@ -67,7 +67,9 @@ pub(crate) use delivery::{ConfirmedRoute, Delivery, notification_route, system_n
 pub(crate) use delivery::{
     notification_fixture, notification_fixture_for, notification_test_config,
 };
-pub(crate) use shortcuts::{shortcut_label, with_shortcut_label, with_shortcut_label_excluding};
+pub(crate) use shortcuts::{
+    matches_shortcut, shortcut_label, with_shortcut_label, with_shortcut_label_excluding,
+};
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) use window::gallery;
 pub(crate) use window::{
@@ -325,6 +327,9 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
     {
         let watch = s.screen.launcher().and_then(|l| l.catalogue_watch.as_ref());
         let observation = watch.map(|watch| watch.take_provider_changes());
+        let location_changes = watch
+            .map(|watch| watch.take_provider_location_changes())
+            .unwrap_or_default();
         let moves = watch
             .map(|watch| watch.take_provider_moves())
             .unwrap_or_default();
@@ -352,12 +357,21 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                 .provider_target
                 .as_ref()
                 .map(|target| (target.location().0.to_owned(), target.authority()));
-            if let Some(target) = &mut shared.provider_target
-                && !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation)
-            {
-                shared.provider_target = None;
-                shared.missions.revoke_location();
-            } else if old_authority.as_ref().is_some_and(|(w, a)| {
+            let mut native_changed = false;
+            if let Some(target) = &mut shared.provider_target {
+                if !target.validate(s, backend.as_ref(), &changes, &moves, &stopped, generation) {
+                    shared.provider_target = None;
+                    shared.missions.revoke_location();
+                } else {
+                    if let Some((_, status)) = stats_changes.as_ref() {
+                        native_changed = target.observe_native_status(*status);
+                    }
+                    if target.matches(&location_changes) {
+                        target.invalidate_location();
+                    }
+                }
+            }
+            if old_authority.as_ref().is_some_and(|(w, a)| {
                 shared
                     .provider_target
                     .as_ref()
@@ -394,6 +408,7 @@ pub(crate) fn poll(s: &mut State, tx: &mut rune::Tx) -> bool {
                     .as_ref()
                     .map(|target| target.revision())
                 || !matches!(changes, codenomad_client::stream::CatalogueChanges::None)
+                || native_changed
                 || bound
                 || stats_changed
                 || integrations_changed
@@ -582,6 +597,11 @@ pub(crate) fn locale(s: &State) -> &'static str {
 #[cfg(test)]
 pub(crate) fn fixture_shortcuts(s: &State, overrides: serde_json::Value) {
     s.settings.shared.borrow_mut().fixture_shortcuts(overrides);
+}
+
+#[cfg(test)]
+pub(crate) fn fixture_settings(s: &State, settings: serde_json::Value) {
+    s.settings.shared.borrow_mut().fixture_settings(settings);
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

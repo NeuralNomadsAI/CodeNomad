@@ -11,8 +11,11 @@ use std::{
 };
 
 fn map_checkout_error(error: &codenomad_client::history::Error) -> OpenError {
-    if error.downcast_ref::<GitError>() == Some(&GitError::CheckoutUnavailable) {
-        OpenError::CheckoutUnavailable
+    if let Some(git_error) = error.downcast_ref::<GitError>() {
+        match git_error {
+            GitError::CheckoutUnavailable => OpenError::CheckoutUnavailable,
+            _ => OpenError::Failed,
+        }
     } else if let Some(refusal) = error.downcast_ref::<Refusal>() {
         match refusal.status {
             403 | 404 => OpenError::CheckoutUnavailable,
@@ -20,7 +23,7 @@ fn map_checkout_error(error: &codenomad_client::history::Error) -> OpenError {
             _ => OpenError::Failed,
         }
     } else {
-        OpenError::Failed
+        OpenError::ConnectionFailed
     }
 }
 
@@ -358,6 +361,7 @@ mod tests {
             Refusal::new(409, None, Some("Worktree deletion is in progress".into())).into();
         let server: codenomad_client::history::Error =
             Refusal::new(500, None, Some("Internal server error".into())).into();
+        let empty_server: codenomad_client::history::Error = Refusal::new(500, None, None).into();
         let transport: codenomad_client::history::Error =
             "reqwest: error sending request for url (http://127.0.0.1:9999)".into();
 
@@ -371,33 +375,51 @@ mod tests {
         );
         assert_eq!(map_checkout_error(&conflict), OpenError::WorktreeChanged);
         assert_eq!(map_checkout_error(&server), OpenError::Failed);
-        assert_eq!(map_checkout_error(&transport), OpenError::Failed);
+        assert_eq!(map_checkout_error(&empty_server), OpenError::Failed);
+        assert_eq!(map_checkout_error(&transport), OpenError::ConnectionFailed);
         assert_eq!(
             map_checkout_error(&GitError::CheckoutUnavailable.into()),
             OpenError::CheckoutUnavailable
         );
-        let (en_unavailable, en_changed, en_failed) = crate::strings::with_locale("en", || {
-            (
-                crate::strings::t("gitPanel.error.checkoutUnavailable"),
-                crate::strings::t("gitPanel.error.worktreeChanged"),
-                crate::strings::t("rune.failed"),
-            )
-        });
+        assert_eq!(
+            map_checkout_error(&GitError::InvalidRequest.into()),
+            OpenError::Failed
+        );
+        assert_eq!(
+            map_checkout_error(&GitError::UnexpectedResponse.into()),
+            OpenError::Failed
+        );
+        assert_eq!(
+            map_checkout_error(&GitError::OversizedContent.into()),
+            OpenError::Failed
+        );
+        let (en_unavailable, en_changed, en_failed, en_connection) =
+            crate::strings::with_locale("en", || {
+                (
+                    crate::strings::t("gitPanel.error.checkoutUnavailable"),
+                    crate::strings::t("gitPanel.error.worktreeChanged"),
+                    crate::strings::t("settings.info.actions.failed"),
+                    crate::strings::t("rune.failed"),
+                )
+            });
         for lang in ["en", "fr"] {
             crate::strings::with_locale(lang, || {
                 let unavailable = map_checkout_error(&not_found).localized(lang);
                 let changed = map_checkout_error(&conflict).localized(lang);
                 let failed = map_checkout_error(&server).localized(lang);
+                let connection = map_checkout_error(&transport).localized(lang);
                 assert_eq!(
                     unavailable,
                     crate::strings::t("gitPanel.error.checkoutUnavailable")
                 );
                 assert_eq!(changed, crate::strings::t("gitPanel.error.worktreeChanged"));
-                assert_eq!(failed, crate::strings::t("rune.failed"));
+                assert_eq!(failed, crate::strings::t("settings.info.actions.failed"));
+                assert_eq!(connection, crate::strings::t("rune.failed"));
                 if lang == "fr" {
                     assert_ne!(unavailable, en_unavailable);
                     assert_ne!(changed, en_changed);
                     assert_ne!(failed, en_failed);
+                    assert_ne!(connection, en_connection);
                 }
             });
         }

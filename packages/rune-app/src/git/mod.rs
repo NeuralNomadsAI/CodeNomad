@@ -56,7 +56,7 @@ use codenomad_client::{
     same_server_path,
 };
 use preview::{Preview, Source};
-use request::{Completed, Lane, Mutation, MutationKind, Read, Requests, Value};
+use request::{Completed, GitMessage, Lane, Mutation, MutationKind, Read, Requests, Value};
 use rune::edit::TextEdit;
 use rune_theme_codenomad::git_diff::{ImageCache, image_cache};
 use rune_theme_codenomad::git_panel::ScrollBookmark;
@@ -197,8 +197,8 @@ pub(crate) struct Ui {
     preview_revision: u64,
     reconcile_revision: Option<u64>,
     pending_row_focus: Option<(Vec<Id>, usize)>,
-    mutation_message: Option<(bool, String)>,
-    mutation_notice: Option<(bool, String)>,
+    mutation_message: Option<(bool, GitMessage)>,
+    mutation_notice: Option<(bool, GitMessage)>,
     invalidated_files: bool,
     init_sessions: Option<Sessions>,
     collation: Option<Collation>,
@@ -545,12 +545,12 @@ impl Ui {
 pub(crate) fn probe_observable_error(s: &crate::State) -> Option<String> {
     let ui = s.git.owner.as_ref()?;
     for (name, lane) in request::LANES {
-        if let Some(error) = ui.requests.slot(lane).error.as_deref() {
-            return Some(format!("git slot {name}: {error}"));
+        if let Some(error) = &ui.requests.slot(lane).error {
+            return Some(format!("git slot {name}: {}", error.localized()));
         }
     }
     if let Some((false, message)) = &ui.mutation_message {
-        return Some(format!("git mutation error: {message}"));
+        return Some(format!("git mutation error: {}", message.localized()));
     }
     None
 }
@@ -568,7 +568,7 @@ pub(crate) fn probe_slots_diagnostic(s: &crate::State) -> String {
                 "{name}(busy={},dirty={},err={:?})",
                 slot.busy(),
                 slot.dirty,
-                slot.error
+                slot.error.as_ref().map(request::GitMessage::localized)
             )
         })
         .collect::<Vec<_>>()
@@ -585,13 +585,15 @@ pub(crate) fn probe_slots_diagnostic(s: &crate::State) -> String {
         can_place(s),
         ui.requests.mutation,
         ui.mutation_message
+            .as_ref()
+            .map(|(ok, message)| (*ok, message.localized()))
     )
 }
 
 #[cfg(all(test, feature = "test-support", not(target_arch = "wasm32")))]
 impl Ui {
     pub(crate) fn fixture_set_mutation_error(&mut self, message: &str) {
-        self.mutation_message = Some((false, message.into()));
+        self.mutation_message = Some((false, GitMessage::Raw(message.into())));
     }
 
     pub(crate) fn fixture_set_index_stale(&mut self, stale: bool) {

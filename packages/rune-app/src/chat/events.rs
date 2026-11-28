@@ -913,8 +913,14 @@ fn drain_chat(
                     if !settings::conversation_authentication(s, auth) {
                         continue;
                     }
-                    // A pending send without a prior receipt was queued before the transport exited on 401.
-                    composer::settle_pending(s, transport::PromptOutcome::Rejected);
+                    // A pending prompt/slash without a prior receipt was queued before the transport exited on 401,
+                    // whereas an already-spawned shell POST runs asynchronously and its receipt is uncertain.
+                    let outcome = if s.composer.pending_shell() {
+                        transport::PromptOutcome::Unconfirmed
+                    } else {
+                        transport::PromptOutcome::Rejected
+                    };
+                    composer::settle_pending(s, outcome);
                 }
                 s.composer.picker.set_attachments_supported(false);
                 s.status_permissions.online(false);

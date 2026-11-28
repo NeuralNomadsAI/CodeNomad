@@ -25,6 +25,7 @@ pub(crate) mod wake_lock;
 mod web_attachment;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use web_attachment::download as download_file;
+pub(crate) mod web_form_cap;
 pub(crate) mod workspace_open;
 pub(crate) use connection::configured_target;
 #[cfg(not(target_arch = "wasm32"))]
@@ -409,8 +410,11 @@ pub fn scene_is(name: &str) -> bool {
             == Some(name)
     }
 }
+/// Whether this machine's folder picker can name a folder of the server. A browser has none,
+/// and a phone's folders aren't the server's: there the launcher lists the server's own
+/// (`launcher/folders.rs`).
 pub fn folder_picker_available() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+    cfg!(not(any(target_arch = "wasm32", target_os = "android")))
 }
 pub fn browse(s: &mut crate::State, tx: &mut rune::Tx) {
     let scope = s.input_scope.clone();

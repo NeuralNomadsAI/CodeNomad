@@ -128,6 +128,8 @@ pub(super) async fn dispatch_marked(
         return Ok(());
     }
     if value["type"] == "instance.event"
+        && !(value["event"]["type"] == "session.moved"
+            && value["event"]["data"]["sessionID"] == b.session)
         && let Some(id) = crate::settings::provider_change(&value)
         && id == b.workspace
     {
@@ -138,6 +140,16 @@ pub(super) async fn dispatch_marked(
             },
         ))
         .await?;
+        if value["event"]["type"] == "server.connected" {
+            out.send(Input::Workspace(
+                epoch,
+                WorkspaceEvent::NativeStreamStatus {
+                    workspace_id: id.into(),
+                    connected: true,
+                },
+            ))
+            .await?;
+        }
     }
     if let Some(event) = parse_temporary_changed(&value) {
         out.send(Input::Workspace(epoch, event)).await?;

@@ -257,6 +257,8 @@ pub(crate) struct Recall {
     edit: TextEdit,
     draft: Draft,
     missing: bool,
+    preserve_attachments: bool,
+    fresh_shell_cleared: bool,
 }
 
 impl Recall {
@@ -451,12 +453,56 @@ pub(crate) fn restore(s: &mut State) {
         replace_edit(s, recall.edit);
         s.composer.draft = recall.draft;
         s.composer.attachments_missing = recall.missing;
+        if recall.fresh_shell_cleared {
+            s.composer.shell_mode = false;
+        }
     }
 }
 
 pub(super) fn replace_edit(s: &mut State, mut edit: TextEdit) {
     edit.focused = s.draft.focused;
     s.draft = edit;
+}
+
+pub(super) fn clear_fresh_shell(s: &mut State, expected_command: &str) -> bool {
+    if let Some(recall) = &mut s.composer.recall {
+        if recall.draft.resolve_shell(&recall.edit).as_deref() != Some(expected_command) {
+            return false;
+        }
+        recall.edit.clear();
+        recall
+            .draft
+            .attachments
+            .retain(|part| !matches!(part, Attachment::Pasted { .. }));
+        recall.fresh_shell_cleared = true;
+        return true;
+    }
+    if s.composer.draft.resolve_shell(&s.draft).as_deref() != Some(expected_command) {
+        return false;
+    }
+    s.draft.clear();
+    s.composer
+        .draft
+        .attachments
+        .retain(|part| !matches!(part, Attachment::Pasted { .. }));
+    s.composer.shell_mode = false;
+    s.composer.draft_was_empty.set(true);
+    true
+}
+
+pub(super) fn clear_recalled(s: &mut State) {
+    if let Some(recall) = s.composer.recall.take()
+        && (s.composer.shell_mode || recall.preserve_attachments)
+    {
+        for part in recall.draft.attachments {
+            if !matches!(part, Attachment::Pasted { .. })
+                && !s.composer.draft.attachments.contains(&part)
+            {
+                s.composer.draft.attachments.push(part);
+            }
+        }
+        s.composer.attachments_missing |= recall.missing;
+    }
 }
 
 pub(crate) fn available(s: &State) -> bool {
@@ -496,7 +542,7 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
             || !forced
                 && (!s.draft.text.trim().is_empty()
                     || s.draft.range() != (0, 0)
-                    || !s.composer.draft.attachments.is_empty()
+                    || (!s.composer.shell_mode && !s.composer.draft.attachments.is_empty())
                     || s.composer.attachments_missing))
     {
         return false;
@@ -516,7 +562,7 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
         _ => None,
     };
     if let Some(entry) = next {
-        let (mut edit, draft) = if entry.originates_in(&tab, &session) {
+        let (mut edit, draft) = if !s.composer.shell_mode && entry.originates_in(&tab, &session) {
             (entry.edit.clone(), entry.draft.clone())
         } else {
             let mut edit = TextEdit::default();
@@ -531,6 +577,8 @@ pub(crate) fn step(s: &mut State, older: bool, forced: bool, tx: &mut Tx) -> boo
                 edit: s.draft.clone(),
                 draft: s.composer.draft.clone(),
                 missing: s.composer.attachments_missing,
+                preserve_attachments: s.composer.shell_mode,
+                fresh_shell_cleared: false,
             });
         }
         edit.set_caret(edit.text.len());
