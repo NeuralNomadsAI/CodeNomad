@@ -22,7 +22,7 @@ test("empty memory still sends every recording rule and only its own key", async
   await f.sync()
   const input = f.calls[0] as { key: string; value: string }
   assert.equal(input.key, "codenomad.memory")
-  for (const text of ["user corrects", "preference", "unusual approach worked", "costly fact", "one piece", "before your final response", "one sentence", "reference entry", "instead of copying", "Read the relevant entry", "verify its claims"]) assert(input.value.includes(text), text)
+  for (const text of ["user corrects", "preference", "unusual approach worked", "costly fact", "one-off approval", "already fixed", "progress of ongoing work", "one piece", "before your final response", "one sentence", "reference entry", "instead of copying", "Read the relevant entry", "verify its claims"]) assert(input.value.includes(text), text)
   assert(input.value.includes('"global":[],"project":[]'))
   f.setTitles(null)
   await f.sync()

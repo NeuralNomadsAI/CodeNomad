@@ -26,7 +26,7 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
     };
     let chosen = workspace::right_panel_tab(s);
     let picker = shell::panel_tabs(
-        t("window.menu.rightPanel"),
+        t("instanceShell.rightPanel.tabs.ariaLabel"),
         &names[..rows],
         tabs.iter().position(|tab| *tab == chosen).unwrap_or(0),
         {
@@ -46,7 +46,7 @@ pub fn view(s: &State, width: f32, touch: bool, floating: bool) -> El {
         col()
             .full_width()
             .full_height()
-            .child(shell::header(floating, true, touch, [picker]))
+            .child(shell::right_panel_header(floating, true, touch, picker))
             .child(match chosen {
                 RightPanelTab::Files => {
                     crate::git::panel(s, width, crate::files::tree(s, width, touch)).remaining()

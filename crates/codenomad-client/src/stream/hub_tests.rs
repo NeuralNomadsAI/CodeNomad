@@ -1073,6 +1073,7 @@ fn overflow_preserves_pending_session_moved_and_signals_placement_and_close() {
             None,
             SubscriberSignals {
                 conversation: Some(("ws-1".into(), session.into())),
+                session_directory: None,
                 closed: Some(state.closed_signal()),
                 placement: state.placement_signal(),
                 inbox: Some(state.inbox.clone()),
@@ -1185,6 +1186,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
         None,
         SubscriberSignals {
             conversation: None,
+            session_directory: None,
             closed: Some(state.closed_signal()),
             placement: None,
             inbox: Some(state.inbox.clone()),
@@ -1243,6 +1245,7 @@ fn begin_close_signals_stream_closed_immediately_behind_queued_frames() {
         None,
         SubscriberSignals {
             conversation: None,
+            session_directory: None,
             closed: Some(state2.closed_signal()),
             placement: None,
             inbox: Some(state2.inbox.clone()),
@@ -1314,6 +1317,7 @@ fn chunk_guard_defers_inbox_fence_until_chunk_classification_finishes() {
         None,
         SubscriberSignals {
             conversation: Some(("ws-1".into(), "ses-1".into())),
+            session_directory: None,
             closed: Some(state.closed_signal()),
             placement: state.placement_signal(),
             inbox: Some(state.inbox.clone()),
@@ -1662,5 +1666,152 @@ fn broadcast_session_deleted_fires_hook_once_even_on_overflow() {
             _
         ))
     ));
+    shared.finish(&hub, false);
+}
+
+#[test]
+fn hub_broadcast_ignores_delayed_same_directory_session_moved_and_revokes_moves_away() {
+    let hub = Arc::new(Hub::default());
+    let (stop_tx, _stop_rx) = bounded(1);
+    let (_done_tx, done_rx) = bounded(1);
+    let (ev_tx, _ev_rx) = bounded(4);
+
+    let make_state_and_sub = |id: u64, dir: Option<&str>| {
+        let state = State::observing_preferences(ev_tx.clone(), Arc::new(|| {}));
+        let sub = Subscriber::with_signals(
+            id,
+            None,
+            None,
+            SubscriberSignals {
+                conversation: Some(("ws-1".into(), "ses-1".into())),
+                session_directory: dir.map(str::to_owned),
+                closed: Some(state.closed_signal()),
+                placement: state.placement_signal(),
+                inbox: Some(state.inbox.clone()),
+                session_deleted: None,
+                history_revision: Some(state.history_revision.clone()),
+                upstream: Some(state.upstream.clone()),
+                disconnect_mark: Some(state.disconnect_mark.clone()),
+            },
+        );
+        (state, sub)
+    };
+
+    // Subscriber already bound to review worktree vs subscriber still on main vs unbound directory.
+    let (state_review, sub_review) = make_state_and_sub(1, Some(r"D:\repo\review"));
+    let (state_main, sub_main) = make_state_and_sub(2, Some(r"D:\repo\main"));
+    let (state_unbound, sub_unbound) = make_state_and_sub(3, None);
+
+    let shared = Arc::new(SharedStream {
+        base: "http://127.0.0.1:6/".into(),
+        inner: Mutex::new(StreamInner {
+            phase: Phase::Connecting,
+            subscribers: vec![sub_review.clone(), sub_main.clone(), sub_unbound.clone()],
+            replays: HashMap::new(),
+            replays_overflowed: false,
+            chunk_active: false,
+            stop: Some(stop_tx),
+        }),
+        done: done_rx,
+    });
+    assert!(shared.mark_open());
+    for sub in [&sub_review, &sub_main, &sub_unbound] {
+        assert!(matches!(sub.pop(), Some(HubItem::Opened)));
+    }
+
+    // Delayed session.moved targeting review (with different Windows case/separator spelling).
+    let moved_to_review = r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","location":{"directory":"D:\\repo\\main"},"data":{"sessionID":"ses-1","location":{"directory":"d:/repo/review/"}}}}"#;
+    shared.broadcast_frame(&hub, "message".into(), moved_to_review.into());
+
+    assert!(
+        !state_review.is_placement_changed() && !state_review.placement_closed(),
+        "delayed session.moved into the bound directory must not revoke placement on the hub"
+    );
+    assert_eq!(state_review.history_revision.load(SeqCst), 0);
+    assert_eq!(state_review.inbox.ingress(), 0);
+    assert!(state_review.inbox.applied_caught_up());
+
+    assert!(
+        state_main.is_placement_changed() && state_main.placement_closed(),
+        "subscriber bound to old directory must have placement revoked immediately"
+    );
+    assert!(state_main.history_revision.load(SeqCst) > 0);
+    assert!(
+        state_unbound.is_placement_changed() && state_unbound.placement_closed(),
+        "subscriber without bound session_directory must fail-safely revoke placement"
+    );
+
+    // Popping and dispatching the queued frame on sub_review leaves placement open and emits no Native move.
+    let (item, mark) = sub_review.pop_marked().expect("queued frame");
+    assert_eq!(mark, 0);
+    let HubItem::Frame(frame) = item else {
+        panic!("expected frame");
+    };
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let mut backend = Backend::connect("http://127.0.0.1:6/", "").await.unwrap();
+            backend.workspace = "ws-1".into();
+            backend.session = "ses-1".into();
+            backend.session_directory = Some(r"D:\repo\review".into());
+            let (out, inbox) = bounded(4);
+            crate::stream::routing::dispatch_marked(
+                &backend,
+                1,
+                &out,
+                &state_review,
+                "stream-1",
+                &frame.0,
+                &frame.1,
+                mark,
+            )
+            .await
+            .unwrap();
+            assert!(!state_review.placement_closed());
+            assert_eq!(state_review.history_revision.load(SeqCst), 0);
+            while let Ok(input) = inbox.try_recv() {
+                assert!(
+                    !matches!(input, crate::recovery::Input::Native(_, _, _, ref native) if native["type"] == "session.moved")
+                );
+            }
+        });
+
+    // Foreign workspaceID or missing destination directory still revokes sub_review immediately.
+    for (label, frame) in [
+        (
+            "foreign-workspace",
+            r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-1","location":{"directory":"D:\\repo\\review","workspaceID":"ws-foreign"}}}}"#,
+        ),
+        (
+            "missing-directory",
+            r#"{"type":"instance.event","instanceId":"ws-1","event":{"type":"session.moved","data":{"sessionID":"ses-1","location":{}}}}"#,
+        ),
+    ] {
+        let (state_case, sub_case) = make_state_and_sub(10, Some(r"D:\repo\review"));
+        let (stop_c, _stop_c_rx) = bounded(1);
+        let (_done_c, done_c_rx) = bounded(1);
+        let shared_case = Arc::new(SharedStream {
+            base: "http://127.0.0.1:7/".into(),
+            inner: Mutex::new(StreamInner {
+                phase: Phase::Connecting,
+                subscribers: vec![sub_case.clone()],
+                replays: HashMap::new(),
+                replays_overflowed: false,
+                chunk_active: false,
+                stop: Some(stop_c),
+            }),
+            done: done_c_rx,
+        });
+        assert!(shared_case.mark_open());
+        shared_case.broadcast_frame(&hub, "message".into(), frame.into());
+        assert!(
+            state_case.is_placement_changed() && state_case.placement_closed(),
+            "{label}: hub must fail-safely revoke placement"
+        );
+        shared_case.finish(&hub, false);
+    }
+
     shared.finish(&hub, false);
 }

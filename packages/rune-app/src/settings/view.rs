@@ -8,6 +8,7 @@ use super::{
     info, notification_settings, opencode,
     preferences::{Owner, Preferences},
     providers, remote, render_with,
+    responsive::{NarrowState, NarrowView, Section, resolve_requested_section},
 };
 use crate::strings::t;
 use rune::{Cx, El, col, text};
@@ -33,18 +34,6 @@ enum AfterPaletteSave {
     Section(Section),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NarrowView {
-    List,
-    Detail,
-}
-
-impl Default for NarrowView {
-    fn default() -> Self {
-        Self::List
-    }
-}
-
 #[derive(Default)]
 pub(super) struct Window {
     shared: Rc<RefCell<Preferences>>,
@@ -53,8 +42,7 @@ pub(super) struct Window {
     confirm_close: Option<CloseConfirm>,
     after_palette_save: Option<(u64, AfterPaletteSave)>,
     closing: bool,
-    viewport_width: f32,
-    narrow_view: NarrowView,
+    narrow: NarrowState,
     general: super::general::Controls,
     transcript_picker: Cell<Option<super::TranscriptRow>>,
     behavior: super::behavior::General,
@@ -92,51 +80,6 @@ pub(super) struct CloseRequest {
     pub reopen: RefCell<Option<super::memory::editor::Editor>>,
     pub config_reopen: RefCell<Option<super::config_files::Editor>>,
     pub palette_reopen: RefCell<Option<super::general::Controls>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Section {
-    General,
-    Conversation,
-    OpenCode,
-    Notifications,
-    Voice,
-    Providers,
-    Missions,
-    Integrations,
-    Shortcuts,
-    Stats,
-    Remote,
-    ConfigFiles,
-    Advanced,
-    Info,
-}
-
-impl Default for Section {
-    fn default() -> Self {
-        Self::General
-    }
-}
-
-impl Section {
-    fn nav_key(self) -> &'static str {
-        match self {
-            Self::General => "settings-general",
-            Self::Conversation => "settings-conversation",
-            Self::OpenCode => "settings-opencode",
-            Self::Notifications => "settings-notifications",
-            Self::Voice => "settings-voice",
-            Self::Providers => "settings-providers",
-            Self::Missions => "settings-missions",
-            Self::Integrations => "settings-integrations",
-            Self::Shortcuts => "settings-hotkeys",
-            Self::Stats => "settings-stats",
-            Self::Remote => "settings-remote",
-            Self::ConfigFiles => "settings-config-files",
-            Self::Advanced => "settings-advanced",
-            Self::Info => "settings-info",
-        }
-    }
 }
 
 impl Window {
@@ -178,7 +121,7 @@ impl Window {
         self.close_request = Some(request);
         if let Some(editor) = editor {
             self.memory_editor = editor;
-            self.narrow_view = NarrowView::Detail;
+            self.narrow.open_detail();
             self.confirm_close = Some(CloseConfirm::Memory);
         }
         if let Some(editor) = self
@@ -188,7 +131,7 @@ impl Window {
         {
             self.config_files = editor;
             self.section = Section::ConfigFiles;
-            self.narrow_view = NarrowView::Detail;
+            self.narrow.open_detail();
             self.confirm_close = (self.config_files.dirty() && !self.config_files.busy())
                 .then_some(CloseConfirm::ConfigFiles);
         }
@@ -199,7 +142,7 @@ impl Window {
         {
             self.general = general;
             self.section = Section::General;
-            self.narrow_view = NarrowView::Detail;
+            self.narrow.open_detail();
             let prefs = self.shared.borrow();
             let saving = self.general.busy(&prefs);
             if saving {
@@ -212,56 +155,68 @@ impl Window {
     }
 
     fn is_narrow(&self) -> bool {
-        chrome::is_narrow(self.viewport_width)
+        self.narrow.is_narrow()
     }
 
     fn measure_viewport(&mut self, width: f32, tx: &mut rune::Tx) {
-        if (self.viewport_width - width).abs() < 0.5 {
-            tx.live_only();
-            return;
-        }
-        let was_wide = self.viewport_width >= chrome::NARROW_BREAKPOINT;
-        let was_narrow = self.is_narrow();
-        self.viewport_width = width;
-        let is_narrow = self.is_narrow();
-        if was_wide && is_narrow {
-            self.narrow_view = NarrowView::Detail;
-        }
-        if was_narrow != is_narrow {
-            tx.instant();
-        }
+        self.narrow.measure(width, tx);
     }
 
     fn return_to_narrow_list(&mut self, tx: &mut rune::Tx) {
-        self.narrow_view = NarrowView::List;
-        tx.focus(self.section.nav_key(), true);
+        self.narrow.return_to_list(self.section, tx);
+    }
+
+    fn apply_requested_section(&mut self, requested: Section, tx: Option<&mut rune::Tx>) -> bool {
+        if self.config_files.busy() || self.confirm_close.is_some() || self.closing {
+            return false;
+        }
+        let target = {
+            let prefs = self.shared.borrow();
+            resolve_requested_section(requested, self.can_open_section(&prefs, requested))
+        };
+        if target != self.section {
+            {
+                let prefs = self.shared.borrow();
+                if self.general.busy(&prefs) {
+                    self.after_palette_save =
+                        Some((prefs.binding_epoch(), AfterPaletteSave::Section(target)));
+                    self.narrow.open_detail();
+                    return true;
+                }
+            }
+            if self.general.dirty() {
+                self.pending_section = Some(target);
+                self.narrow.open_detail();
+                return true;
+            }
+            self.switch_section(target);
+        }
+        if let Some(tx) = tx {
+            self.narrow.open_detail_focus(tx);
+        } else {
+            self.narrow.open_detail();
+        }
+        true
     }
 
     fn select_nav_section(&mut self, key: &'static str, tx: Option<&mut rune::Tx>) {
-        if key == "settings-config-files"
+        let Some(candidate) = Section::from_nav_key(key) else {
+            return;
+        };
+        if candidate == Section::ConfigFiles
             && !self.can_open_section(&self.shared.borrow(), Section::ConfigFiles)
         {
             return;
         }
-        if self.config_files.busy() {
+        let next = if candidate == Section::Stats && !super::stats::supported(&self.shared.borrow())
+        {
+            Section::General
+        } else {
+            candidate
+        };
+        if next != self.section && self.config_files.busy() {
             return;
         }
-        let next = match key {
-            "settings-opencode" => Section::OpenCode,
-            "settings-conversation" => Section::Conversation,
-            "settings-notifications" => Section::Notifications,
-            "settings-voice" => Section::Voice,
-            "settings-providers" => Section::Providers,
-            "settings-missions" => Section::Missions,
-            "settings-integrations" => Section::Integrations,
-            "settings-hotkeys" => Section::Shortcuts,
-            "settings-stats" if super::stats::supported(&self.shared.borrow()) => Section::Stats,
-            "settings-remote" => Section::Remote,
-            "settings-config-files" => Section::ConfigFiles,
-            "settings-advanced" => Section::Advanced,
-            "settings-info" => Section::Info,
-            _ => Section::General,
-        };
         if next != self.section {
             let prefs = self.shared.borrow();
             if self.general.busy(&prefs) {
@@ -279,9 +234,10 @@ impl Window {
             self.switch_section(next);
         }
         if self.is_narrow() {
-            self.narrow_view = NarrowView::Detail;
             if let Some(tx) = tx {
-                tx.focus("settings-narrow-back", true);
+                self.narrow.open_detail_focus(tx);
+            } else {
+                self.narrow.open_detail();
             }
         }
     }
@@ -294,15 +250,13 @@ impl Window {
         self.shortcut_capture = Default::default();
         self.behavior.close();
         self.section = next;
+        let mut prefs = self.shared.borrow_mut();
         if self.section != Section::OpenCode {
             self.opencode = opencode::Status::default();
             self.logging.close();
-            self.shared.borrow_mut().hide_opencode();
+            prefs.hide_opencode();
         }
-        self.shared
-            .borrow_mut()
-            .memory
-            .show(self.section == Section::General);
+        prefs.memory.show(self.section == Section::General);
         self.memory_help.clear();
         if self.section != Section::Providers {
             self.providers.suspend();
@@ -312,7 +266,7 @@ impl Window {
         }
         if self.section != Section::Voice {
             self.speech.close();
-            self.shared.borrow_mut().show_speech(false);
+            prefs.show_speech(false);
         }
         if self.section != Section::Integrations {
             self.integrations.suspend();
@@ -452,7 +406,7 @@ impl Window {
             prefs.show_speech(false);
             prefs.memory.show(false);
             prefs.provider_target = None;
-            prefs.open_providers = false;
+            prefs.open_section = None;
         }
         if !self.token.take().is_some_and(|token| token.get()) {
             super::settle_close(&self.shared, warn);
@@ -472,113 +426,36 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
     s.general
         .close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, system_more, true, |cx| {
-        let general_label = t("settings.nav.general");
-        let opencode_label = t("settings.nav.opencode");
-        let notifications_label = t("settings.nav.notifications");
-        let voice_label = t("settings.nav.voice");
-        let providers_label = t("settings.nav.providers");
-        let missions_label = t("settings.nav.missions");
-        let integrations_label = t("settings.nav.integrations");
-        let stats_label = t("settings.usage.title");
-        let conversation_label = t("settings.nav.chat");
-        let shortcuts_label = t("settings.nav.hotkeys");
-        let remote_label = t("settings.nav.remote");
-        let config_label = t("settings.nav.configFiles");
-        let advanced_label = t("settings.nav.advanced");
-        let info_label = t("settings.nav.info");
-        let section = match s.section {
-            Section::General => general_label,
-            Section::Conversation => conversation_label,
-            Section::OpenCode => opencode_label,
-            Section::Notifications => notifications_label,
-            Section::Voice => voice_label,
-            Section::Providers => providers_label,
-            Section::Missions => missions_label,
-            Section::Integrations => integrations_label,
-            Section::Shortcuts => shortcuts_label,
-            Section::Stats => stats_label,
-            Section::Remote => remote_label,
-            Section::ConfigFiles => config_label,
-            Section::Advanced => advanced_label,
-            Section::Info => info_label,
-        };
+        let section = s.section.label();
         let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
         let rtl = rune_theme_codenomad::catalogue::direction(locale) == "rtl";
         let touch = cx.touch_controls();
-        let measured_width = cx
-            .layout_size("preferences-frame")
-            .map(|[w, _]| w)
-            .unwrap_or(0.0);
-        let narrow = chrome::is_narrow(if s.viewport_width > 0.0 {
-            s.viewport_width
-        } else {
-            measured_width
-        });
+        let narrow = s.is_narrow();
         let nav_items: Vec<_> = [
-            (
-                "settings-general",
-                general_label,
-                s.section == Section::General,
-            ),
-            (
-                "settings-conversation",
-                conversation_label,
-                s.section == Section::Conversation,
-            ),
-            (
-                "settings-opencode",
-                opencode_label,
-                s.section == Section::OpenCode,
-            ),
-            (
-                "settings-notifications",
-                notifications_label,
-                s.section == Section::Notifications,
-            ),
-            ("settings-voice", voice_label, s.section == Section::Voice),
-            (
-                "settings-providers",
-                providers_label,
-                s.section == Section::Providers,
-            ),
-            (
-                "settings-missions",
-                missions_label,
-                s.section == Section::Missions,
-            ),
-            (
-                "settings-integrations",
-                integrations_label,
-                s.section == Section::Integrations,
-            ),
-            ("settings-stats", stats_label, s.section == Section::Stats),
-            (
-                "settings-hotkeys",
-                shortcuts_label,
-                s.section == Section::Shortcuts,
-            ),
-            (
-                "settings-remote",
-                remote_label,
-                s.section == Section::Remote,
-            ),
-            (
-                "settings-advanced",
-                advanced_label,
-                s.section == Section::Advanced,
-            ),
+            Section::General,
+            Section::Conversation,
+            Section::OpenCode,
+            Section::Notifications,
+            Section::Voice,
+            Section::Providers,
+            Section::Missions,
+            Section::Integrations,
+            Section::Stats,
+            Section::Shortcuts,
+            Section::Remote,
+            Section::Advanced,
         ]
         .into_iter()
-        .filter(|(key, _, _)| *key != "settings-stats" || super::stats::supported(&prefs))
-        .chain(s.can_open_section(&prefs, Section::ConfigFiles).then_some((
-            "settings-config-files",
-            config_label,
-            s.section == Section::ConfigFiles,
-        )))
-        .chain([("settings-info", info_label, s.section == Section::Info)])
+        .filter(|&item| item != Section::Stats || super::stats::supported(&prefs))
+        .chain(
+            s.can_open_section(&prefs, Section::ConfigFiles)
+                .then_some(Section::ConfigFiles),
+        )
+        .chain([Section::Info])
+        .map(|item| (item.nav_key(), item.label(), s.section == item))
         .collect();
         let mut layers = Vec::new();
-        let show_detail = !narrow || s.narrow_view == NarrowView::Detail;
+        let show_detail = !narrow || s.narrow.view() == NarrowView::Detail;
         let detail = show_detail.then(|| {
             let status = if let Some(error) = match s.section {
                 Section::General => prefs.general_error(),
@@ -676,7 +553,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             cx.window_layout_with("transcript-presets", |rect| {
                                 chrome::preset_columns(rect[2])
                             })
-                            .unwrap_or_else(|| chrome::preset_columns(s.viewport_width)),
+                            .unwrap_or_else(|| chrome::preset_columns(s.narrow.width())),
                             &mut layers,
                             |s: &mut Window, row| s.transcript_picker.set(row),
                             |s: &mut Window, row, mode| {
@@ -928,8 +805,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             drop(prefs);
                             s.switch_section(next_section);
                             if s.is_narrow() {
-                                s.narrow_view = NarrowView::Detail;
-                                tx.focus("settings-narrow-back", true);
+                                s.narrow.open_detail_focus(tx);
                             }
                         }
                     }
@@ -966,7 +842,6 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                         t("settings.navigationAriaLabel"),
                         nav_items,
                         touch,
-                        rtl,
                         |s: &mut Window, key, tx| s.select_nav_section(key, Some(tx)),
                     ),
                 ),

@@ -70,7 +70,8 @@ pub(super) fn view(s: &State, ui: &Ui) -> El {
         }
     }
     if ui.loading() {
-        body = body.child(theme::note(t("instanceInfo.loading"), "status"));
+        body =
+            body.child(theme::note(t("instanceInfo.loading"), "status").key("git-detail-loading"));
     }
     body
 }

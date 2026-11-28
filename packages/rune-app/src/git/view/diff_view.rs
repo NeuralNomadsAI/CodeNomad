@@ -29,11 +29,13 @@ pub(crate) fn reader(s: &State) -> El {
         ),
     };
     let image = matches!(&ui.reader.content, Some(Diff::Image { .. }));
-    let mut subtitle = theme::clipped(format!("{} · {label}", ui.slug), TextRole::Label);
+    let mut subtitle =
+        theme::clipped(format!("{} · {label}", ui.slug), TextRole::Label).content_direction();
     if let Some(directory) = ui.tree().map(|tree| tree.directory.as_str()) {
         subtitle = subtitle.help(directory);
     }
     let mut header = theme::chrome()
+        .key("git-diff-header")
         .child(
             col()
                 .remaining()
@@ -138,34 +140,38 @@ pub(crate) fn reader(s: &State) -> El {
         .child(header);
     let lane = ui.requests.slot(Lane::Preview);
     if let Some(error) = &lane.error {
-        root = root.child(theme::note(error.localized(), "alert")).child(
-            layout::action_row().pad(Space::Md).child(
-                button(
-                    s,
-                    t("instanceShell.rightPanel.actions.refresh"),
-                    Neutral,
-                    !ui.online,
-                    |ui, _| {
-                        ui.dirty(&[Lane::Preview]);
-                        ui.demand();
-                    },
-                )
-                .key("git-diff-retry"),
-            ),
-        );
+        root = root
+            .child(theme::note(error.localized(), "alert").key("git-diff-error"))
+            .child(
+                layout::action_row().pad(Space::Md).child(
+                    button(
+                        s,
+                        t("instanceShell.rightPanel.actions.refresh"),
+                        Neutral,
+                        !ui.online,
+                        |ui, _| {
+                            ui.dirty(&[Lane::Preview]);
+                            ui.demand();
+                        },
+                    )
+                    .key("git-diff-retry"),
+                ),
+            );
     }
     if let Some(notice) = ui.reader.notice {
-        root = root.child(theme::note(
-            t(match notice {
+        root = root.child(
+            theme::diff_notice(t(match notice {
                 Hidden::Whitespace => "instanceShell.diff.whitespaceOnly",
                 Hidden::Invisible => "instanceShell.diff.lineEndingsOnly",
-            }),
-            "status",
-        ));
+            }))
+            .key("git-diff-notice"),
+        );
     }
     let target = target.clone();
     root.child(match &ui.reader.content {
-        Some(Diff::Binary) => theme::note(t("instanceShell.gitChanges.binaryViewer"), "status"),
+        Some(Diff::Binary) => {
+            theme::note(t("instanceShell.gitChanges.binaryViewer"), "status").key("git-diff-binary")
+        }
         Some(Diff::Image { .. }) => image_diff(ui, path, split),
         Some(Diff::Text { .. }) => {
             let can_insert = !s.screen.is_launcher();
@@ -174,12 +180,14 @@ pub(crate) fn reader(s: &State) -> El {
             let action = selected
                 .filter(|range| range.start.side == Side::New && range.end.side == Side::New)
                 .map(|range| {
-                    theme::tools().child(theme::button(
-                        t("instanceShell.gitChanges.actions.insertContext"),
-                        Flat,
-                        false,
-                        move |s, tx| comment(s, range, tx),
-                    ))
+                    theme::tools()
+                        .key("git-diff-insert-context")
+                        .child(theme::button(
+                            t("instanceShell.gitChanges.actions.insertContext"),
+                            Flat,
+                            false,
+                            move |s, tx| comment(s, range, tx),
+                        ))
                 })
                 .unwrap_or_else(el);
             col()
@@ -208,7 +216,9 @@ pub(crate) fn reader(s: &State) -> El {
                     },
                 ))
         }
-        None if lane.error.is_none() => theme::note(t("instanceInfo.loading"), "status"),
+        None if lane.error.is_none() => {
+            theme::note(t("instanceInfo.loading"), "status").key("git-diff-loading")
+        }
         None => el(),
     })
 }
