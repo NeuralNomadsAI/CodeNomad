@@ -41,6 +41,7 @@ struct FakeNative {
     next_aut: usize,
     fail_create_from: Option<usize>,
     fail_create_coordinator: HashSet<String>,
+    fail_create_uncertain: bool,
     calls: Vec<String>,
 }
 
@@ -182,6 +183,9 @@ async fn spawn_fake_native(state: Arc<Mutex<FakeNative>>) -> std::net::SocketAdd
                         Json(json!({ "output": { "mission": m } })).into_response()
                     }
                     "create" => {
+                        if g.fail_create_uncertain {
+                            return (Status::INTERNAL_SERVER_ERROR, Json(json!({ "error": "boom" }))).into_response();
+                        }
                         let req = input["requestID"].as_str().unwrap_or_default();
                         let mid = format!("msn_{}", run::token(&format!("{}\0{req}", g.project_id), 24));
                         if let Some(explicit) = input["coordinatorSessionID"].as_str()
@@ -856,17 +860,7 @@ async fn remote_control_admits_calendar_routes_and_rejects_unlisted_actions() {
     let browser_cookie = pair_b.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned();
 
     let cal_root = format!("{base}/api/workspaces/{wid}/missions/calendars");
-    // Paired browser admitted on GET /calendars.
-    let browser_get = client
-        .get(&cal_root)
-        .header(header::HOST, host)
-        .header(header::ORIGIN, &origin)
-        .header(header::COOKIE, &browser_cookie)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(browser_get.status(), Status::OK);
-    // Unauthenticated rejected with 401.
+    // Unauthenticated server-device request rejected with 401.
     let unauth = client
         .get(&cal_root)
         .header(header::HOST, host)
@@ -876,55 +870,55 @@ async fn remote_control_admits_calendar_routes_and_rejects_unlisted_actions() {
         .unwrap();
     assert_eq!(unauth.status(), Status::UNAUTHORIZED);
 
-    // Paired server device admitted on GET, PUT, POST /{pause|resume}, DELETE.
-    let get_res = client
+    // Paired browser is admitted on GET, PUT, POST /{pause|resume}, DELETE.
+    let browser_get = client
         .get(&cal_root)
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
         .send()
         .await
         .unwrap();
-    assert_eq!(get_res.status(), Status::OK);
+    assert_eq!(browser_get.status(), Status::OK);
 
     let cron = json!({ "when": [{ "kind": "cron", "expression": "0 9 * * *", "zone": "UTC" }] });
-    let put_res = client
+    let browser_put = client
         .put(format!("{cal_root}/cal_remote"))
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
-        .json(&json!({ "configuration": sample_config("Remote", cron) }))
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
+        .json(&json!({ "configuration": sample_config("Remote", cron.clone()) }))
         .send()
         .await
         .unwrap();
-    assert_eq!(put_res.status(), Status::OK);
+    assert_eq!(browser_put.status(), Status::OK);
 
-    let pause_res = client
+    let browser_pause = client
         .post(format!("{cal_root}/cal_remote/pause"))
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
         .send()
         .await
         .unwrap();
-    assert_eq!(pause_res.status(), Status::OK);
+    assert_eq!(browser_pause.status(), Status::OK);
 
-    let resume_res = client
+    let browser_resume = client
         .post(format!("{cal_root}/cal_remote/resume"))
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
         .send()
         .await
         .unwrap();
-    assert_eq!(resume_res.status(), Status::OK);
+    assert_eq!(browser_resume.status(), Status::OK);
 
-    // Unknown action & unlisted method rejected by Remote Control catalog with 404.
+    // Unknown action & unlisted method rejected for browsers with 404.
     let bad_action = client
         .post(format!("{cal_root}/cal_remote/unknown"))
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
         .send()
         .await
         .unwrap();
@@ -933,22 +927,95 @@ async fn remote_control_admits_calendar_routes_and_rejects_unlisted_actions() {
     let bad_method = client
         .post(&cal_root)
         .header(header::HOST, host)
-        .header("x-codenomad-server-request", "1")
-        .header(header::COOKIE, &cookie)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
         .send()
         .await
         .unwrap();
     assert_eq!(bad_method.status(), Status::NOT_FOUND);
 
-    let del_res = client
-        .delete(format!("{cal_root}/cal_remote"))
+    // Paired server device is admitted ONLY on GET /calendars (TS gate.ts parity);
+    // PUT/DELETE and POST /{pause|resume} return 404 with or without server header.
+    let srv_get = client
+        .get(&cal_root)
         .header(header::HOST, host)
         .header("x-codenomad-server-request", "1")
         .header(header::COOKIE, &cookie)
         .send()
         .await
         .unwrap();
-    assert_eq!(del_res.status(), Status::OK);
+    assert_eq!(srv_get.status(), Status::OK);
+
+    for (method, url, body) in [
+        (Method::PUT, format!("{cal_root}/cal_srv"), Some(json!({ "configuration": sample_config("Srv", cron) }))),
+        (Method::POST, format!("{cal_root}/cal_remote/pause"), None),
+        (Method::POST, format!("{cal_root}/cal_remote/resume"), None),
+        (Method::DELETE, format!("{cal_root}/cal_remote"), None),
+    ] {
+        // With x-codenomad-server-request header
+        let mut req1 = client
+            .request(method.clone(), &url)
+            .header(header::HOST, host)
+            .header("x-codenomad-server-request", "1")
+            .header(header::COOKIE, &cookie);
+        if let Some(b) = &body {
+            req1 = req1.json(b);
+        }
+        assert_eq!(req1.send().await.unwrap().status(), Status::NOT_FOUND, "server header {method} {url}");
+
+        // Without server header, using server-paired cookie + Origin
+        let mut req2 = client
+            .request(method.clone(), &url)
+            .header(header::HOST, host)
+            .header(header::ORIGIN, &origin)
+            .header(header::COOKIE, &cookie);
+        if let Some(b) = &body {
+            req2 = req2.json(b);
+        }
+        assert_eq!(req2.send().await.unwrap().status(), Status::NOT_FOUND, "server cookie {method} {url}");
+    }
+
+    let browser_del = client
+        .delete(format!("{cal_root}/cal_remote"))
+        .header(header::HOST, host)
+        .header(header::ORIGIN, &origin)
+        .header(header::COOKIE, &browser_cookie)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(browser_del.status(), Status::OK);
 
     task.abort();
+}
+
+#[tokio::test]
+async fn uncertain_calendar_creation_retains_worktree_deletion_fence() {
+    let (dir, dir_str, state) = build_fixture("missions-cal-uncertain-fence");
+    state.lock().unwrap().fail_create_uncertain = true;
+    let addr = spawn_fake_native(state.clone()).await;
+    let (app, wid, _) = start_app(&dir, &dir_str, addr).await;
+    let (base, server_task) = spawn_http(app.clone()).await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let root = format!("{base}/api/workspaces/{wid}/missions/calendars");
+    let cron = json!({ "when": [{ "kind": "cron", "expression": "0 9 * * *", "zone": "UTC" }] });
+
+    let res = client
+        .put(format!("{root}/cal_uncertain"))
+        .json(&json!({ "configuration": sample_config("Uncertain", cron) }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), Status::SERVICE_UNAVAILABLE);
+    assert_eq!(res.json::<Value>().await.unwrap()["code"], "calendar-unavailable");
+
+    // The worktree deletion fence stays held by `app.mission_creations` until reconciliation.
+    let checkout_id = crate::worktrees::fence::identity(&dir);
+    let blocked = tokio::time::timeout(
+        Duration::from_millis(120),
+        crate::worktrees::fence::block(&[checkout_id]),
+    )
+    .await;
+    assert!(blocked.is_err(), "uncertain calendar creation must retain worktree deletion permit");
+
+    server_task.abort();
 }

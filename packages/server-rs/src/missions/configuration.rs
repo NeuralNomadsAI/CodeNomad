@@ -621,19 +621,8 @@ pub(super) fn launch(v: &Value) -> R<Value> {
 }
 /// Stored schedules and watched events of a launch policy (`missionLaunchModel`).
 fn launch_model(launch: &Value) -> (usize, Vec<Value>) {
-    if let Some(when) = launch["when"].as_array() {
-        let criteria: &[Value] = if when.len() == 1 && when[0]["kind"] == "now" { &[] } else { when };
-        let schedules = criteria.iter().filter(|v| is_schedule(v)).count();
-        return (schedules, criteria.iter().filter(|v| !is_schedule(v)).cloned().collect());
-    }
-    let t = &launch["timing"];
-    let schedules = match t["kind"].as_str() {
-        Some("immediate") => 0,
-        Some("multi") => t["calendars"].as_array().map_or(0, Vec::len),
-        _ => 1,
-    };
-    let events = if launch["condition"].is_null() { vec![] } else { vec![launch["condition"].clone()] };
-    (schedules, events)
+    let model = launch_model_full(launch);
+    (model.schedules.len(), model.events)
 }
 pub fn requires_calendar(launch: &Value) -> bool {
     let (schedules, events) = launch_model(launch);

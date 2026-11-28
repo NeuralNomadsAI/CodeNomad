@@ -233,17 +233,62 @@ async fn create_once(
     Ok(result)
 }
 
-/// Prepares an ordinary prepared Mission for a programmed calendar without
-/// registering an HTTP creation receipt, sharing `create_once`'s capability,
-/// attachment, fence, acknowledgement and permission confirmation checks.
+/// Prepares an ordinary prepared Mission for a programmed calendar inside a
+/// detached task that retains the worktree-deletion permit in `mission_creations`
+/// on uncertain outcomes, matching `create_once` and TS `prepareMissionCreation`.
 pub(super) async fn prepare_for_calendar(
-    app: &App,
+    app: &Shared,
     base_scope: &Scope,
     request_id: &str,
     config: &Value,
     coordinator_session_id: Option<&str>,
     lifetime: &CancellationToken,
 ) -> Result<String, Error> {
+    let request = js_trim(request_id).to_owned();
+    let wid = base_scope.workspace.id.to_string();
+    let raw = json!({
+        "requestId": request,
+        "objective": config["objective"],
+        "title": config["title"],
+        "notes": config["notes"],
+        "template": config["template"],
+        "profiles": config["profiles"],
+        "taskMode": config["taskMode"],
+        "coordinatorGoal": config["coordinatorGoal"],
+        "coordinatorSessionId": coordinator_session_id,
+        "directory": base_scope.dir,
+    });
+    app.mission_creations.register(&wid, &request, &raw)?;
+    let key = (wid, request);
+    let app_task = app.clone();
+    let scope = base_scope.clone();
+    let config = config.clone();
+    let coordinator = coordinator_session_id.map(str::to_owned);
+    let child = lifetime.child_token();
+    let _disconnect = child.clone().drop_guard();
+    // Detach so client disconnect cannot drop an already dispatched creation or its fence permit.
+    let result = tokio::spawn(async move {
+        let result =
+            prepare_for_calendar_once(&app_task, &key, scope, &config, coordinator.as_deref(), child).await;
+        app_task.mission_creations.finish(&key, &result);
+        result
+    })
+    .await
+    .map_err(|_| creation_admission::uncertain())??;
+    result["mission"]["id"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(creation_admission::uncertain)
+}
+
+async fn prepare_for_calendar_once(
+    app: &App,
+    key: &(String, String),
+    mut scope: Scope,
+    config: &Value,
+    coordinator_session_id: Option<&str>,
+    lifetime: CancellationToken,
+) -> Result<Value, Error> {
     if lifetime.is_cancelled() {
         return Err(creation_admission::unavailable());
     }
@@ -252,9 +297,8 @@ pub(super) async fn prepare_for_calendar(
     let task_mode = config["taskMode"].as_str().unwrap_or("native");
     let options = creation_admission::options(Some(task_mode), None, coordinator_session_id)?;
     let profiles = creation_profiles(template, config.get("profiles").cloned())?;
-    let mut scope = base_scope.clone();
     let mut input = json!({
-        "requestID": js_trim(request_id),
+        "requestID": key.1,
         "objective": objective,
         "template": template,
         "taskMode": options.task_mode,
@@ -294,7 +338,7 @@ pub(super) async fn prepare_for_calendar(
     {
         input["permissions"] = block;
     }
-    let _permit = scope.permit().ok_or_else(|| {
+    let permit = scope.permit().ok_or_else(|| {
         (
             Status::CONFLICT,
             Json(json!({"error":"Worktree deletion is in progress","code":"creation-worktree-deleting"})),
@@ -304,8 +348,9 @@ pub(super) async fn prepare_for_calendar(
     if lifetime.is_cancelled() {
         return Err(creation_admission::unavailable());
     }
-    let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, js_trim(request_id)), 24));
-    let attempt = Attempt { scope, input, mission };
+    let mission = format!("msn_{}", token(&format!("{}\0{}", scope.project, key.1), 24));
+    let attempt = Arc::new(Attempt { scope, input, mission });
+    app.mission_creations.dispatched(key, attempt.clone(), permit)?;
     let result = attempt.create(app).await?;
     if !attempt.acknowledgement(&result) || attempt.scope.refresh(app).await.is_err() {
         return Err(creation_admission::uncertain());
@@ -313,10 +358,7 @@ pub(super) async fn prepare_for_calendar(
     if result["acknowledgement"] == "fresh" {
         attempt.confirm_permissions(app, &result["mission"], false).await?;
     }
-    result["mission"]["id"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(creation_admission::uncertain)
+    Ok(result)
 }
 
 fn valid_text(value: &str, min: usize, max: usize) -> bool {

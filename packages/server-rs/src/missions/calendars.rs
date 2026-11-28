@@ -191,7 +191,7 @@ async fn rpc_mission(app: &App, scope: &Scope, mission_id: &str) -> Result<Optio
 }
 
 async fn prepare_mission(
-    app: &App,
+    app: &Shared,
     scope: &Scope,
     config: &Value,
     request: &str,
@@ -206,7 +206,7 @@ async fn prepare_mission(
 }
 
 struct SaveContext<'a> {
-    app: &'a App,
+    app: &'a Shared,
     scope: &'a Scope,
     calendars: &'a NativeCalendars<'a>,
     cancel: &'a CancellationToken,
@@ -244,8 +244,7 @@ async fn save_calendar(
         && status.is_success()
     {
         let named = body.get("data").unwrap_or(&body);
-        if named["projectID"] == scope.project && !bridge::matches_execution(&config["profiles"]["coordinator"], named)
-        {
+        if !bridge::matches_execution(&config["profiles"]["coordinator"], named) {
             return Ok(Some(Refused::CoordinatorProfile));
         }
     }
@@ -357,16 +356,12 @@ async fn take_over_legacy(ctx: &SaveContext<'_>, schedule: &Value) -> Result<(),
 }
 
 async fn run_operation(
-    app: &App,
+    app: &Shared,
     workspace_id: &str,
     directory: Option<&str>,
     operation: Operation,
     cancel: &CancellationToken,
 ) -> Result<Outcome, CalendarError> {
-    if cancel.is_cancelled() {
-        return Err(CalendarError::Unavailable);
-    }
-    let _slot = app.mission_control_slot.acquire().await.map_err(|_| CalendarError::Unavailable)?;
     if cancel.is_cancelled() {
         return Err(CalendarError::Unavailable);
     }
