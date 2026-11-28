@@ -427,35 +427,85 @@ impl PaletteMutation {
                 let effective_name = live_preset
                     .as_ref()
                     .map_or(name.as_str(), |p| p.name.as_str());
-                let merged_colors = match (live_preset.as_ref(), edited_fields.as_deref()) {
-                    (Some(live), Some(fields)) if !fields.is_empty() => {
-                        let mut merged = live.colors.clone();
-                        for &field in fields {
-                            if let Some(updated) = merged.with(field, colors.get(field)) {
-                                merged = updated;
-                            }
-                        }
-                        merged
+                let delta_fields = match (live_preset.as_ref(), edited_fields.as_deref()) {
+                    (Some(live), Some(fields)) if live.dark == *dark && !fields.is_empty() => {
+                        Some((live, fields))
                     }
-                    _ => colors.clone(),
+                    _ => None,
                 };
-                let colors_json = merged_colors.to_json();
-                let scheme = json!({
-                    "id": "custom",
-                    "appearance": mode,
-                    "colors": colors_json,
-                });
-                patch["colorScheme"] = scheme.clone();
-                patch["colorSchemePresets"][preset_id] = json!({
-                    "name": effective_name,
-                    "appearance": mode,
-                    "colors": colors_json,
-                });
-                patch["activeColorSchemePresetId"] = json!(preset_id);
-                patch["appearancePreferences"][mode] = json!({
-                    "scheme": scheme,
-                    "presetId": preset_id,
-                });
+                if let Some((live, fields)) = delta_fields {
+                    let mut delta = serde_json::Map::new();
+                    let mut merged = live.colors.clone();
+                    for &field in fields {
+                        let hex = colors.get(field);
+                        delta.insert(field.key().to_owned(), json!(hex));
+                        if let Some(updated) = merged.with(field, hex) {
+                            merged = updated;
+                        }
+                    }
+                    let delta_colors = Value::Object(delta);
+                    let full_colors = merged.to_json();
+                    let top_matches_live = snapshot["activeColorSchemePresetId"].as_str()
+                        == Some(preset_id.as_str())
+                        && snapshot["colorScheme"]["id"].as_str() == Some("custom")
+                        && snapshot["colorScheme"]["appearance"].as_str() == Some(mode)
+                        && ColorSchemeColors::from_json(&snapshot["colorScheme"]["colors"])
+                            .as_ref()
+                            == Some(&live.colors);
+                    let slot = &snapshot["appearancePreferences"][mode];
+                    let slot_matches_live = slot["presetId"].as_str() == Some(preset_id.as_str())
+                        && slot["scheme"]["id"].as_str() == Some("custom")
+                        && slot["scheme"]["appearance"].as_str() == Some(mode)
+                        && ColorSchemeColors::from_json(&slot["scheme"]["colors"]).as_ref()
+                            == Some(&live.colors);
+                    patch["colorScheme"] = json!({
+                        "id": "custom",
+                        "appearance": mode,
+                        "colors": if top_matches_live { &delta_colors } else { &full_colors },
+                    });
+                    patch["colorSchemePresets"][preset_id] = json!({
+                        "colors": delta_colors,
+                    });
+                    patch["activeColorSchemePresetId"] = json!(preset_id);
+                    patch["appearancePreferences"][mode] = json!({
+                        "scheme": {
+                            "id": "custom",
+                            "appearance": mode,
+                            "colors": if slot_matches_live { &delta_colors } else { &full_colors },
+                        },
+                        "presetId": preset_id,
+                    });
+                } else {
+                    let merged_colors = match (live_preset.as_ref(), edited_fields.as_deref()) {
+                        (Some(live), Some(fields)) if !fields.is_empty() => {
+                            let mut merged = live.colors.clone();
+                            for &field in fields {
+                                if let Some(updated) = merged.with(field, colors.get(field)) {
+                                    merged = updated;
+                                }
+                            }
+                            merged
+                        }
+                        _ => colors.clone(),
+                    };
+                    let colors_json = merged_colors.to_json();
+                    let scheme = json!({
+                        "id": "custom",
+                        "appearance": mode,
+                        "colors": colors_json,
+                    });
+                    patch["colorScheme"] = scheme.clone();
+                    patch["colorSchemePresets"][preset_id] = json!({
+                        "name": effective_name,
+                        "appearance": mode,
+                        "colors": colors_json,
+                    });
+                    patch["activeColorSchemePresetId"] = json!(preset_id);
+                    patch["appearancePreferences"][mode] = json!({
+                        "scheme": scheme,
+                        "presetId": preset_id,
+                    });
+                }
             }
             PaletteOp::SelectBuiltIn { .. }
             | PaletteOp::SelectCustom { .. }
@@ -990,6 +1040,17 @@ pub(super) fn options(
     out
 }
 
+pub(super) fn option_has_override(option: &PaletteOption, has_saved_override: bool) -> bool {
+    let Some(id) = option.builtin_id else {
+        return false;
+    };
+    if id == "custom" {
+        option.colors != option.original_colors
+    } else {
+        has_saved_override || option.colors != option.original_colors
+    }
+}
+
 pub(super) fn next_preset_name(source_name: &str, existing_names: &[String]) -> String {
     let source = source_name.trim();
     let source = if source.is_empty() { "Custom" } else { source };
@@ -1088,5 +1149,251 @@ mod tests {
             legacy_config: Value::Null,
         };
         assert!(create.reject_before_send(&state));
+    }
+
+    fn merge_patch(target: &Value, patch: &Value) -> Value {
+        let Some(patch_obj) = patch.as_object() else {
+            return patch.clone();
+        };
+        let mut out = target.as_object().cloned().unwrap_or_default();
+        for (key, value) in patch_obj {
+            if value.is_null() {
+                out.remove(key);
+            } else {
+                let base = out.get(key).cloned().unwrap_or(Value::Null);
+                out.insert(key.clone(), merge_patch(&base, value));
+            }
+        }
+        Value::Object(out)
+    }
+
+    #[test]
+    fn save_preset_emits_per_key_color_delta_preserving_concurrent_edits() {
+        let base = ColorSchemeColors::default_custom();
+        let client_a_colors = base.with(ColorField::AccentPrimary, "#FF2266").unwrap();
+        let client_b_colors = base.with(ColorField::BorderBase, "#33AA99").unwrap();
+        let snapshot = json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": { "id": "custom", "appearance": "dark", "colors": base.to_json() },
+                    "presetId": "p1"
+                }
+            },
+            "colorScheme": { "id": "custom", "appearance": "dark", "colors": base.to_json() },
+            "activeColorSchemePresetId": "p1",
+            "colorSchemePresets": {
+                "p1": { "name": "Midnight", "appearance": "dark", "colors": base.to_json() }
+            }
+        });
+        let op_a = PaletteMutation {
+            op: PaletteOp::SavePreset {
+                preset_id: "p1".to_owned(),
+                name: "Midnight".to_owned(),
+                dark: true,
+                colors: client_a_colors,
+                allow_new: false,
+                edited_fields: Some(vec![ColorField::AccentPrimary]),
+            },
+            legacy_config: Value::Null,
+        };
+        let op_b = PaletteMutation {
+            op: PaletteOp::SavePreset {
+                preset_id: "p1".to_owned(),
+                name: "Midnight".to_owned(),
+                dark: true,
+                colors: client_b_colors,
+                allow_new: false,
+                edited_fields: Some(vec![ColorField::BorderBase]),
+            },
+            legacy_config: Value::Null,
+        };
+
+        let mut patch_a = json!({});
+        op_a.put(&mut patch_a, &snapshot);
+        let mut patch_b = json!({});
+        op_b.put(&mut patch_b, &snapshot);
+
+        // Each client sends only its modified color key and omits name/unedited keys.
+        assert!(patch_a["colorSchemePresets"]["p1"].get("name").is_none());
+        assert_eq!(
+            patch_a["colorSchemePresets"]["p1"]["colors"]
+                .as_object()
+                .map(|m| m.len()),
+            Some(1)
+        );
+        assert_eq!(
+            patch_a["colorSchemePresets"]["p1"]["colors"]["accentPrimary"],
+            "#FF2266"
+        );
+        assert!(
+            patch_a["appearancePreferences"]["dark"]["scheme"]["colors"]
+                .get("borderBase")
+                .is_none()
+        );
+        assert!(patch_a["colorScheme"]["colors"].get("borderBase").is_none());
+
+        assert_eq!(
+            patch_b["colorSchemePresets"]["p1"]["colors"]
+                .as_object()
+                .map(|m| m.len()),
+            Some(1)
+        );
+        assert_eq!(
+            patch_b["colorSchemePresets"]["p1"]["colors"]["borderBase"],
+            "#33AA99"
+        );
+
+        // Simulate a third client renaming p1 before either color PATCH arrives; both apply orders
+        // must keep the rename and both edited color keys without overwriting one another.
+        let renamed_server = merge_patch(
+            &snapshot,
+            &json!({ "colorSchemePresets": { "p1": { "name": "Midnight Renamed" } } }),
+        );
+        for (first, second) in [(&patch_a, &patch_b), (&patch_b, &patch_a)] {
+            let after_first = merge_patch(&renamed_server, first);
+            let after_both = merge_patch(&after_first, second);
+            assert_eq!(
+                after_both["colorSchemePresets"]["p1"]["name"],
+                "Midnight Renamed"
+            );
+            for path in [
+                &after_both["colorSchemePresets"]["p1"]["colors"],
+                &after_both["appearancePreferences"]["dark"]["scheme"]["colors"],
+                &after_both["colorScheme"]["colors"],
+            ] {
+                assert_eq!(path["accentPrimary"], "#FF2266");
+                assert_eq!(path["borderBase"], "#33AA99");
+            }
+            assert!(op_a.confirmed(&after_both));
+            assert!(op_b.confirmed(&after_both));
+        }
+
+        // Editing a non-active preset still emits a per-key delta on colorSchemePresets while
+        // writing a complete scheme to the newly activated slot.
+        let inactive_snapshot = json!({
+            "appearancePreferences": {
+                "mode": "dark",
+                "dark": {
+                    "scheme": { "id": "mist", "appearance": "dark" },
+                    "presetId": Value::Null
+                }
+            },
+            "colorSchemePresets": {
+                "p1": { "name": "Midnight", "appearance": "dark", "colors": base.to_json() }
+            }
+        });
+        let mut inactive_patch = json!({});
+        op_a.put(&mut inactive_patch, &inactive_snapshot);
+        assert_eq!(
+            inactive_patch["colorSchemePresets"]["p1"]["colors"]
+                .as_object()
+                .map(|m| m.len()),
+            Some(1)
+        );
+        assert_eq!(
+            inactive_patch["appearancePreferences"]["dark"]["scheme"]["colors"]
+                .as_object()
+                .map(|m| m.len()),
+            Some(ColorField::ALL.len())
+        );
+    }
+
+    #[test]
+    fn legacy_modified_builtin_shows_override_and_reset_clears_it() {
+        let mist = built_in()
+            .iter()
+            .find(|p| p.id == "mist" && p.dark)
+            .expect("mist palette");
+        let default_colors = mist.colors();
+        let modified = default_colors
+            .with(ColorField::AccentPrimary, "#FF2266")
+            .unwrap();
+
+        let cases = [
+            (
+                "slot-inline",
+                json!({
+                    "appearancePreferences": {
+                        "mode": "dark",
+                        "dark": {
+                            "scheme": {
+                                "id": "mist",
+                                "appearance": "dark",
+                                "colors": modified.to_json()
+                            }
+                        }
+                    }
+                }),
+                Value::Null,
+            ),
+            (
+                "legacy-config",
+                json!({}),
+                json!({
+                    "colorScheme": {
+                        "id": "mist",
+                        "appearance": "dark",
+                        "colors": modified.to_json()
+                    }
+                }),
+            ),
+        ];
+
+        for (label, state, legacy_config) in cases {
+            let legacy = legacy_scheme(&state, &legacy_config);
+            let active = resolve_slot(&state, &legacy_config, legacy.as_ref(), true);
+            let opts = options(&state, &legacy_config, &active, true);
+            let mist_opt = opts
+                .iter()
+                .find(|o| o.builtin_id == Some("mist"))
+                .expect("mist option");
+            assert_eq!(mist_opt.colors, modified, "{label}");
+            assert!(
+                !normalize_overrides(&state).contains_key("mist"),
+                "{label}: test requires no colorSchemeOverrides entry"
+            );
+            assert!(
+                option_has_override(mist_opt, false),
+                "{label}: Reset must appear for legacy modified built-in before migration"
+            );
+
+            let reset = PaletteMutation {
+                op: PaletteOp::ResetOverride {
+                    id: "mist",
+                    dark: true,
+                    default_colors: default_colors.clone(),
+                },
+                legacy_config: legacy_config_fields(&legacy_config),
+            };
+            let mut patch = json!({});
+            reset.put(&mut patch, &state);
+            let merged = merge_patch(&state, &patch);
+            assert!(reset.confirmed(&merged), "{label}: reset must confirm");
+            assert!(
+                merged["colorSchemeOverrides"]["mist"].is_null(),
+                "{label}: reset must not migrate legacy colors into colorSchemeOverrides"
+            );
+            assert!(
+                merged["appearancePreferences"]["dark"]["scheme"]["colors"].is_null(),
+                "{label}: reset must clear legacy slot colors"
+            );
+
+            let after_legacy = legacy_scheme(&merged, &legacy_config);
+            let after_active = resolve_slot(&merged, &legacy_config, after_legacy.as_ref(), true);
+            assert_eq!(after_active.colors, None, "{label}");
+            let after_opts = options(&merged, &legacy_config, &after_active, true);
+            let after_mist = after_opts
+                .iter()
+                .find(|o| o.builtin_id == Some("mist"))
+                .expect("mist option after reset");
+            assert_eq!(after_mist.colors, default_colors, "{label}");
+            assert!(
+                !option_has_override(after_mist, false),
+                "{label}: Reset must hide once legacy override is cleared"
+            );
+            // An explicit colorSchemeOverrides entry still shows Reset even if colors match defaults.
+            assert!(option_has_override(after_mist, true), "{label}");
+        }
     }
 }
