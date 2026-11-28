@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Nicht verfügbare Quelle: {source}",
   "missions.scheduling.sourcesUnavailable": "Quellen konnten nicht gelesen werden.",
   "missions.scheduling.startOnCreation": "Automatisch starten",
+  "missions.scheduling.stop": "Zeitplanung endgültig stoppen",
+  "missions.scheduling.stopConfirm": "Diese Zeitplanung dauerhaft stoppen? Es startet kein weiterer Durchlauf. Die Mission bleibt in der Liste.",
   "missions.scheduling.title": "Zeitplanung",
   "missions.scheduling.uncertain": "Diese Änderung ist unbestätigt.",
   "missions.scheduling.uncertainOther": "Eine andere Änderung dieses Fensters ist unbestätigt.",

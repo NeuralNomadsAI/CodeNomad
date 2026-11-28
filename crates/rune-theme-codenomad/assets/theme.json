@@ -1407,7 +1407,7 @@
     "packages/ui/src/styles/panels/mission-execution.css": "5ce41a6baa6e6d5d9fd24957faa3fca35ac5f2883e841ad9a105a3df5d4f4642",
     "packages/ui/src/styles/panels/mission-graph.css": "bcef38b597f5475628287729e3f75e94069ff1c1d56e7c35106d1ab6e1578b25",
     "packages/ui/src/styles/panels/mission-list-item.css": "b992accd1a0fe24f9ca7fa4c89da921ea28f25bfd8835e2e7e357d0a11d7b40b",
-    "packages/ui/src/styles/panels/mission-picker.css": "98ce9be01df3a3b3fba053450af5dc5972bc3fe9ae6fc5658b09ad3a6868c783",
+    "packages/ui/src/styles/panels/mission-picker.css": "8aa2e56807e7fc87d13cab55ee5c097ebc7aeaddab7eb4b8f9301960087db2a6",
     "packages/ui/src/styles/panels/mission-playbook.css": "550c3230bf307126dd0acd0e75fd447824bdac188ec47afeee47d7f18967c714",
     "packages/ui/src/styles/panels/mission-preferences.css": "cf1db1a5caa110f4db84ff3df982a86b0a25697278a0e813da2835000b9cef05",
     "packages/ui/src/styles/panels/mission-progress.css": "298cc422da9dfb4498135e9a980ab39ab8f148e6a243fa3bfc4e7da6f9dc44d3",

@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Источник недоступен: {source}",
   "missions.scheduling.sourcesUnavailable": "Не удалось прочитать источники.",
   "missions.scheduling.startOnCreation": "Запускать автоматически",
+  "missions.scheduling.stop": "Окончательно остановить расписание",
+  "missions.scheduling.stopConfirm": "Остановить это расписание навсегда? Новых запусков не будет. Миссия останется в списке.",
   "missions.scheduling.title": "Расписание",
   "missions.scheduling.uncertain": "Изменение не подтверждено.",
   "missions.scheduling.uncertainOther": "Другое изменение этого окна не подтверждено.",

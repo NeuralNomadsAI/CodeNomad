@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "מקור לא זמין: {source}",
   "missions.scheduling.sourcesUnavailable": "לא ניתן לקרוא את המקורות.",
   "missions.scheduling.startOnCreation": "התחלה אוטומטית",
+  "missions.scheduling.stop": "עצירת התזמון לצמיתות",
+  "missions.scheduling.stopConfirm": "לעצור את התזמון הזה לצמיתות? לא תתחיל הפעלה נוספת. המשימה נשארת ברשימה.",
   "missions.scheduling.title": "תזמון",
   "missions.scheduling.uncertain": "השינוי טרם אושר.",
   "missions.scheduling.uncertainOther": "שינוי אחר בחלון הזה טרם אושר.",

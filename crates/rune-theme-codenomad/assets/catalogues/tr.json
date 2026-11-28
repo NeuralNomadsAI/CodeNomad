@@ -1635,6 +1635,8 @@
   "missions.scheduling.sourceMissing": "Kullanılamayan kaynak: {source}",
   "missions.scheduling.sourcesUnavailable": "Kaynaklar okunamadı.",
   "missions.scheduling.startOnCreation": "Otomatik başlat",
+  "missions.scheduling.stop": "Zamanlamayı kalıcı olarak durdur",
+  "missions.scheduling.stopConfirm": "Bu zamanlama kalıcı olarak durdurulsun mu? Başka başlatma yapılmayacak. Görev listede kalır.",
   "missions.scheduling.title": "Zamanlama",
   "missions.scheduling.uncertain": "Bu değişiklik doğrulanmadı.",
   "missions.scheduling.uncertainOther": "Bu penceredeki başka bir değişiklik doğrulanmadı.",
