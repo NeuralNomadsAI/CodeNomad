@@ -167,42 +167,56 @@ impl Info {
         let version =
             value_text(&value["serverVersion"]).or_else(|| value_text(&value["ui"]["version"]));
         let ui = value_text(&value["ui"]["version"]).filter(|ui| Some(*ui) != version);
-        let about = card("settings.section.info.title")
-            .child(row("settings.info.version.app", version))
-            .children(ui.map(|version| row("settings.info.version.ui", Some(version))))
-            .child(row(
-                "settings.info.version.uiSource",
-                value_text(&value["ui"]["source"]),
-            ))
-            .child(row(
-                "settings.info.runtime.type",
-                Some(platform::diagnostics::RUNTIME),
-            ))
-            .child(row(
-                "settings.info.runtime.platform",
-                Some(platform::diagnostics::PLATFORM),
-            ))
-            .child(row(
-                "settings.info.runtime.os",
-                Some(&self.diagnostics.os()),
-            ));
+        let mut about_rows = vec![row("settings.info.version.app", version)];
+        if let Some(version) = ui {
+            about_rows.push(row("settings.info.version.ui", Some(version)));
+        }
+        about_rows.push(row(
+            "settings.info.version.uiSource",
+            value_text(&value["ui"]["source"]),
+        ));
+        about_rows.push(row(
+            "settings.info.runtime.type",
+            Some(platform::diagnostics::RUNTIME),
+        ));
+        about_rows.push(row(
+            "settings.info.runtime.platform",
+            Some(platform::diagnostics::PLATFORM),
+        ));
+        about_rows.push(row(
+            "settings.info.runtime.os",
+            Some(&self.diagnostics.os()),
+        ));
+        let about = card("settings.section.info.title").child(chrome::divided_rows(about_rows));
 
         let update = shared.clone();
         let source = shared.clone();
-        let updates = card("settings.info.updates.title")
-            .child(row("settings.info.updates.latest", latest))
-            .children(release.map(|release| chrome::primary_action_tx(
-                t("settings.info.updates.download"), false, move |s: &mut S, tx| {
-                    let Some(info) = access(s) else { return; };
-                    let prefs = source.borrow();
-                    if !info.failed && info.flight.is_none() && !prefs.update_feed_pending()
-                        && info.current(&prefs).and_then(|m| release_offer(m).1).as_ref() == Some(&release)
-                    {
-                        info.release_open
-                            .open(&release, tx, move |s| access(s).map(|i| &mut i.release_open));
-                    }
-                })))
-            .children(self.release_open.failed().then(|| text(t("settings.info.actions.failed")).wrap().role("alert")))
+        let update_actions = layout::action_row()
+            .children(release.map(|release| {
+                chrome::primary_action_tx(
+                    t("settings.info.updates.download"),
+                    false,
+                    move |s: &mut S, tx| {
+                        let Some(info) = access(s) else {
+                            return;
+                        };
+                        let prefs = source.borrow();
+                        if !info.failed
+                            && info.flight.is_none()
+                            && !prefs.update_feed_pending()
+                            && info
+                                .current(&prefs)
+                                .and_then(|m| release_offer(m).1)
+                                .as_ref()
+                                == Some(&release)
+                        {
+                            info.release_open.open(&release, tx, move |s| {
+                                access(s).map(|i| &mut i.release_open)
+                            });
+                        }
+                    },
+                )
+            }))
             .child(layout::button(
                 t("settings.info.updates.refresh"),
                 busy || !prefs.can_retry(),
@@ -212,7 +226,18 @@ impl Info {
                         info.release_open.clear();
                     }
                 },
-            ))
+            ));
+        let updates = card("settings.info.updates.title")
+            .child(chrome::divided_rows([row(
+                "settings.info.updates.latest",
+                latest,
+            )]))
+            .child(update_actions)
+            .children(
+                self.release_open
+                    .failed()
+                    .then(|| text(t("settings.info.actions.failed")).wrap().role("alert")),
+            )
             .children(feed.map(|feed| {
                 col().full_width().role("group").label(t("settings.info.updates.feed"))
                     .child(chrome::info_link(t("settings.info.updates.feed.help"), move |s: &mut S, tx| {
@@ -260,7 +285,7 @@ impl Info {
                     .role("alert")
                     .wrap()
             }))
-            .child(layout::button_tx(
+            .child(layout::action_row().child(layout::button_tx(
                 t("settings.info.support.open"),
                 false,
                 move |s: &mut S, tx| {
@@ -270,7 +295,7 @@ impl Info {
                         });
                     }
                 },
-            ));
+            )));
 
         let connectivity = card("settings.info.connectivity.title")
             .children(self.failed.then(|| {
@@ -284,7 +309,9 @@ impl Info {
                     .then(|| text(t("remoteAccess.addresses.loading")).role("status")),
             )
             .children(value.as_object().map(|_| connectivity(value)))
-            .children(remote.map(|open| layout::button(t("settings.nav.remote"), false, open)));
+            .children(remote.map(|open| {
+                layout::action_row().child(layout::button(t("settings.nav.remote"), false, open))
+            }));
         col()
             .full_width()
             .children([about, updates, support].map(chrome::card))
@@ -304,10 +331,7 @@ fn card(title: &str) -> El {
 }
 
 fn row(label: &str, value: Option<&str>) -> El {
-    chrome::setting_row(
-        t(label),
-        text(value.unwrap_or("—")).literal_direction().wrap(),
-    )
+    chrome::info_row(t(label), value.unwrap_or("—"), value.is_none())
 }
 
 fn value_text(value: &Value) -> Option<&str> {
@@ -366,43 +390,52 @@ fn stable_release_support_is_displayed_even_when_no_update_is_offered() {
 fn connectivity(value: &Value) -> El {
     let host = value_text(&value["host"]);
     let addresses = addresses(value);
-    col()
-        .full_width()
-        .separate(Space::Sm)
-        .child(row("settings.info.server.os", server_os(value)))
-        .child(row(
+    let mut rows = vec![
+        row("settings.info.server.os", server_os(value)),
+        row(
             "settings.info.server.arch",
             value_text(&value["system"]["arch"]),
-        ))
-        .child(row(
+        ),
+        row(
             "remoteAccess.sections.listeningMode.label",
             Some(t(listening_mode(value))),
-        ))
-        .child(row("settings.info.connectivity.host", host))
-        .child(row(
+        ),
+        row("settings.info.connectivity.host", host),
+        row(
             "settings.info.connectivity.localListener",
             value_text(&value["localUrl"]),
-        ))
-        .children(
-            value_text(&value["remoteUrl"])
-                .map(|url| row("settings.info.connectivity.remoteListener", Some(url))),
-        )
-        .child(row(
-            "settings.info.server.root",
-            value_text(&value["workspaceRoot"]),
-        ))
-        .child(text(t("remoteAccess.sections.addresses.label")).role("heading"))
-        .children(
+        ),
+    ];
+    if let Some(url) = value_text(&value["remoteUrl"]) {
+        rows.push(row("settings.info.connectivity.remoteListener", Some(url)));
+    }
+    rows.push(row(
+        "settings.info.server.root",
+        value_text(&value["workspaceRoot"]),
+    ));
+    let mut block = col()
+        .full_width()
+        .separate(Space::Sm)
+        .child(chrome::divided_rows(rows))
+        .child(
+            text(t("remoteAccess.sections.addresses.label"))
+                .text_role(TextRole::Title)
+                .role("heading"),
+        );
+    if addresses.is_empty() {
+        block = block.child(chrome::empty_box(t("remoteAccess.addresses.none")));
+    } else {
+        block = block.child(chrome::divided_rows(
             addresses
-                .is_empty()
-                .then(|| text(t("remoteAccess.addresses.none")).wrap()),
-        )
-        .children(
-            addresses.into_iter().map(|(label, url)| {
-                chrome::setting_row(&label, text(url).wrap().literal_direction())
-            }),
-        )
-        .child(text(t("settings.info.connectivity.disclaimer")).wrap())
+                .into_iter()
+                .map(|(label, url)| chrome::info_row(&label, &url, false)),
+        ));
+    }
+    block.child(
+        text(t("settings.info.connectivity.disclaimer"))
+            .text_role(TextRole::Small)
+            .wrap(),
+    )
 }
 
 fn server_os(value: &Value) -> Option<&str> {

@@ -38,32 +38,14 @@ pub(super) fn content<S: 'static>(
     let presets_title = t("settings.behavior.expansionPresets.ariaLabel");
     let labels = PRESETS.map(preset_label);
     let compact = preset_columns < 4;
-    let table = col()
-        .role("table")
-        .label(t("settings.behavior.expansionDefaults.title"))
-        .full_width()
-        .separate(Space::Sm)
-        .on_key(move |s: &mut S, event, tx| {
-            if disabled
-                || open.is_some()
-                || event.mods != rune::Mods::default()
-                || event.key != rune::Key::Enter
-                || tx.key_repeat()
-            {
-                return false;
-            }
-            let Some(row) = tx.focused().and_then(row_from_trigger) else {
-                return false;
-            };
-            set_open(s, Some(row));
-            true
-        })
-        .child(chrome::setting_table_header(
+    let table = chrome::setting_table_frame(
+        t("settings.behavior.expansionDefaults.title"),
+        chrome::setting_table_header(
             t("settings.behavior.expansionDefaults.itemColumn"),
             t("settings.behavior.expansionDefaults.stateColumn"),
             compact,
-        ))
-        .children(Row::all().map(|row| {
+        ),
+        Row::all().enumerate().map(|(index, row)| {
             let title = row_label(row);
             let labels = [
                 t(if row == Row::Groups {
@@ -98,8 +80,24 @@ pub(super) fn content<S: 'static>(
                     }
                 });
             let control = chrome::build_picker(control, layers);
-            chrome::setting_table_row(title, control, compact)
-        }));
+            chrome::setting_table_row_with_icon(row_icon(row), title, control, compact, index == 0)
+        }),
+    )
+    .on_key(move |s: &mut S, event, tx| {
+        if disabled
+            || open.is_some()
+            || event.mods != rune::Mods::default()
+            || event.key != rune::Key::Enter
+            || tx.key_repeat()
+        {
+            return false;
+        }
+        let Some(row) = tx.focused().and_then(row_from_trigger) else {
+            return false;
+        };
+        set_open(s, Some(row));
+        true
+    });
     let controls = col()
         .full_width()
         .separate(Space::Sm)
@@ -124,6 +122,18 @@ pub(super) fn content<S: 'static>(
 
 pub(super) fn preset_label(preset: &str) -> &'static str {
     t(&format!("settings.behavior.expansionPreset.{preset}.title"))
+}
+
+fn row_icon(row: Row) -> &'static str {
+    match row {
+        Row::Thinking => "thinking",
+        Row::Diagnostics => "diagnostics",
+        Row::Inputs => "inputs",
+        Row::Usage => "usage",
+        Row::System => "system",
+        Row::Groups => "toolgroups",
+        Row::Tool(id) => id,
+    }
 }
 
 pub(super) fn row_label(row: Row) -> &'static str {

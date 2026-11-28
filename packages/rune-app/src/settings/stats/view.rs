@@ -1,9 +1,9 @@
 use super::{Dashboard, dates};
 use crate::strings::{locale, t};
 use codenomad_client::settings::stats::{PERIODS, Stats};
-use rune::{Cx, El, col};
+use rune::{Cx, El, col, text};
 use rune_theme_codenomad::{
-    Space,
+    Space, TextRole,
     layout::Layout,
     settings::{self as chrome, stats as style},
     usage::numbers,
@@ -18,6 +18,11 @@ pub(in crate::settings) fn view<S: 'static>(
     let mut body = col()
         .full_width()
         .separate(Space::Sm)
+        .child(
+            text(t("settings.usage.title"))
+                .text_role(TextRole::Title)
+                .role("heading"),
+        )
         .child(style::caption(t("settings.usage.scope")));
     if stats.scope.is_none() {
         return chrome::card(body.child(status("settings.usage.noProject", "status")));

@@ -1,5 +1,7 @@
 mod general;
 mod lifecycle;
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(super) use lifecycle::gallery_spec;
 pub(super) use lifecycle::{closed, focus, save_warning, spec};
 #[cfg(test)]
 mod tests;
@@ -8,7 +10,7 @@ use super::{
     info, notification_settings, opencode,
     preferences::{Owner, Preferences},
     providers, remote, render_with,
-    responsive::{NarrowState, NarrowView, Section, resolve_requested_section},
+    responsive::{NarrowState, Section, resolve_requested_section},
 };
 use crate::strings::t;
 use rune::{Cx, El, col, text};
@@ -67,8 +69,13 @@ pub(super) struct Window {
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
     advanced_help: Option<super::advanced::Toggle>,
+    notification_info: Option<super::notification_routing::Destination>,
     notification_permission: notification_settings::Permission,
     pub(super) focused: Rc<Cell<bool>>,
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    gallery_mode: bool,
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    gallery_connect: Option<codenomad_client::Receiver<Option<crate::backend::Backend>>>,
 }
 
 #[derive(Default)]
@@ -113,6 +120,57 @@ impl Window {
         }
     }
 
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    pub(super) fn gallery_init() -> Self {
+        Self {
+            gallery_mode: true,
+            ..Self::default()
+        }
+    }
+
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    pub(super) fn start_gallery_backend(&mut self, wake: &rune::Waker) {
+        if !self.gallery_mode || self.shared.borrow().backend.is_some() {
+            return;
+        }
+        let Some(base) = crate::platform::setting("RUNE_BACKEND") else {
+            return;
+        };
+        let password = crate::platform::setting("RUNE_PASSWORD").unwrap_or_default();
+        let (out, rx) = codenomad_client::bounded(1);
+        self.gallery_connect = Some(rx);
+        let wake = wake.clone();
+        crate::platform::spawn(async move {
+            let connected = async {
+                let backend = crate::backend::Backend::unauthenticated(&base).ok()?;
+                backend.authenticate(&password, None).await.ok()?;
+                backend.attest_server().await.ok()?;
+                Some(backend)
+            }
+            .await;
+            let _ = out.send(connected).await;
+            wake();
+        });
+    }
+
+    #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+    pub(super) fn poll_gallery_backend(&mut self) -> bool {
+        let Some(rx) = &self.gallery_connect else {
+            return false;
+        };
+        let Ok(connected) = rx.try_recv() else {
+            return false;
+        };
+        self.gallery_connect = None;
+        if let Some(backend) = connected {
+            let mut prefs = self.shared.borrow_mut();
+            prefs.bind(Some(backend));
+            prefs.refresh();
+            return true;
+        }
+        false
+    }
+
     pub fn with_close_request(
         mut self,
         request: Rc<CloseRequest>,
@@ -121,7 +179,7 @@ impl Window {
         self.close_request = Some(request);
         if let Some(editor) = editor {
             self.memory_editor = editor;
-            self.narrow.open_detail();
+            self.narrow.close_picker();
             self.confirm_close = Some(CloseConfirm::Memory);
         }
         if let Some(editor) = self
@@ -131,7 +189,7 @@ impl Window {
         {
             self.config_files = editor;
             self.section = Section::ConfigFiles;
-            self.narrow.open_detail();
+            self.narrow.close_picker();
             self.confirm_close = (self.config_files.dirty() && !self.config_files.busy())
                 .then_some(CloseConfirm::ConfigFiles);
         }
@@ -142,7 +200,7 @@ impl Window {
         {
             self.general = general;
             self.section = Section::General;
-            self.narrow.open_detail();
+            self.narrow.close_picker();
             let prefs = self.shared.borrow();
             let saving = self.general.busy(&prefs);
             if saving {
@@ -162,14 +220,11 @@ impl Window {
         self.narrow.measure(width, tx);
     }
 
-    fn return_to_narrow_list(&mut self, tx: &mut rune::Tx) {
-        self.narrow.return_to_list(self.section, tx);
-    }
-
     fn apply_requested_section(&mut self, requested: Section, tx: Option<&mut rune::Tx>) -> bool {
         if self.config_files.busy() || self.confirm_close.is_some() || self.closing {
             return false;
         }
+        self.narrow.close_picker();
         let target = {
             let prefs = self.shared.borrow();
             resolve_requested_section(requested, self.can_open_section(&prefs, requested))
@@ -180,22 +235,16 @@ impl Window {
                 if self.general.busy(&prefs) {
                     self.after_palette_save =
                         Some((prefs.binding_epoch(), AfterPaletteSave::Section(target)));
-                    self.narrow.open_detail();
                     return true;
                 }
             }
             if self.general.dirty() {
                 self.pending_section = Some(target);
-                self.narrow.open_detail();
                 return true;
             }
             self.switch_section(target);
         }
-        if let Some(tx) = tx {
-            self.narrow.open_detail_focus(tx);
-        } else {
-            self.narrow.open_detail();
-        }
+        let _ = tx;
         true
     }
 
@@ -214,6 +263,11 @@ impl Window {
         } else {
             candidate
         };
+        if let Some(tx) = tx {
+            self.narrow.close_picker_focus(tx);
+        } else {
+            self.narrow.close_picker();
+        }
         if next != self.section && self.config_files.busy() {
             return;
         }
@@ -233,19 +287,13 @@ impl Window {
         } else if !self.is_narrow() {
             self.switch_section(next);
         }
-        if self.is_narrow() {
-            if let Some(tx) = tx {
-                self.narrow.open_detail_focus(tx);
-            } else {
-                self.narrow.open_detail();
-            }
-        }
     }
 
     fn switch_section(&mut self, next: Section) {
         self.general.close();
         self.transcript_picker.set(None);
         self.advanced_help = None;
+        self.notification_info = None;
         self.recording_shortcut = false;
         self.shortcut_capture = Default::default();
         self.behavior.close();
@@ -427,36 +475,19 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
         .close_palette_on_slot_change(prefs.dark(system_dark));
     render_with(cx, &prefs, system_more, true, |cx| {
         let section = s.section.label();
-        let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
-        let rtl = rune_theme_codenomad::catalogue::direction(locale) == "rtl";
         let touch = cx.touch_controls();
         let narrow = s.is_narrow();
-        let nav_items: Vec<_> = [
-            Section::General,
-            Section::Conversation,
-            Section::OpenCode,
-            Section::Notifications,
-            Section::Voice,
-            Section::Providers,
-            Section::Missions,
-            Section::Integrations,
-            Section::Stats,
-            Section::Shortcuts,
-            Section::Remote,
-            Section::Advanced,
-        ]
-        .into_iter()
-        .filter(|&item| item != Section::Stats || super::stats::supported(&prefs))
-        .chain(
-            s.can_open_section(&prefs, Section::ConfigFiles)
-                .then_some(Section::ConfigFiles),
-        )
-        .chain([Section::Info])
-        .map(|item| (item.nav_key(), item.label(), s.section == item))
-        .collect();
+        let nav_items: Vec<_> = Section::ORDER
+            .into_iter()
+            .filter(|&item| match item {
+                Section::Stats => super::stats::supported(&prefs),
+                Section::ConfigFiles => s.can_open_section(&prefs, Section::ConfigFiles),
+                _ => true,
+            })
+            .map(|item| (item.nav_key(), item.label(), s.section == item))
+            .collect();
         let mut layers = Vec::new();
-        let show_detail = !narrow || s.narrow.view() == NarrowView::Detail;
-        let detail = show_detail.then(|| {
+        let (key, status, controls) = {
             let status = if let Some(error) = match s.section {
                 Section::General => prefs.general_error(),
                 Section::Conversation => prefs.transcript_error(),
@@ -571,6 +602,11 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                     notification_settings::view(
                         &s.shared,
                         s.notification_permission,
+                        s.notification_info,
+                        |s: &mut Window, dest| {
+                            s.notification_info =
+                                (s.notification_info != Some(dest)).then_some(dest);
+                        },
                         |_: &mut Window| {},
                     ),
                 ),
@@ -727,7 +763,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 ),
             };
             (key, status, controls)
-        });
+        };
         if let Some(editor) = prefs.memory.editor_view(
             &s.memory_editor,
             |s: &mut Window| &mut s.memory_editor,
@@ -796,7 +832,7 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
             s.general.dirty() && !palette_saving && s.can_open_section(&prefs, next)
         }) {
             layers.push(super::config_files::confirm_discard(
-                move |s: &mut Window, accept, tx| {
+                move |s: &mut Window, accept, _tx| {
                     s.pending_section = None;
                     if accept && !s.config_files.busy() {
                         let mut prefs = s.shared.borrow_mut();
@@ -804,49 +840,29 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                             s.general.discard_draft(&mut prefs);
                             drop(prefs);
                             s.switch_section(next_section);
-                            if s.is_narrow() {
-                                s.narrow.open_detail_focus(tx);
-                            }
                         }
                     }
                 },
             ));
         }
         let frame = if narrow {
-            let content = match detail {
-                Some((key, status, controls)) => chrome::narrow_pane(
-                    key,
-                    chrome::narrow_header(
-                        section,
-                        Some((
-                            t("sessionList.history.back"),
-                            t("settings.navigationAriaLabel"),
-                            rtl,
-                            |s: &mut Window, tx: &mut rune::Tx| s.return_to_narrow_list(tx),
-                        )),
-                        t("settings.close"),
-                        touch,
-                        |s: &mut Window, tx: &mut rune::Tx| s.request_close(tx),
-                    ),
-                    [status, controls],
-                ),
-                None => chrome::narrow_list_screen(
-                    chrome::narrow_header(
-                        t("settings.title"),
-                        None::<(&str, &str, bool, fn(&mut Window, &mut rune::Tx))>,
-                        t("settings.close"),
-                        touch,
-                        |s: &mut Window, tx: &mut rune::Tx| s.request_close(tx),
-                    ),
-                    chrome::narrow_nav(
-                        t("settings.navigationAriaLabel"),
-                        nav_items,
-                        touch,
-                        |s: &mut Window, key, tx| s.select_nav_section(key, Some(tx)),
-                    ),
-                ),
-            };
-            chrome::narrow_frame(content, layers)
+            let bar = chrome::compact_bar(
+                t("settings.navigationAriaLabel"),
+                s.section.nav_key(),
+                section,
+                s.narrow.picker_open(),
+                nav_items,
+                t("settings.close"),
+                touch,
+                &mut layers,
+                |s: &mut Window, tx| s.narrow.toggle_picker(tx),
+                |s: &mut Window, tx| {
+                    s.narrow.close_picker_focus(tx);
+                },
+                |s: &mut Window, key, tx| s.select_nav_section(key, Some(tx)),
+                |s: &mut Window, tx| s.request_close(tx),
+            );
+            chrome::narrow_frame(chrome::narrow_pane(key, bar, [status, controls]), layers)
         } else {
             let nav = chrome::nav(
                 t("settings.title"),
@@ -854,7 +870,6 @@ pub(super) fn view(s: &Window, cx: &mut Cx<Window>) -> El {
                 nav_items,
                 |s: &mut Window, key| s.select_nav_section(key, None),
             );
-            let (key, status, controls) = detail.expect("wide layout always builds section");
             chrome::frame(nav, chrome::pane(key, section, [status, controls]), layers)
         }
         .key("preferences-frame")

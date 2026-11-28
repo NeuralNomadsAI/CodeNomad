@@ -140,19 +140,22 @@ impl State {
         let locked = self.locked();
         let is_open = open_picker == Some(Picker::Depth) && !disabled;
         let labels_for_choose = labels.clone();
-        let picker =
-            chrome::stepping_picker("mission-subagent-depth", t("missions.depth.label"), &refs)
-                .current(Some(refs[current_index]))
-                .disabled(disabled)
-                .open(is_open)
-                .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Depth)))
-                .on_close(move |s: &mut S| set_picker(s, None))
-                .on_choose(move |s: &mut S, value, _| {
-                    set_picker(s, None);
-                    if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
-                        choose(s, values[pos].clone());
-                    }
-                });
+        let picker = chrome::wide_stepping_picker(
+            "mission-subagent-depth",
+            t("missions.depth.label"),
+            &refs,
+        )
+        .current(Some(refs[current_index]))
+        .disabled(disabled)
+        .open(is_open)
+        .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Depth)))
+        .on_close(move |s: &mut S| set_picker(s, None))
+        .on_choose(move |s: &mut S, value, _| {
+            set_picker(s, None);
+            if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
+                choose(s, values[pos].clone());
+            }
+        });
         let picker = chrome::build_picker(picker, layers).busy(locked);
 
         let details = self.details();

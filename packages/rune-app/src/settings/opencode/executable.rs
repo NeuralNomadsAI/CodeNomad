@@ -386,13 +386,12 @@ impl State {
                 .child(chrome::palette::save_error(error).key("opencode-binary-validation-error"));
         }
 
-        let mut list = col().full_width().separate(Space::Xs);
         let default_label = rune_theme_codenomad::catalogue::format(
             crate::strings::locale(),
             "opencodeBinarySelector.display.systemPath",
             &[("name", "opencode2")],
         );
-        list = list.child(self.binary_row::<S>(
+        let mut items = vec![self.binary_row::<S>(
             shared,
             &default_label,
             "opencode2",
@@ -401,7 +400,7 @@ impl State {
             default_version,
             disabled,
             access,
-        ));
+        )];
         for entry in prefs.opencode_binaries() {
             let version = self
                 .versions
@@ -409,7 +408,7 @@ impl State {
                 .map(String::as_str)
                 .or(entry.version.as_deref());
             let name = display_name(&entry.path);
-            list = list.child(self.binary_row::<S>(
+            items.push(self.binary_row::<S>(
                 shared,
                 name,
                 &entry.path,
@@ -420,6 +419,7 @@ impl State {
                 access,
             ));
         }
+        let list = chrome::binary_list(items);
 
         let mut card = col()
             .full_width()
@@ -482,42 +482,38 @@ impl State {
         }
         let select_shared = shared.clone();
         let select_path = path.to_owned();
-        let button_label = if selected {
-            format!("✓ {label}")
-        } else {
-            label.to_owned()
-        };
-        let select_button = layout::button(&button_label, disabled, move |s: &mut S| {
-            if !selected {
-                access(s)
-                    .executable
-                    .select_saved(&mut select_shared.borrow_mut(), &select_path);
-            }
-        })
-        .checked(selected)
-        .key(if is_default {
+        let key = if is_default {
             "opencode-binary-default".to_owned()
         } else {
             format!("opencode-binary-item-{path}")
-        });
+        };
         let remove = (!is_default).then(|| {
             let remove_shared = shared.clone();
             let remove_path = path.to_owned();
-            layout::button(
+            (
+                format!("opencode-binary-remove-{path}"),
                 t("opencodeBinarySelector.actions.removeTitle"),
-                disabled,
                 move |s: &mut S| {
                     access(s)
                         .executable
                         .remove_saved(&mut remove_shared.borrow_mut(), &remove_path);
                 },
             )
-            .key(format!("opencode-binary-remove-{path}"))
         });
-        chrome::binary_row(
-            select_button,
+        chrome::binary_row_item(
+            label,
             (!is_default).then_some(path),
             (!caption.is_empty()).then_some(caption.as_str()),
+            selected,
+            disabled,
+            key,
+            move |s: &mut S| {
+                if !selected {
+                    access(s)
+                        .executable
+                        .select_saved(&mut select_shared.borrow_mut(), &select_path);
+                }
+            },
             remove,
         )
     }

@@ -22,6 +22,11 @@ fn make_window(prefs: Preferences) -> (Rc<RefCell<Preferences>>, rune::Runtime<v
 }
 
 fn click(rt: &mut rune::Runtime<view::Window>, key: &str) {
+    let (_, y) = rt.find(key).unwrap_or_else(|| panic!("missing key {key}"));
+    if !(0.0..880.0).contains(&y) {
+        rt.update(|_, tx| tx.scroll_into_view(key));
+        rt.frame(0.02);
+    }
     let (x, y) = rt.find(key).unwrap_or_else(|| panic!("missing key {key}"));
     rt.pointer_down(x, y);
     rt.pointer_up(x, y);

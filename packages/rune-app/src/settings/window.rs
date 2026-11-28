@@ -194,5 +194,5 @@ pub(crate) fn close(s: &mut State) {
 
 #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
 pub(crate) fn gallery() {
-    rune::run(view::spec())
+    rune::run(view::gallery_spec())
 }

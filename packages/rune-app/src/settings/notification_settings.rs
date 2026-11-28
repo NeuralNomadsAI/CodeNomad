@@ -52,6 +52,8 @@ pub(super) fn web_permission() -> Permission {
 pub(super) fn view<S: 'static>(
     shared: &Rc<RefCell<Preferences>>,
     permission: Permission,
+    info_open: Option<Destination>,
+    toggle_info: fn(&mut S, Destination),
     request: fn(&mut S),
 ) -> El {
     let prefs = shared.borrow();
@@ -61,16 +63,33 @@ pub(super) fn view<S: 'static>(
             destination.key()
         ))
     };
+    let info_text = |destination: Destination| {
+        t(&format!(
+            "settings.notifications.routing.{}.info",
+            destination.key()
+        ))
+    };
     let supported = permission != Permission::Unsupported;
     let heading = |label: &str| text(label).text_role(TextRole::Title).role("heading");
     let mut table = col()
         .role("table")
         .label(t("settings.notifications.routing.caption"))
         .full_width()
-        .separate(Space::Sm)
-        .child(chrome::checkbox_table_header(
+        .child(chrome::checkbox_table_header_with_info(
             t("settings.notifications.routing.category"),
-            Destination::ALL.map(label),
+            Destination::ALL.map(|destination| {
+                let title = label(destination);
+                (
+                    title,
+                    chrome::info_tip(
+                        title,
+                        info_text(destination),
+                        info_open == Some(destination),
+                        move |s| toggle_info(s, destination),
+                    )
+                    .key(format!("notifications-info-{}", destination.key())),
+                )
+            }),
         ));
     for category in Category::ALL {
         let category_label = t(&format!(
@@ -128,16 +147,16 @@ pub(super) fn view<S: 'static>(
                 .separate(Space::Sm)
                 .child(heading(t("settings.notifications.system.title")))
                 .children((permission == Permission::Ask).then(|| {
-                    layout::button(
+                    layout::action_row().child(layout::button(
                         t("settings.notifications.requestPermission.action"),
                         false,
                         request,
-                    )
+                    ))
                 }))
                 .child(chrome::setting_row(
                     title,
-                    chrome::setting_switch(
-                        title,
+                    chrome::checkbox_cell(
+                        title.into(),
                         focused,
                         !supported || !prefs.notification_ready(),
                         move |_: &mut S| {
@@ -191,13 +210,21 @@ fn a_system_check_requests_permission_in_its_click_but_a_history_check_does_not(
         };
         let mut runtime = rune::Runtime::new(
             state,
-            |s, _| view(&s.prefs, s.permission, |s: &mut State| s.prompts += 1),
+            |s, _| {
+                view(
+                    &s.prefs,
+                    s.permission,
+                    None,
+                    |_: &mut State, _| {},
+                    |s: &mut State| s.prompts += 1,
+                )
+            },
             (720.0, 700.0),
             rune::Env::new(false, 1.0),
         );
         runtime.frame(0.0);
         let tree = runtime.accessibility_json().to_string();
-        assert_eq!(tree.matches("\"role\":\"check-box\"").count(), 27);
+        assert_eq!(tree.matches("\"role\":\"check-box\"").count(), 28);
         assert_eq!(tree.matches("\"role\":\"column-header\"").count(), 4);
         assert_eq!(tree.matches("\"role\":\"row-header\"").count(), 9);
         assert_eq!(tree.matches("\"role\":\"cell\"").count(), 27);
@@ -262,7 +289,13 @@ fn notification_settings_renders_status_and_denied_alert_in_both_themes() {
                 |s, cx| {
                     rune_theme_codenomad::settings::render(cx, s.dark, None, |_| {
                         crate::strings::with_locale("en", || {
-                            view(&s.prefs, s.permission, |_: &mut Harness| {})
+                            view(
+                                &s.prefs,
+                                s.permission,
+                                None,
+                                |_: &mut Harness, _| {},
+                                |_: &mut Harness| {},
+                            )
                         })
                     })
                 },

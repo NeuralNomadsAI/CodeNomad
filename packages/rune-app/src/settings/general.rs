@@ -928,7 +928,7 @@ impl Controls {
 
         let workbench = palette_ui::workbench(
             palette_picker,
-            swatches,
+            swatches.or_else(|| Some(rune::el())),
             palette_ui::action_bar(action_buttons, stacked),
             stacked,
         );
@@ -1123,7 +1123,10 @@ impl Controls {
                 }
                 true
             })
-            .child(chrome::card(chrome::setting_row(language, language_picker)))
+            .child(chrome::card(chrome::language_row(
+                language,
+                language_picker,
+            )))
             .child(chrome::card(chrome::color_scheme(
                 palette_title,
                 mode,
@@ -1162,7 +1165,7 @@ impl Controls {
         // Pick callbacks run outside the scoped render.
         let locale = crate::strings::locale();
         let control = match picker {
-            Picker::Locale => chrome::picker(picker.key(), label, options),
+            Picker::Locale => chrome::language_picker(picker.key(), label, options),
             Picker::Palette(_) => chrome::palette_picker(picker.key(), label, options),
         }
         .current(current)

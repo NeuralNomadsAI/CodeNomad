@@ -7,7 +7,7 @@ use serde_json::Value;
 #[test]
 fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
     fn find_switch(tree: &Value) -> Option<&Value> {
-        if tree["role"] == "switch" && tree["name"] == "Hold long assistant replies" {
+        if tree["role"] == "check-box" && tree["name"] == "Hold long assistant replies" {
             return Some(tree);
         }
         tree["children"].as_array()?.iter().find_map(find_switch)
@@ -46,7 +46,7 @@ fn unsupported_advanced_switch_is_disabled_with_keyboard_help() {
 #[test]
 fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
     fn find_switch(tree: &Value) -> Option<&Value> {
-        if tree["role"] == "switch" && tree["name"] == "Focus existing window on second launch" {
+        if tree["role"] == "check-box" && tree["name"] == "Focus existing window on second launch" {
             return Some(tree);
         }
         tree["children"].as_array()?.iter().find_map(find_switch)
@@ -84,7 +84,7 @@ fn windows_second_launch_advanced_switch_is_enabled_and_stages_change() {
 #[test]
 fn advanced_session_toggles_are_enabled_with_their_help_descriptions() {
     fn find_switch<'a>(tree: &'a Value, name: &str) -> Option<&'a Value> {
-        if tree["role"] == "switch" && tree["name"] == name {
+        if tree["role"] == "check-box" && tree["name"] == name {
             return Some(tree);
         }
         tree["children"]
@@ -244,7 +244,7 @@ fn notifications_tab_mounts_the_routing_table_and_the_focused_switch() {
     assert!(system["states"].to_string().contains("\"checked\""));
     assert_eq!(
         node(&tree, "notifications-allow-focused").unwrap()["role"],
-        "switch"
+        "check-box"
     );
 }
 

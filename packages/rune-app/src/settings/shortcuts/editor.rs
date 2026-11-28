@@ -1,6 +1,6 @@
 use super::{Preferences, catalog, record, reserved};
 use crate::strings::t;
-use rune::{El, Key, TextEdit, col, el, text};
+use rune::{El, Key, TextEdit, col, text};
 use rune_theme_codenomad::{
     Space, TextRole, field_kit,
     layout::{self, Layout},
@@ -220,65 +220,59 @@ fn row_view<S: 'static>(
         .iter()
         .map(|(key, names)| conflict(key, names))
         .collect();
-    let binding_badge = if row.binding.is_empty() {
-        text(t("hotkeys.empty")).text_role(TextRole::Small)
-    } else {
-        el().inset_surface().pad(Space::Xs).child(
-            text(&row.binding)
-                .text_role(TextRole::Mono)
-                .literal_direction(),
-        )
-    };
-    let mut group = col()
-        .full_width()
-        .separate(Space::Xs)
-        .role("group")
-        .label(&row.label)
-        .key(format!("shortcut-{id}"))
-        .child(text(&row.label).text_role(TextRole::Button).wrap())
-        .child(
-            layout::action_row().child(binding_badge).children(
-                row.active
-                    .then(|| {
-                        [
-                            edit,
-                            layout::button(
-                                t("hotkeys.clear"),
-                                disabled || row.binding.is_empty(),
-                                mutate(json!([])),
-                            ),
-                            layout::button(
-                                t("hotkeys.reset"),
-                                disabled || !row.overridden,
-                                mutate(Value::Null),
-                            ),
-                        ]
-                    })
-                    .into_iter()
-                    .flatten(),
-            ),
-        )
-        .children(warnings.iter().map(|message| {
+    let mut extra: Vec<El> = warnings
+        .iter()
+        .map(|message| {
             text(message)
                 .text_role(TextRole::Small)
                 .role("status")
                 .wrap()
-        }))
-        .children((editing && refused).then(|| chrome::palette::save_error(t("hotkeys.reserved"))))
-        .children(failed.then(|| chrome::palette::save_error(t("hotkeys.saveFailed"))));
-    if !warnings.is_empty() {
-        group = group.description(warnings.join(" · "));
+        })
+        .collect();
+    if editing && refused {
+        extra.push(chrome::palette::save_error(t("hotkeys.reserved")));
     }
-    if !row.active {
+    if failed {
+        extra.push(chrome::palette::save_error(t("hotkeys.saveFailed")));
+    }
+    let actions = if row.active {
+        vec![
+            edit,
+            layout::button(
+                t("hotkeys.reset"),
+                disabled || !row.overridden,
+                mutate(Value::Null),
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    let (description, help) = if !row.active {
         let why = t("hotkeys.unavailable");
         let description = if warnings.is_empty() {
             why.to_owned()
         } else {
             format!("{why} · {}", warnings.join(" · "))
         };
-        group = group.help(why).description(description);
-    }
-    chrome::card(group)
+        (Some(description), Some(why))
+    } else if !warnings.is_empty() {
+        (Some(warnings.join(" · ")), None)
+    } else {
+        (None, None)
+    };
+    chrome::shortcut_row(
+        format!("shortcut-{id}"),
+        &row.label,
+        &row.binding,
+        t("hotkeys.empty"),
+        t("hotkeys.clear"),
+        !row.active || disabled || row.binding.is_empty(),
+        mutate(json!([])),
+        actions,
+        extra,
+        description,
+        help,
+    )
 }
 
 fn conflict(key: &str, names: &str) -> String {

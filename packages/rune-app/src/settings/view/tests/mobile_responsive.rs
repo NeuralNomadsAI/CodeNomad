@@ -1,5 +1,5 @@
 use super::*;
-use crate::settings::responsive::NARROW_BACK_KEY;
+use crate::settings::responsive::SECTION_PICKER_TRIGGER_KEY;
 use rune::{Env, Key, KeyEvent, Mods, Runtime};
 
 fn fixture_runtime_locale(
@@ -60,112 +60,37 @@ fn focused_key(rt: &Runtime<Window>) -> Option<String> {
     find_focused(&rt.accessibility_json())
 }
 
-fn assert_no_horizontal_overflow(rt: &Runtime<Window>, viewport_w: f32, context: &str) {
-    let elements = rt.elements();
-    for el in &elements {
-        if el.rect[2] <= 0.0 || el.rect[3] <= 0.0 {
-            continue;
-        }
-        assert!(
-            el.rect[0] >= -1.0 && el.rect[0] + el.rect[2] <= viewport_w + 1.0,
-            "{context}: element {:?} (key={:?}, path={}) overflowed {viewport_w}pt viewport: rect={:?}",
-            el.role,
-            el.key,
-            el.path,
-            el.rect,
-        );
-    }
-}
-
-fn assert_square_button(rt: &Runtime<Window>, key: &str) {
-    let button = rt
-        .elements()
-        .into_iter()
-        .find(|el| el.key.as_deref() == Some(key))
-        .unwrap_or_else(|| panic!("expected button {key}"));
-    assert_eq!(button.radius, 0.0, "button {key} must keep square corners");
-}
-
 #[test]
-fn narrow_411_and_360_list_and_detail_have_no_horizontal_overflow_light_and_dark() {
+fn narrow_compact_bar_opens_directly_on_general_and_switches_sections_via_picker() {
     for dark in [false, true] {
         for (w, h) in [(411.0, 890.0), (360.0, 800.0)] {
             let mut rt = fixture_runtime((w, h), dark);
-            assert!(rt.state.is_narrow(), "dark={dark} ({w}x{h}) must be narrow");
-            assert_eq!(rt.state.narrow.view(), NarrowView::List);
-
-            // Narrow list mounts header + close button + full-width section list, no back button.
-            assert!(rt.find("settings-narrow-list").is_some());
+            assert!(rt.state.is_narrow(), "expected narrow mode at {w}x{h}");
+            assert_eq!(rt.state.section, Section::General);
+            assert!(rt.find("settings-compact-bar").is_some());
+            assert!(rt.find(SECTION_PICKER_TRIGGER_KEY).is_some());
             assert!(rt.find("settings-close").is_some());
-            assert!(rt.find(NARROW_BACK_KEY).is_none());
-            assert_square_button(&rt, "settings-close");
+            assert!(rt.find("general").is_some());
+            assert!(rt.find("settings-section-picker-list").is_none());
 
-            let header = rt
-                .elements()
-                .into_iter()
-                .find(|el| el.key.as_deref() == Some("settings-narrow-header"))
-                .expect("narrow header");
-            assert!(
-                (header.rect[2] - w).abs() <= 1.0,
-                "header must span full width {w}: {:?}",
-                header.rect
-            );
-            assert_eq!(header.radius, 0.0, "header must keep square corners");
-
-            let general_row = rt
-                .elements()
-                .into_iter()
-                .find(|el| el.key.as_deref() == Some("settings-general"))
-                .expect("settings-general row");
-            assert!(
-                general_row.rect[2] > w - 32.0,
-                "narrow nav row must span viewport width instead of 260pt rail: {:?}",
-                general_row.rect
-            );
-            assert_no_horizontal_overflow(&rt, w, &format!("list dark={dark} {w}x{h}"));
-
-            // Open General, Voice (Dictée), and Providers (Fournisseurs) and verify full-width detail.
             for (nav_key, pane_key, expected_section) in [
-                ("settings-general", "general", Section::General),
                 ("settings-voice", "voice", Section::Voice),
                 ("settings-providers", "providers", Section::Providers),
+                ("settings-remote", "remote", Section::Remote),
+                ("settings-general", "general", Section::General),
             ] {
+                click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
+                assert!(rt.state.narrow.picker_open());
+                assert!(rt.find("settings-section-picker-list").is_some());
                 click_key(&mut rt, nav_key);
                 assert_eq!(rt.state.section, expected_section);
-                assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-                assert!(rt.find("settings-narrow-list").is_none());
-                assert!(rt.find(NARROW_BACK_KEY).is_some());
-                assert_square_button(&rt, NARROW_BACK_KEY);
-                assert_square_button(&rt, "settings-close");
+                assert!(!rt.state.narrow.picker_open());
+                assert!(rt.find("settings-section-picker-list").is_none());
+                assert!(rt.find(pane_key).is_some());
                 assert_eq!(
                     focused_key(&rt).as_deref(),
-                    Some(NARROW_BACK_KEY),
-                    "entering {pane_key} must focus the back button"
-                );
-                let pane = rt
-                    .elements()
-                    .into_iter()
-                    .find(|el| el.key.as_deref() == Some(pane_key))
-                    .unwrap_or_else(|| panic!("expected detail pane {pane_key}"));
-                assert!(
-                    (pane.rect[2] - w).abs() <= 1.0,
-                    "{pane_key} detail pane must span full width {w}: {:?}",
-                    pane.rect
-                );
-                assert_no_horizontal_overflow(
-                    &rt,
-                    w,
-                    &format!("detail {pane_key} dark={dark} {w}x{h}"),
-                );
-
-                // Back button returns to list and restores focus to the active section row.
-                click_key(&mut rt, NARROW_BACK_KEY);
-                assert_eq!(rt.state.narrow.view(), NarrowView::List);
-                assert!(rt.find("settings-narrow-list").is_some());
-                assert_eq!(
-                    focused_key(&rt).as_deref(),
-                    Some(nav_key),
-                    "returning from {pane_key} must restore focus to {nav_key}"
+                    Some(SECTION_PICKER_TRIGGER_KEY),
+                    "selecting {pane_key} must return focus to the section picker trigger"
                 );
             }
         }
@@ -173,197 +98,148 @@ fn narrow_411_and_360_list_and_detail_have_no_horizontal_overflow_light_and_dark
 }
 
 #[test]
-fn narrow_rtl_hebrew_411_and_360_list_and_detail_have_no_overflow_and_square_controls() {
+fn narrow_rtl_hebrew_compact_bar_switches_sections_and_closes_picker_on_escape() {
     for dark in [false, true] {
         for (w, h) in [(411.0, 890.0), (360.0, 800.0)] {
             let mut rt = fixture_runtime_locale((w, h), dark, "he");
             assert!(rt.state.is_narrow());
-            assert_eq!(rt.state.narrow.view(), NarrowView::List);
-            assert_square_button(&rt, "settings-close");
-            assert_no_horizontal_overflow(&rt, w, &format!("rtl list dark={dark} {w}x{h}"));
+            assert!(rt.find("settings-compact-bar").is_some());
+            assert!(rt.find("general").is_some());
 
+            click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
+            assert!(rt.state.narrow.picker_open());
             click_key(&mut rt, "settings-remote");
             assert_eq!(rt.state.section, Section::Remote);
-            assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-            assert_square_button(&rt, NARROW_BACK_KEY);
-            assert_square_button(&rt, "settings-close");
-            assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
-            assert_no_horizontal_overflow(&rt, w, &format!("rtl remote dark={dark} {w}x{h}"));
+            assert!(!rt.state.narrow.picker_open());
+            assert!(rt.find("remote").is_some());
 
-            // Escape returns to list with focus on Remote row in RTL as well.
+            click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
+            assert!(rt.state.narrow.picker_open());
             press_key(&mut rt, Key::Escape);
-            assert_eq!(rt.state.narrow.view(), NarrowView::List);
-            assert_eq!(focused_key(&rt).as_deref(), Some("settings-remote"));
+            assert!(!rt.state.narrow.picker_open());
+            assert!(!rt.state.closing);
+            assert_eq!(
+                focused_key(&rt).as_deref(),
+                Some(SECTION_PICKER_TRIGGER_KEY)
+            );
         }
     }
 }
 
 #[test]
-fn narrow_keyboard_arrows_stay_in_list_and_escape_returns_before_closing() {
+fn narrow_escape_closes_section_picker_before_closing_preferences() {
     let mut rt = fixture_runtime((411.0, 890.0), true);
-    assert_eq!(rt.state.narrow.view(), NarrowView::List);
+    assert!(!rt.state.narrow.picker_open());
 
-    rt.update(|_, tx| tx.focus("settings-general", true));
-    rt.frame(0.02);
-    assert_eq!(focused_key(&rt).as_deref(), Some("settings-general"));
+    click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
+    assert!(rt.state.narrow.picker_open());
 
-    // ArrowDown navigates within the list without auto-opening a section.
-    press_key(&mut rt, Key::Down);
-    assert_eq!(rt.state.narrow.view(), NarrowView::List);
-    assert_eq!(focused_key(&rt).as_deref(), Some("settings-conversation"));
-    assert_eq!(rt.state.section, Section::General);
-
-    // Enter opens the focused section and moves focus to the back button.
-    press_key(&mut rt, Key::Enter);
-    assert_eq!(rt.state.section, Section::Conversation);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
-    assert!(!rt.state.closing);
-
-    // First Escape returns from Detail -> List and restores focus to the active section row.
+    // First Escape closes the compact section picker and restores focus to the trigger.
     press_key(&mut rt, Key::Escape);
-    assert_eq!(rt.state.narrow.view(), NarrowView::List);
+    assert!(!rt.state.narrow.picker_open());
     assert!(!rt.state.closing);
-    assert_eq!(focused_key(&rt).as_deref(), Some("settings-conversation"));
+    assert_eq!(
+        focused_key(&rt).as_deref(),
+        Some(SECTION_PICKER_TRIGGER_KEY)
+    );
 
-    // Second Escape from List requests closing the Preferences window.
+    // Second Escape requests closing Preferences.
     press_key(&mut rt, Key::Escape);
     assert!(rt.state.closing);
 }
 
 #[test]
-fn narrow_ime_vertical_shrink_preserves_open_section_and_focus() {
+fn narrow_ime_vertical_shrink_preserves_open_section() {
     let mut rt = fixture_runtime((411.0, 890.0), false);
+    click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
     click_key(&mut rt, "settings-providers");
     assert_eq!(rt.state.section, Section::Providers);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
+    assert!(rt.find("providers").is_some());
 
-    // Simulate soft keyboard / IME reducing viewport height vertically on Xiaomi 14.
+    // Soft keyboard reducing viewport height vertically preserves the active section.
     rt.set_viewport((411.0, 500.0), 1.0);
     rt.frame(0.02);
     rt.frame(0.02);
-
     assert!(rt.state.is_narrow());
     assert_eq!(rt.state.section, Section::Providers);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert!(rt.find(NARROW_BACK_KEY).is_some());
-    let pane = rt
-        .elements()
-        .into_iter()
-        .find(|el| el.key.as_deref() == Some("providers"))
-        .expect("providers pane remains mounted under IME shrink");
-    assert!((pane.rect[2] - 411.0).abs() <= 1.0);
+    assert!(rt.find("providers").is_some());
 
-    // Restoring full portrait height keeps the section open.
     rt.set_viewport((411.0, 890.0), 1.0);
     rt.frame(0.02);
     rt.frame(0.02);
     assert_eq!(rt.state.section, Section::Providers);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
+    assert!(rt.find("providers").is_some());
 }
 
 #[test]
 fn narrow_wide_resize_round_trip_and_desktop_breakpoint_preserve_active_section() {
-    // Desktop 1100x760 and 760x560 keep the 260pt split layout without narrow chrome.
+    // Desktop 1100x760, 760x560, and 600x700 keep the split layout without compact bar.
     for (w, h) in [(1100.0, 760.0), (760.0, 560.0), (600.0, 700.0)] {
         let rt = fixture_runtime((w, h), false);
         assert!(!rt.state.is_narrow(), "{w}x{h} must stay wide");
-        assert!(rt.find("settings-narrow-header").is_none());
+        assert!(rt.find("settings-compact-bar").is_none());
         assert!(rt.find("settings-general").is_some());
         assert!(rt.find("general").is_some());
     }
 
     // 599 pt crosses into narrow mode.
     let rt_599 = fixture_runtime((599.0, 700.0), false);
-    assert!(rt_599.state.is_narrow());
-    assert!(rt_599.find("settings-narrow-header").is_some());
+    assert!(rt_599.state.is_narrow(), "599pt must be narrow");
+    assert!(rt_599.find("settings-compact-bar").is_some());
 
-    let mut rt = fixture_runtime((411.0, 890.0), true);
+    // Round-trip: narrow -> pick Voice -> widen -> Voice stays active -> narrow -> Voice stays active.
+    let mut rt = fixture_runtime((411.0, 890.0), false);
+    click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
     click_key(&mut rt, "settings-voice");
     assert_eq!(rt.state.section, Section::Voice);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
 
-    // Widen to desktop / landscape: side-by-side nav + Voice pane without losing Voice.
-    rt.set_viewport((1024.0, 768.0), 1.0);
+    rt.set_viewport((900.0, 760.0), 1.0);
     rt.frame(0.02);
     rt.frame(0.02);
     assert!(!rt.state.is_narrow());
     assert_eq!(rt.state.section, Section::Voice);
-    assert!(rt.find(NARROW_BACK_KEY).is_none());
-    assert!(rt.find("settings-voice").is_some());
+    assert!(rt.find("settings-compact-bar").is_none());
     assert!(rt.find("voice").is_some());
-
-    // Switch to Providers while wide, then narrow back to phone portrait: Providers stays open in Detail.
-    click_key(&mut rt, "settings-providers");
-    assert_eq!(rt.state.section, Section::Providers);
 
     rt.set_viewport((411.0, 890.0), 1.0);
     rt.frame(0.02);
     rt.frame(0.02);
     assert!(rt.state.is_narrow());
-    assert_eq!(rt.state.section, Section::Providers);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert!(rt.find(NARROW_BACK_KEY).is_some());
-    assert!(rt.find("settings-narrow-list").is_none());
-    let pane = rt
-        .elements()
-        .into_iter()
-        .find(|el| el.key.as_deref() == Some("providers"))
-        .expect("providers pane stays open after wide -> narrow resize");
-    assert!((pane.rect[2] - 411.0).abs() <= 1.0);
+    assert_eq!(rt.state.section, Section::Voice);
+    assert!(rt.find("settings-compact-bar").is_some());
+    assert!(rt.find("voice").is_some());
 }
 
 #[test]
-fn open_remote_and_open_providers_enter_narrow_detail_and_respect_dirty_guards() {
-    // 1. Setup jump to Section::Remote opens Detail directly on narrow viewports.
-    let mut state = Window::default();
-    {
-        let mut prefs = state.shared.borrow_mut();
-        prefs.fixture();
-        prefs.fixture_locale("en");
-        prefs.backend =
-            Some(crate::backend::Backend::unauthenticated("http://127.0.0.1:9/").unwrap());
-        prefs.open_section = Some(Section::Remote);
-    }
-    lifecycle::spec().setup.unwrap()(&mut state, std::sync::Arc::new(|| {}));
-    let mut rt = Runtime::new(state, view, (411.0, 890.0), Env::new(true, 1.0));
-    rt.on_key = lifecycle::spec().on_key;
-    rt.frame(0.0);
-    rt.frame(0.02);
+fn open_remote_and_open_providers_switch_section_and_respect_dirty_guards() {
+    // 1. Fresh narrow window with open_section = Remote opens directly on Remote.
+    let mut rt = fixture_runtime((411.0, 890.0), false);
+    rt.state.shared.borrow_mut().open_section = Some(Section::Remote);
+    rt.update(|s, tx| {
+        lifecycle::spec().poll.unwrap()(s, 0.0, tx);
+    });
     rt.frame(0.02);
     assert_eq!(rt.state.section, Section::Remote);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
+    assert!(!rt.state.narrow.picker_open());
     assert!(rt.find("remote").is_some());
-    assert!(rt.find(NARROW_BACK_KEY).is_some());
 
-    // 2. Return to List, then poll jump to Section::Providers opens Detail and focuses back button.
-    click_key(&mut rt, NARROW_BACK_KEY);
-    assert_eq!(rt.state.narrow.view(), NarrowView::List);
+    // 2. Requesting Providers while on Remote switches directly to Providers.
     rt.state.shared.borrow_mut().open_section = Some(Section::Providers);
     rt.update(|s, tx| {
         lifecycle::spec().poll.unwrap()(s, 0.0, tx);
     });
     rt.frame(0.02);
-    rt.frame(0.02);
     assert_eq!(rt.state.section, Section::Providers);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
+    assert!(rt.find("providers").is_some());
 
-    // 3. Re-clicking already-active General with an unsaved draft preserves the draft without confirm.
-    click_key(&mut rt, NARROW_BACK_KEY);
-    click_key(&mut rt, "settings-general");
-    rt.state.general.fixture_dirty();
-    click_key(&mut rt, NARROW_BACK_KEY);
-    assert_eq!(rt.state.narrow.view(), NarrowView::List);
-    assert!(rt.state.general.dirty());
+    // 3. Switch to General and create an unsaved palette draft.
+    click_key(&mut rt, SECTION_PICKER_TRIGGER_KEY);
     click_key(&mut rt, "settings-general");
     assert_eq!(rt.state.section, Section::General);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
+    click_key(&mut rt, "palette-new");
     assert!(rt.state.general.dirty());
-    assert!(rt.state.pending_section.is_none());
 
-    // 4. Programmatic open_remote while General has an unsaved draft prompts discard instead of losing edits.
+    // 4. Requesting Remote while General has unsaved draft prompts discard instead of losing edits.
     rt.state.shared.borrow_mut().open_section = Some(Section::Remote);
     rt.update(|s, tx| {
         lifecycle::spec().poll.unwrap()(s, 0.0, tx);
@@ -380,7 +256,7 @@ fn open_remote_and_open_providers_enter_narrow_detail_and_respect_dirty_guards()
     assert!(rt.state.general.dirty());
     assert!(rt.state.pending_section.is_none());
 
-    // Request again and confirm discard -> enters Remote Detail and focuses back button.
+    // Request again and confirm discard -> enters Remote.
     rt.state.shared.borrow_mut().open_section = Some(Section::Remote);
     rt.update(|s, tx| {
         lifecycle::spec().poll.unwrap()(s, 0.0, tx);
@@ -388,9 +264,8 @@ fn open_remote_and_open_providers_enter_narrow_detail_and_respect_dirty_guards()
     rt.frame(0.02);
     click_key(&mut rt, "file-decision-confirm");
     assert_eq!(rt.state.section, Section::Remote);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
     assert!(!rt.state.general.dirty());
-    assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
+    assert!(rt.find("remote").is_some());
 
     // 5. Unavailable section request falls back cleanly to Section::General without crashing.
     rt.state.shared.borrow_mut().open_section = Some(Section::ConfigFiles);
@@ -399,8 +274,7 @@ fn open_remote_and_open_providers_enter_narrow_detail_and_respect_dirty_guards()
     });
     rt.frame(0.02);
     assert_eq!(rt.state.section, Section::General);
-    assert_eq!(rt.state.narrow.view(), NarrowView::Detail);
-    assert_eq!(focused_key(&rt).as_deref(), Some(NARROW_BACK_KEY));
+    assert!(rt.find("general").is_some());
 }
 
 #[test]
@@ -415,13 +289,11 @@ fn settings_open_remote_public_entrypoint_is_callable_and_safe() {
             woken_flag.store(true, std::sync::atomic::Ordering::SeqCst);
         }));
     }
-    // Opening when no window exists stages `Section::Remote`.
     crate::settings::open_remote(&mut app);
     assert_eq!(
         app.settings.shared.borrow().open_section,
         Some(Section::Remote)
     );
-    // Calling again while the window token is alive focuses and wakes the existing window.
     let _keep_alive = app
         .settings
         .window

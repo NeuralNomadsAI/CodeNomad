@@ -2,7 +2,7 @@ use super::{
     Preferences, info, notification_settings, opencode,
     providers::{self, Catalog, Target},
     remote,
-    responsive::{NARROW_BACK_KEY, NarrowState, NarrowView, Section, resolve_requested_section},
+    responsive::{NarrowState, Section, resolve_requested_section},
 };
 use crate::{State, platform, screen, strings::t};
 use rune::{El, col, text};
@@ -45,6 +45,7 @@ pub(super) struct Panel {
     config_files: super::config_files::Editor,
     environment: super::advanced::environment::Editor,
     advanced_help: Option<super::advanced::Toggle>,
+    notification_info: Option<super::notification_routing::Destination>,
     confirm_config_close: bool,
     confirm_palette_close: bool,
     stats: super::stats::Dashboard,
@@ -245,10 +246,7 @@ impl Panel {
                 AfterPaletteSave::Section(section) => {
                     if self.can_open_section(prefs, section) {
                         apply_web_section(self, prefs, section);
-                        if self.narrow.is_narrow() {
-                            self.narrow.open_detail();
-                            self.pending_focus = Some(NARROW_BACK_KEY);
-                        }
+                        self.narrow.close_picker();
                         palette_settled = true;
                     }
                 }
@@ -285,23 +283,16 @@ impl Panel {
         let shown = self.shown && paired;
         let mut changed = self.scope.poll(prefs, wake, shown);
         if shown && let Some(requested) = self.deferred_open {
-            if self.can_open_section(prefs, requested) {
+            if self.general.dirty() || self.general.busy(prefs) {
+                // User started editing General while waiting for `/api/meta`: abandon deferred jump.
                 self.deferred_open = None;
+            } else if self.can_open_section(prefs, requested) {
                 if !self.config_files.busy() {
+                    self.deferred_open = None;
                     if requested != self.section {
-                        if self.general.busy(prefs) {
-                            self.after_palette_save =
-                                Some((prefs.binding_epoch(), AfterPaletteSave::Section(requested)));
-                        } else if self.general.dirty() {
-                            self.pending_section = Some(requested);
-                        } else {
-                            apply_web_section(self, prefs, requested);
-                        }
+                        apply_web_section(self, prefs, requested);
                     }
-                    if self.narrow.is_narrow() {
-                        self.narrow.open_detail();
-                        self.pending_focus = Some(NARROW_BACK_KEY);
-                    }
+                    self.narrow.close_picker();
                     changed = true;
                 }
             } else if self.scope.local_unsupported(prefs)
@@ -385,26 +376,18 @@ pub(super) fn entry(touch: bool, skip_tab: bool) -> El {
 }
 
 pub(super) fn open(s: &mut State) {
-    open_panel(s, false);
+    open_panel(s);
 }
 
-fn open_panel(s: &mut State, open_detail: bool) {
+fn open_panel(s: &mut State) {
     s.shell.leave_project();
     let target = Target::capture(s);
     let opener = super::missions::opener_directory(s);
     let mut prefs = s.settings.shared.borrow_mut();
     prefs.missions.capture_opener(opener, target.as_ref());
     prefs.provider_target = target;
-    let was_shown = s.settings.web.shown;
     s.settings.web.narrow.seed_width(s.window_size[0]);
-    if open_detail {
-        s.settings.web.narrow.open_detail();
-        if s.settings.web.narrow.is_narrow() {
-            s.settings.web.pending_focus = Some(NARROW_BACK_KEY);
-        }
-    } else if !was_shown {
-        s.settings.web.narrow.reset_to_list();
-    }
+    s.settings.web.narrow.close_picker();
     prefs
         .memory
         .show(s.settings.web.section == Section::General);
@@ -435,7 +418,7 @@ fn open_section(s: &mut State, requested: Section) {
     };
     let target = resolve_requested_section(requested, allowed);
     if target != panel.section && panel.config_files.busy() {
-        open_panel(s, true);
+        open_panel(s);
         return;
     }
     if defer_remote {
@@ -447,19 +430,19 @@ fn open_section(s: &mut State, requested: Section) {
             panel.after_palette_save =
                 Some((prefs.binding_epoch(), AfterPaletteSave::Section(target)));
             drop(prefs);
-            open_panel(s, true);
+            open_panel(s);
             return;
         }
         drop(prefs);
         if panel.general.dirty() {
             panel.pending_section = Some(target);
-            open_panel(s, true);
+            open_panel(s);
             return;
         }
         let mut prefs = s.settings.shared.borrow_mut();
         apply_web_section(panel, &mut prefs, target);
     }
-    open_panel(s, true);
+    open_panel(s);
 }
 
 fn close(s: &mut State) {
@@ -496,7 +479,7 @@ fn request_close_panel(panel: &mut Panel, prefs: &mut Preferences) {
 
 fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     panel.shown = false;
-    panel.narrow.reset_to_list();
+    panel.narrow.close_picker();
     panel.pending_focus = None;
     panel.deferred_open = None;
     panel.confirm_config_close = false;
@@ -506,6 +489,7 @@ fn close_panel(panel: &mut Panel, prefs: &mut Preferences) {
     prefs.set_palette_preview(None);
     panel.general.close();
     panel.advanced_help = None;
+    panel.notification_info = None;
     panel.behavior.close();
     panel.catalog.suspend();
     panel.integrations.suspend();
@@ -574,38 +558,20 @@ pub(super) fn view(
         return None;
     }
     let local = panel.local(prefs);
-    let locale = prefs.locale().unwrap_or_else(crate::strings::locale);
-    let rtl = rune_theme_codenomad::catalogue::direction(locale) == "rtl";
     let touch = cx.touch_controls();
     let width = panel.narrow.effective_width(s.window_size[0]);
     let narrow = chrome::is_narrow(width);
-    let show_detail = !narrow || panel.narrow.view() == NarrowView::Detail;
-    let sections: Vec<_> = [
-        Section::General,
-        Section::Conversation,
-        Section::OpenCode,
-        Section::Notifications,
-        Section::Voice,
-        Section::Shortcuts,
-        Section::Providers,
-        Section::Missions,
-        Section::Integrations,
-        Section::Stats,
-        Section::Remote,
-        Section::ConfigFiles,
-        Section::Advanced,
-        Section::Info,
-    ]
-    .into_iter()
-    .filter(|section| match section {
-        Section::OpenCode | Section::Remote => panel.can_open_section(prefs, *section),
-        Section::ConfigFiles => panel.can_open_section(prefs, Section::ConfigFiles),
-        Section::Stats => super::stats::supported(prefs),
-        _ => true,
-    })
-    .collect();
+    let sections: Vec<_> = Section::ORDER
+        .into_iter()
+        .filter(|section| match section {
+            Section::OpenCode | Section::Remote => panel.can_open_section(prefs, *section),
+            Section::ConfigFiles => panel.can_open_section(prefs, Section::ConfigFiles),
+            Section::Stats => super::stats::supported(prefs),
+            _ => true,
+        })
+        .collect();
     let mut layers = Vec::new();
-    let body = show_detail.then(|| match panel.section {
+    let body = match panel.section {
         Section::General => {
             let system_dark = cx.system_dark();
             let workbench_width = cx
@@ -753,6 +719,11 @@ pub(super) fn view(
             .child(notification_settings::view(
                 &s.settings.shared,
                 notification_settings::web_permission(),
+                panel.notification_info,
+                |s: &mut State, dest| {
+                    let open = &mut s.settings.web.notification_info;
+                    *open = (*open != Some(dest)).then_some(dest);
+                },
                 request_notification_permission,
             ))
             .children(
@@ -978,7 +949,7 @@ pub(super) fn view(
             local.then_some(open_remote_from_info),
         ),
         Section::OpenCode | Section::Remote => rune::el(),
-    });
+    };
     if let Some(editor) = prefs.memory.editor_view(
         &panel.memory_editor,
         |s: &mut State| &mut s.settings.web.memory_editor,
@@ -1026,9 +997,7 @@ pub(super) fn view(
                         s.settings.web.general.discard_draft(&mut prefs);
                         apply_web_section(&mut s.settings.web, &mut prefs, next_section);
                         drop(prefs);
-                        if s.settings.web.narrow.is_narrow() {
-                            s.settings.web.narrow.open_detail_focus(tx);
-                        }
+                        s.settings.web.narrow.close_picker_focus(tx);
                     }
                 }
             },
@@ -1036,52 +1005,36 @@ pub(super) fn view(
     }
     let root = if narrow {
         let on_close = screen::action(&s.input_scope, close);
-        let content = match body {
-            Some(detail_body) => chrome::narrow_pane(
-                panel.section.pane_key(),
-                chrome::narrow_header(
-                    panel.section.label(),
-                    Some((
-                        t("sessionList.history.back"),
-                        t("settings.navigationAriaLabel"),
-                        rtl,
-                        |s: &mut State, tx: &mut rune::Tx| {
-                            return_to_narrow_list(&mut s.settings.web, tx);
-                        },
-                    )),
-                    t("settings.close"),
-                    touch,
-                    move |s: &mut State, _| on_close(s),
-                ),
-                [detail_body],
-            ),
-            None => {
-                let nav_items: Vec<_> = sections
-                    .iter()
-                    .map(|&section| (section.nav_key(), section.label(), panel.section == section))
-                    .collect();
-                chrome::narrow_list_screen(
-                    chrome::narrow_header(
-                        t("settings.title"),
-                        None::<(&str, &str, bool, fn(&mut State, &mut rune::Tx))>,
-                        t("settings.close"),
-                        touch,
-                        move |s: &mut State, _| on_close(s),
-                    ),
-                    chrome::narrow_nav(
-                        t("settings.navigationAriaLabel"),
-                        nav_items,
-                        touch,
-                        |s: &mut State, key, tx| {
-                            if let Some(section) = Section::from_nav_key(key) {
-                                select_web_section(s, section, Some(tx));
-                            }
-                        },
-                    ),
-                )
-            }
-        };
-        chrome::embedded_narrow_frame(t("settings.title"), content, layers, handle_escape)
+        let nav_items: Vec<_> = sections
+            .iter()
+            .map(|&section| (section.nav_key(), section.label(), panel.section == section))
+            .collect();
+        let bar = chrome::compact_bar(
+            t("settings.navigationAriaLabel"),
+            panel.section.nav_key(),
+            panel.section.label(),
+            panel.narrow.picker_open(),
+            nav_items,
+            t("settings.close"),
+            touch,
+            &mut layers,
+            |s: &mut State, tx| s.settings.web.narrow.toggle_picker(tx),
+            |s: &mut State, tx| {
+                s.settings.web.narrow.close_picker_focus(tx);
+            },
+            |s: &mut State, key, tx| {
+                if let Some(section) = Section::from_nav_key(key) {
+                    select_web_section(s, section, Some(tx));
+                }
+            },
+            move |s: &mut State, _| on_close(s),
+        );
+        chrome::embedded_narrow_frame(
+            t("settings.title"),
+            chrome::narrow_pane(panel.section.pane_key(), bar, [body]),
+            layers,
+            handle_escape,
+        )
     } else {
         let labels: Vec<_> = sections.iter().map(|section| section.label()).collect();
         let navigation = chrome::segments(
@@ -1097,14 +1050,13 @@ pub(super) fn view(
                 }
             },
         );
-        let wide_body = body.expect("wide layout always builds section");
         chrome::embedded_section(
             t("settings.title"),
             col()
                 .full_width()
                 .separate(Space::Md)
                 .child(navigation)
-                .child(wide_body),
+                .child(body),
             layout::button(
                 t("settings.close"),
                 false,
@@ -1123,6 +1075,11 @@ pub(super) fn view(
 
 fn select_web_section(s: &mut State, section: Section, tx: Option<&mut rune::Tx>) {
     let panel = &mut s.settings.web;
+    if let Some(tx) = tx {
+        panel.narrow.close_picker_focus(tx);
+    } else {
+        panel.narrow.close_picker();
+    }
     let mut prefs = s.settings.shared.borrow_mut();
     if !panel.shown
         || (section == Section::Stats && !super::stats::supported(&prefs))
@@ -1151,24 +1108,18 @@ fn select_web_section(s: &mut State, section: Section, tx: Option<&mut rune::Tx>
     } else if !panel.narrow.is_narrow() {
         apply_web_section(panel, &mut prefs, section);
     }
-    drop(prefs);
-    if panel.narrow.is_narrow() {
-        if let Some(tx) = tx {
-            panel.narrow.open_detail_focus(tx);
-        } else {
-            panel.narrow.open_detail();
-            panel.pending_focus = Some(NARROW_BACK_KEY);
-        }
-    }
 }
 
-fn return_to_narrow_list(panel: &mut Panel, tx: &mut rune::Tx) {
-    panel.deferred_open = None;
-    panel.narrow.return_to_list(panel.section, tx);
-}
-
-fn dismiss_inline_overlay(s: &mut State, tx: Option<&mut rune::Tx>) -> bool {
+fn dismiss_inline_overlay(s: &mut State, mut tx: Option<&mut rune::Tx>) -> bool {
     let panel = &mut s.settings.web;
+    if let Some(tx) = tx.as_deref_mut()
+        && panel.narrow.close_picker_focus(tx)
+    {
+        return true;
+    }
+    if panel.narrow.close_picker() {
+        return true;
+    }
     if panel.confirm_config_close {
         panel.confirm_config_close = false;
         return true;
@@ -1208,11 +1159,6 @@ fn dismiss_inline_overlay(s: &mut State, tx: Option<&mut rune::Tx>) -> bool {
 
 fn handle_escape(s: &mut State, tx: &mut rune::Tx) {
     if dismiss_inline_overlay(s, Some(tx)) {
-        return;
-    }
-    let panel = &mut s.settings.web;
-    if panel.narrow.is_narrow() && panel.narrow.view() == NarrowView::Detail {
-        return_to_narrow_list(panel, tx);
         return;
     }
     close(s);
@@ -1256,6 +1202,7 @@ fn apply_web_section(panel: &mut Panel, prefs: &mut Preferences, section: Sectio
     }
     panel.general.close();
     panel.advanced_help = None;
+    panel.notification_info = None;
     panel.behavior.close();
     panel.memory_help.clear();
     prefs.memory.show(panel.section == Section::General);
@@ -1267,9 +1214,6 @@ fn open_remote_from_info(s: &mut State) {
     if panel.shown && panel.section == Section::Info && panel.local(&prefs) {
         panel.info.close();
         panel.section = Section::Remote;
-        if panel.narrow.is_narrow() {
-            panel.narrow.open_detail();
-            panel.pending_focus = Some(NARROW_BACK_KEY);
-        }
+        panel.narrow.close_picker();
     }
 }

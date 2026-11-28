@@ -221,16 +221,17 @@ pub(super) fn view<S: 'static>(
     }
     let mut install_button = None;
     if let Some(snapshot) = &status.value {
-        card = card.child(version(
+        let mut versions = vec![version(
             "settings.opencode.update.installed",
             snapshot.current.as_deref(),
-        ));
+        )];
         if snapshot.running.is_none() || snapshot.running != snapshot.current {
-            card = card.child(version(
+            versions.push(version(
                 "settings.opencode.setup.daemon",
                 snapshot.running.as_deref(),
             ));
         }
+        card = card.child(chrome::divided_rows(versions));
         if !status.failed
             && snapshot.update_available
             && let Some(latest) = &snapshot.latest
@@ -306,16 +307,17 @@ pub(super) fn view<S: 'static>(
             )),
     );
     if let Some(snapshot) = &status.value {
-        let mut details = col().full_width().separate(Space::Xs).child(version(
+        let mut detail_rows = vec![version(
             "settings.opencode.setup.minimum",
             snapshot.minimum.as_deref(),
-        ));
+        )];
         if snapshot.recommended != snapshot.minimum {
-            details = details.child(version(
+            detail_rows.push(version(
                 "settings.opencode.setup.recommended",
                 snapshot.recommended.as_deref(),
             ));
         }
+        let details = chrome::divided_rows(detail_rows);
         card = card.child(chrome::disclosure(
             t("settings.opencode.setup.diagnostics"),
             status.details_open,
@@ -330,12 +332,7 @@ pub(super) fn view<S: 'static>(
 }
 
 fn version(label: &str, value: Option<&str>) -> El {
-    chrome::setting_row(
-        t(label),
-        text(value.unwrap_or("—"))
-            .text_role(TextRole::Mono)
-            .literal_direction(),
-    )
+    chrome::info_row(t(label), value.unwrap_or("—"), value.is_none())
 }
 
 pub(super) fn executable_view<S: 'static>(

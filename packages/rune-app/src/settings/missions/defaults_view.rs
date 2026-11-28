@@ -155,7 +155,7 @@ impl Missions {
         let scope_open = self.open_picker == Some(Picker::Scope) && !disabled;
         let shared_scope = shared.clone();
         let scope_picker =
-            chrome::picker("mission-scope", t("missions.defaults.scope"), &scope_labels)
+            chrome::wide_picker("mission-scope", t("missions.defaults.scope"), &scope_labels)
                 .current(Some(scope_labels[scope_index]))
                 .disabled(disabled)
                 .open(scope_open)
@@ -206,7 +206,7 @@ impl Missions {
         let mode_labels_choose = mode_labels.clone();
         let mode_basis = entry.and_then(|item| item.task_mode);
         let shared_mode = shared.clone();
-        let mode_picker = chrome::picker(
+        let mode_picker = chrome::wide_picker(
             "mission-task-mode",
             t("missions.taskMode.label"),
             &mode_refs,
@@ -349,9 +349,8 @@ impl Missions {
 
         let delete_checked = prefs.missions.defaults.delete_sessions_shown(snapshot);
         let shared_delete = shared.clone();
-        defaults_card = defaults_card.child(chrome::setting_row(
-            t("missions.preferences.deleteSessions"),
-            chrome::setting_switch(
+        defaults_card = defaults_card.child(
+            chrome::checkbox_leading(
                 t("missions.preferences.deleteSessions"),
                 delete_checked,
                 !active || !loaded || prefs.missions.defaults.busy_delete(),
@@ -364,7 +363,7 @@ impl Missions {
                 },
             )
             .key("mission-delete-sessions"),
-        ));
+        );
         if prefs.missions.defaults.delete_failed {
             defaults_card = defaults_card.child(
                 text(t("settings.preferenceSaveFailed"))

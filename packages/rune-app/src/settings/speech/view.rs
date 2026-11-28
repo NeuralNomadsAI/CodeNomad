@@ -143,22 +143,18 @@ impl Speech {
         )
         .key("speech-info-promptVoiceInput");
         let owner = shared.clone();
-        let control = chrome::checkbox_cell(
-            title.into(),
-            checked,
-            config_unavailable,
-            move |_: &mut S| {
+        let control =
+            chrome::setting_switch(title, checked, config_unavailable, move |_: &mut S| {
                 let mut prefs = owner.borrow_mut();
                 if let Some(current) = prefs.general_toggle(toggle) {
                     prefs.set_general_toggle(toggle, !current);
                 }
-            },
-        )
-        .busy(pending)
-        .key("behavior-showPromptVoiceInput");
+            })
+            .busy(pending)
+            .key("behavior-showPromptVoiceInput");
 
         let mut actions = layout::action_row().child(
-            layout::button_tx(
+            chrome::text_link_button(
                 t("settings.voice.credentials.title"),
                 false,
                 move |s: &mut S, tx| {
@@ -341,7 +337,7 @@ impl Speech {
         } else {
             "settings.speech.save.action"
         });
-        let mut actions = layout::action_row()
+        let mut actions = chrome::trailing_action_row()
             .child(
                 chrome::primary_action(
                     save_label,
@@ -385,23 +381,19 @@ impl Speech {
                 t("settings.voice.playback.title"),
                 self.playback_status(server_loaded, server_failed),
             ))
-            .child(chrome::setting_row(
-                t("settings.speech.provider.title"),
-                text(self.provider_label()).wrap(),
-            ))
-            .child(chrome::setting_row_with_info(
-                t("settings.speech.playbackMode.title"),
-                Some(mode_info),
-                mode_picker,
-            ))
-            .child(chrome::setting_row(
-                t("settings.speech.ttsVoice.title"),
-                voice_field,
-            ))
-            .child(chrome::setting_row(
-                t("settings.speech.ttsFormat.title"),
-                fmt_picker,
-            ));
+            .child(chrome::divided_rows([
+                chrome::setting_row(
+                    t("settings.speech.provider.title"),
+                    text(self.provider_label()).wrap(),
+                ),
+                chrome::setting_row_with_info(
+                    t("settings.speech.playbackMode.title"),
+                    Some(mode_info),
+                    mode_picker,
+                ),
+                chrome::field_row(t("settings.speech.ttsVoice.title"), None, voice_field),
+                chrome::setting_row(t("settings.speech.ttsFormat.title"), fmt_picker),
+            ]));
 
         if streaming_incompatible {
             card = card.child(
@@ -442,7 +434,7 @@ impl Speech {
         disabled: bool,
         access: fn(&mut S) -> &mut Self,
     ) -> El {
-        let mut body = col().full_width().separate(Space::Sm);
+        let mut body = col().full_width().separate(Space::Xs);
         if separate_supported {
             let label = t("settings.speech.separateProviders.title");
             body = body.child(chrome::setting_row(
@@ -496,8 +488,9 @@ impl Speech {
             move |s| &mut access(s).drafts.tts_model.edit,
             move |s| access(s).drafts.on_text_change(TextField::TtsModel),
         );
-        body = body.child(chrome::setting_row(
+        body = body.child(chrome::field_row(
             t("settings.speech.ttsModel.title"),
+            None,
             shared_tts_model,
         ));
 
@@ -614,11 +607,7 @@ impl Speech {
             edit_key,
             change_key,
         );
-        body = body.child(chrome::setting_row_with_info(
-            spec.api_key_label,
-            key_info,
-            key_field,
-        ));
+        body = body.child(chrome::field_row(spec.api_key_label, key_info, key_field));
 
         if spec.has_api_key && !key_typed {
             if spec.clear_key {
@@ -654,7 +643,7 @@ impl Speech {
             edit_url,
             change_url,
         );
-        body = body.child(chrome::setting_row_with_info(
+        body = body.child(chrome::field_row(
             spec.base_url_label,
             Some(url_info),
             url_field,
@@ -670,7 +659,7 @@ impl Speech {
             edit_model,
             change_model,
         );
-        body.child(chrome::setting_row(spec.model_label, model_field))
+        body.child(chrome::field_row(spec.model_label, None, model_field))
     }
 }
 

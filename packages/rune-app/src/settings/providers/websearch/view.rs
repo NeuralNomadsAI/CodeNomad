@@ -31,12 +31,8 @@ pub(in crate::settings::providers) fn view<S: 'static>(
 
     if expanded {
         if !available {
-            body = body.child(
-                text(t("settings.providers.empty.noInstance"))
-                    .wrap()
-                    .text_role(TextRole::Small)
-                    .role("status"),
-            );
+            body = body
+                .child(chrome::empty_box(t("settings.providers.empty.noInstance")).role("status"));
         } else {
             if state.error {
                 body = body.child(text(t("settings.websearch.error")).wrap().role("alert"));
@@ -313,10 +309,7 @@ fn configured_list<S: 'static>(
 
     if snapshot.catalog_available && configured.is_empty() {
         return list.child(
-            text(t("settings.providers.empty.noConfiguredProviders"))
-                .wrap()
-                .text_role(TextRole::Small)
-                .role("status"),
+            chrome::empty_box(t("settings.providers.empty.noConfiguredProviders")).role("status"),
         );
     }
 

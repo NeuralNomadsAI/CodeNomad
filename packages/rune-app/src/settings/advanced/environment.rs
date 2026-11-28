@@ -11,6 +11,7 @@ use std::{cell::RefCell, rc::Rc};
 pub(in crate::settings) struct Editor {
     owner: Option<String>,
     open: bool,
+    info_open: bool,
     selected: Option<String>,
     name: TextEdit,
     value: TextEdit,
@@ -247,12 +248,25 @@ impl Editor {
                 );
             }
         }
+        let info = chrome::info_tip(title, help, self.info_open, move |s| {
+            let editor = edit(s);
+            editor.info_open = !editor.info_open;
+        })
+        .key("environment-variables-info");
         chrome::card(
-            chrome::disclosure(&format!("{title} {count}"), self.open, body, move |s| {
-                let editor = edit(s);
-                editor.open = !editor.open;
-                editor.reveal = false;
-            })
+            chrome::disclosure_with_meta(
+                title,
+                Some(&count),
+                Some(info),
+                Some(chrome::server_scope_badge(t("settings.scope.server"))),
+                self.open,
+                body,
+                move |s| {
+                    let editor = edit(s);
+                    editor.open = !editor.open;
+                    editor.reveal = false;
+                },
+            )
             .help(help)
             .description(help),
         )

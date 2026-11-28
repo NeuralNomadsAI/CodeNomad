@@ -978,28 +978,34 @@ impl Remote {
                 layout::button(label, disabled, press)
             }
         };
-        let heading = |key| text(t(key)).text_role(TextRole::Title).role("heading");
+        let refresh_shared = shared.clone();
+        let refresh = chrome::refresh_icon_button(
+            t("remoteControl.refresh"),
+            !available || busy,
+            move |s: &mut S| {
+                let Some(state) = access(s) else {
+                    return;
+                };
+                let prefs = refresh_shared.borrow();
+                let Some(backend) = prefs.backend.as_ref().filter(|_| prefs.can_retry()) else {
+                    return;
+                };
+                let Some(wake) = prefs.window_wake.as_ref().or(prefs.main_wake.as_ref()) else {
+                    return;
+                };
+                state.start(&prefs, backend, wake, Action::Refresh { explicit: true });
+            },
+        )
+        .key("remote-control-refresh");
         let mut rc = col()
             .full_width()
             .separate(Space::Sm)
-            .child(
-                layout::action_row()
-                    .child(heading("remoteControl.title"))
-                    .child(
-                        control(
-                            t("remoteControl.refresh"),
-                            false,
-                            false,
-                            Action::Refresh { explicit: true },
-                        )
-                        .key("remote-control-refresh"),
-                    ),
-            )
-            .child(
-                text(t("remoteControl.description"))
-                    .text_role(TextRole::Small)
-                    .wrap(),
-            );
+            .child(chrome::remote_header(
+                t("remoteControl.title"),
+                t("remoteControl.description"),
+                chrome::server_scope_badge(t("settings.scope.server")),
+                refresh,
+            ));
 
         let mut devices_card = None;
         if let Some((status, devices)) = self.snapshot.as_ref().filter(|_| available) {
@@ -1028,34 +1034,24 @@ impl Remote {
             } else {
                 (t("remoteControl.status.localOnly"), false)
             };
-            rc = rc.child(
-                col()
-                    .key("remote-control-status-card")
-                    .full_width()
-                    .inset_surface()
-                    .pad(Space::Sm)
-                    .separate(Space::Xs)
-                    .child(
-                        layout::action_row()
-                            .child(
-                                text(t(state_key))
-                                    .text_role(TextRole::Button)
-                                    .role("status")
-                                    .wrap(),
-                            )
-                            .children(disabled_info),
-                    )
-                    .child(
-                        text(subtitle)
-                            .text_role(if subtitle_is_url {
-                                TextRole::Mono
-                            } else {
-                                TextRole::Small
-                            })
-                            .wrap()
-                            .literal_direction(),
-                    ),
-            );
+            let tone = if status.disabled_by_administrator {
+                "stopped"
+            } else if status.state == TunnelState::Connected {
+                "connected"
+            } else if status.state.is_connecting() {
+                "connecting"
+            } else if status.state == TunnelState::Error {
+                "error"
+            } else {
+                "stopped"
+            };
+            rc = rc.child(chrome::remote_status_card(
+                tone,
+                t(state_key),
+                disabled_info,
+                subtitle,
+                subtitle_is_url,
+            ));
             if let Some(err) = status
                 .error
                 .as_deref()
@@ -1098,7 +1094,11 @@ impl Remote {
 
                 if !status.direct_origins.is_empty() {
                     let link_label = t("remoteControl.direct.newLink");
-                    rc = rc.child(heading("remoteControl.direct.title"));
+                    rc = rc.child(
+                        text(t("remoteControl.direct.title"))
+                            .text_role(TextRole::Title)
+                            .role("heading"),
+                    );
                     for origin in &status.direct_origins {
                         rc = rc.child(chrome::setting_row(
                             origin,
@@ -1147,16 +1147,16 @@ impl Remote {
             if status.manageable
                 && let Some(devices) = devices
             {
-                let mut list = col()
-                    .full_width()
-                    .separate(Space::Sm)
-                    .child(heading("remoteControl.devices.title"));
+                let mut list =
+                    col()
+                        .full_width()
+                        .separate(Space::Sm)
+                        .child(chrome::heading_with_icon(
+                            "shield-check",
+                            t("remoteControl.devices.title"),
+                        ));
                 if devices.is_empty() {
-                    list = list.child(
-                        text(t("remoteControl.devices.empty"))
-                            .text_role(TextRole::Small)
-                            .wrap(),
-                    );
+                    list = list.child(chrome::empty_box(t("remoteControl.devices.empty")));
                 }
                 for device in devices {
                     let origin = device.origin.as_ref().map_or_else(

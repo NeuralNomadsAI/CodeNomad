@@ -128,6 +128,12 @@ impl General {
                 .open(&help, tx, move |s| Some(&mut access(s).help_open));
         })
         .key("behavior-help-newConversationPermissions");
+        let mut rows: Vec<El> = BEFORE_PERMISSIONS.into_iter().map(&toggle_row).collect();
+        rows.push(chrome::setting_row_with_info(title, Some(info), trigger));
+        rows.push(toggle_row(GeneralToggle::FollowUpBehavior));
+        if native {
+            rows.push(toggle_row(GeneralToggle::KeepComputerAwake));
+        }
         chrome::card(
             col()
                 .full_width()
@@ -140,15 +146,12 @@ impl General {
                         && tx.focused() == Some("new-conversation-permissions-trigger")
                         && toggle(s)
                 })
-                .children(BEFORE_PERMISSIONS.into_iter().map(&toggle_row))
-                .child(chrome::setting_row_with_info(title, Some(info), trigger))
+                .child(chrome::divided_rows(rows))
                 .children(prefs.new_conversation_permissions_failed().then(|| {
                     chrome::palette::save_error(t(
                         "settings.behavior.newConversationPermissions.saveFailed",
                     ))
                 }))
-                .child(toggle_row(GeneralToggle::FollowUpBehavior))
-                .children(native.then(|| toggle_row(GeneralToggle::KeepComputerAwake)))
                 .children(
                     self.help_open
                         .failed()

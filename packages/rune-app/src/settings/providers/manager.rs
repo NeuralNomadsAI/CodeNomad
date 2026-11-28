@@ -1738,10 +1738,7 @@ impl Manager {
         if mgr.expanded {
             if !available {
                 body = body.child(
-                    text(t("settings.providers.empty.noInstance"))
-                        .wrap()
-                        .text_role(rune_theme_codenomad::TextRole::Small)
-                        .role("status"),
+                    chrome::empty_box(t("settings.providers.empty.noInstance")).role("status"),
                 );
             } else {
                 body = body.child(connect_bar(catalog, layers, access));
@@ -1771,9 +1768,7 @@ impl Manager {
                         .collect();
                     if configured.is_empty() {
                         body = body.child(
-                            text(t("settings.providers.empty.noConfiguredProviders"))
-                                .wrap()
-                                .text_role(rune_theme_codenomad::TextRole::Small)
+                            chrome::empty_box(t("settings.providers.empty.noConfiguredProviders"))
                                 .role("status"),
                         );
                     } else {

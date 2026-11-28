@@ -73,12 +73,8 @@ pub(in crate::settings::providers) fn view<S: 'static>(
 
     if expanded {
         if !available {
-            body = body.child(
-                text(t("settings.providers.empty.noInstance"))
-                    .wrap()
-                    .text_role(TextRole::Small)
-                    .role("status"),
-            );
+            body = body
+                .child(chrome::empty_box(t("settings.providers.empty.noInstance")).role("status"));
         } else {
             if state.error {
                 let refresh_rc = state_rc.clone();
@@ -113,23 +109,15 @@ pub(in crate::settings::providers) fn view<S: 'static>(
                 );
             }
             if state.unsupported {
-                body = body.child(
-                    text(t("settings.images.unsupported"))
-                        .wrap()
-                        .text_role(TextRole::Small)
-                        .role("status"),
-                );
+                body =
+                    body.child(chrome::empty_box(t("settings.images.unsupported")).role("status"));
             }
             if let Some(snapshot) = &state.snapshot {
                 let blocked = snapshot.blocked_by.is_some();
                 let disabled = state.mutations_disabled() || blocked;
                 if snapshot.generation.is_none() && snapshot.media_storage.is_none() {
-                    body = body.child(
-                        text(t("settings.images.unsupported"))
-                            .wrap()
-                            .text_role(TextRole::Small)
-                            .role("status"),
-                    );
+                    body = body
+                        .child(chrome::empty_box(t("settings.images.unsupported")).role("status"));
                 }
                 if let Some(blocked_by) = &snapshot.blocked_by {
                     let mut note = text(t("settings.images.blocked"))

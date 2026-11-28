@@ -99,7 +99,7 @@ pub(super) fn view<S: 'static>(
                         retry,
                     ))
             }))
-            .children(
+            .child(chrome::divided_rows(
                 Toggle::ALL
                     .into_iter()
                     .filter(|choice| native || *choice != Toggle::SecondLaunch)
@@ -119,8 +119,8 @@ pub(super) fn view<S: 'static>(
                             move |s| info(s, choice),
                         )
                         .key(format!("advanced-help-{}", choice.key()));
-                        let switch = chrome::setting_switch(
-                            t(title),
+                        let checkbox = chrome::checkbox_cell(
+                            t(title).into(),
                             checked,
                             !choice.supported()
                                 || !prefs.can_retry()
@@ -130,9 +130,9 @@ pub(super) fn view<S: 'static>(
                         )
                         .description(explanation)
                         .key(format!("advanced-switch-{}", choice.key()));
-                        chrome::setting_row_with_info(t(title), Some(info), switch)
+                        chrome::setting_row_with_info(t(title), Some(info), checkbox)
                     }),
-            ),
+            )),
     )
 }
 

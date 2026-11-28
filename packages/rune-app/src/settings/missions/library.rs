@@ -15,7 +15,7 @@ use codenomad_client::{
 };
 use rune::{El, col, text};
 use rune_theme_codenomad::{
-    Space, TextRole,
+    Space,
     layout::{self, Layout},
     settings as chrome,
 };
@@ -534,18 +534,19 @@ impl State {
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let is_open = open_picker == Some(Picker::Library) && !disabled;
         let labels_for_choose = labels.clone();
-        let picker = chrome::picker("mission-model-library", t("missions.models.select"), &refs)
-            .current(Some(refs[current_index]))
-            .disabled(disabled)
-            .open(is_open)
-            .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Library)))
-            .on_close(move |s: &mut S| set_picker(s, None))
-            .on_choose(move |s: &mut S, value, _| {
-                set_picker(s, None);
-                if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
-                    select(s, ids[pos].clone());
-                }
-            });
+        let picker =
+            chrome::wide_picker("mission-model-library", t("missions.models.select"), &refs)
+                .current(Some(refs[current_index]))
+                .disabled(disabled)
+                .open(is_open)
+                .on_toggle(move |s: &mut S| set_picker(s, (!is_open).then_some(Picker::Library)))
+                .on_close(move |s: &mut S| set_picker(s, None))
+                .on_choose(move |s: &mut S, value, _| {
+                    set_picker(s, None);
+                    if let Some(pos) = labels_for_choose.iter().position(|label| label == value) {
+                        select(s, ids[pos].clone());
+                    }
+                });
         let picker = chrome::build_picker(picker, layers);
 
         let mut card = col()
@@ -553,12 +554,10 @@ impl State {
             .label(t("missions.models.title"))
             .full_width()
             .separate(Space::Sm)
-            .child(
-                text(t("missions.models.title"))
-                    .text_role(TextRole::Title)
-                    .role("heading"),
-            )
-            .child(chrome::setting_row(t("missions.models.select"), picker));
+            .child(chrome::card_header_control(
+                t("missions.models.title"),
+                picker,
+            ));
 
         let invalid_loaded = loaded && !valid;
         if invalid_loaded {

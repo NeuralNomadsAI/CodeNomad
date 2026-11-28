@@ -2,17 +2,28 @@ use super::{Section, Window, chrome, layout, t, view};
 use rune::{AppSpec, Cx, El, col, text};
 use rune_theme_codenomad::layout::Layout;
 
+#[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+pub(in crate::settings) fn gallery_spec() -> AppSpec<Window> {
+    let base = spec();
+    AppSpec {
+        init: Window::gallery_init,
+        ..base
+    }
+}
+
 pub(in crate::settings) fn spec() -> AppSpec<Window> {
     AppSpec {
         setup: Some(|s, wake| {
             let requested = {
                 let mut prefs = s.shared.borrow_mut();
-                prefs.window_wake = Some(wake);
+                prefs.window_wake = Some(wake.clone());
                 std::mem::take(&mut prefs.open_section)
             };
             if let Some(requested) = requested {
                 s.apply_requested_section(requested, None);
             }
+            #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+            s.start_gallery_backend(&wake);
             let mut prefs = s.shared.borrow_mut();
             prefs.memory.show(s.section == Section::General);
             if prefs.backend.is_some() {
@@ -20,6 +31,10 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             }
         }),
         poll: Some(|s, now, tx| {
+            #[cfg(all(feature = "test-support", not(target_arch = "wasm32")))]
+            let gallery_connected = s.poll_gallery_backend();
+            #[cfg(not(all(feature = "test-support", not(target_arch = "wasm32"))))]
+            let gallery_connected = false;
             let locale = s
                 .shared
                 .borrow()
@@ -80,9 +95,6 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                             drop(prefs);
                             if allowed {
                                 s.switch_section(next);
-                                if s.is_narrow() {
-                                    s.narrow.open_detail_focus(tx);
-                                }
                                 return true;
                             }
                             prefs = s.shared.borrow_mut();
@@ -211,7 +223,9 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
                     } else {
                         s.providers.cancel_on_hide()
                     };
-                jump | updated
+                gallery_connected
+                    | jump
+                    | updated
                     | palette_settled
                     | status_changed
                     | remote_changed
@@ -233,6 +247,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             }
             if s.confirm_close.take().is_some() {
                 s.cancel_close_main();
+            } else if s.narrow.close_picker_focus(tx) {
             } else if s.pending_section.take().is_some() || s.general.dismiss_overlay() {
             } else if s.section == Section::Providers && s.providers.dismiss_modal(tx) {
             } else if s.memory_editor.shown() {
@@ -243,11 +258,7 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
             } else {
                 let cancelled = s.shared.borrow_mut().memory.cancel_cleanup_confirmation();
                 if !cancelled {
-                    if s.is_narrow() && s.narrow.view() == super::NarrowView::Detail {
-                        s.return_to_narrow_list(tx);
-                    } else {
-                        s.request_close(tx);
-                    }
+                    s.request_close(tx);
                 }
             }
             true
@@ -255,20 +266,85 @@ pub(in crate::settings) fn spec() -> AppSpec<Window> {
         #[cfg(any(test, feature = "test-support"))]
         scenes: &[
             ("settings", |s| s.shared.borrow_mut().fixture()),
+            ("general", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::General;
+            }),
+            ("picker-open", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::General;
+                s.narrow.open_picker_for_gallery();
+            }),
             ("conversation", |s| {
                 s.shared
                     .borrow_mut()
                     .fixture_locale(crate::strings::locale());
                 s.section = Section::Conversation;
-                s.narrow.open_detail();
+            }),
+            ("hotkeys", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Shortcuts;
+            }),
+            ("notifications", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Notifications;
+            }),
+            ("voice", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Voice;
+            }),
+            ("remote", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Remote;
             }),
             ("opencode", |s| {
                 s.shared
                     .borrow_mut()
                     .fixture_locale(crate::strings::locale());
                 s.section = Section::OpenCode;
-                s.narrow.open_detail();
                 s.opencode.fixture();
+            }),
+            ("providers", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Providers;
+            }),
+            ("missions", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Missions;
+            }),
+            ("stats", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Stats;
+            }),
+            ("advanced", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Advanced;
+            }),
+            ("info", |s| {
+                s.shared
+                    .borrow_mut()
+                    .fixture_locale(crate::strings::locale());
+                s.section = Section::Info;
             }),
         ],
         ..chrome::spec(t("settings.title"), Window::default, view)
