@@ -26,6 +26,8 @@ use std::{
 
 const POLL_INTERVAL_S: f64 = 1.0;
 const MAX_RENAME_LEN: usize = 256;
+pub(super) const SEARCH_INPUT_MODE: rune::InputMode = rune::InputMode::Search;
+pub(super) const SEARCH_AUTOFILL: rune::Autofill = rune::Autofill::Off;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum PickerId {
@@ -798,6 +800,15 @@ impl Manager {
     #[cfg(test)]
     pub(super) fn poll_flight_active(&self) -> bool {
         self.poll_flight.is_some()
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_loading_for_test(&mut self, loading: bool) {
+        self.flight = loading.then(|| {
+            let (cancel, _) = bounded(1);
+            let (_, rx) = bounded(1);
+            (cancel, rx)
+        });
     }
 
     #[cfg(test)]
@@ -1727,11 +1738,28 @@ impl Manager {
         let mut body = col().full_width().separate(Space::Sm);
         if mgr.expanded {
             if !available {
-                body = body.child(text(t("settings.providers.empty.noInstance")).role("status"));
+                body = body.child(
+                    text(t("settings.providers.empty.noInstance"))
+                        .wrap()
+                        .text_role(rune_theme_codenomad::TextRole::Small)
+                        .role("status"),
+                );
             } else {
                 body = body.child(connect_bar(catalog, layers, access));
                 if mgr.flight.is_some() && mgr.snapshot.is_none() {
-                    body = body.child(text(t("settings.providers.loading")).role("status"));
+                    body = body.child(
+                        col()
+                            .full_width()
+                            .pad(Space::Sm)
+                            .inset_surface()
+                            .role("status")
+                            .key("providers-loading")
+                            .child(
+                                text(t("settings.providers.loading"))
+                                    .wrap()
+                                    .text_role(rune_theme_codenomad::TextRole::Small),
+                            ),
+                    );
                 } else if let Some(err) = &mgr.load_error {
                     body = body.child(text(err.as_str()).wrap().role("alert"));
                 }
@@ -1745,6 +1773,8 @@ impl Manager {
                     if configured.is_empty() {
                         body = body.child(
                             text(t("settings.providers.empty.noConfiguredProviders"))
+                                .wrap()
+                                .text_role(rune_theme_codenomad::TextRole::Small)
                                 .role("status"),
                         );
                     } else {
@@ -1803,6 +1833,8 @@ fn connect_bar<S: 'static>(
     let mut bar = col().full_width().separate(Space::Xs);
     let search_input = layout::hinted_field(&mgr.search, t("settings.providers.selectProvider"))
         .label(t("settings.providers.selectProvider"))
+        .input_mode(SEARCH_INPUT_MODE)
+        .autofill(SEARCH_AUTOFILL)
         .disabled(mgr.modal_open())
         .on_edit(move |s: &mut S| &mut access(s).manager.search)
         .build(&field_kit(layout::dark()))
