@@ -110,6 +110,11 @@ test("events gate the launch, and their news waits for the active launch", async
   assert.equal((await f.run(7, news)).outcome, "idle")
   assert.equal(f.calls.length, asked, "an ended launch without news is kept and not asked about again")
   assert.deepEqual([...f.missions.keys()], ["msn_calendar_aut_a_5"])
+  // Events that cannot be read are no failed run: nothing changes, and the commit that landed meanwhile launches once they are read.
+  head = "d"
+  const unreadable: MissionCalendarNews = async () => { throw new Error("Network unreachable") }
+  assert.deepEqual([(await f.run(8, unreadable)).outcome, (await f.run(9, unreadable)).outcome, f.calls.length], ["unread", "unread", asked])
+  assert.equal((await f.run(10, news)).missionID, "msn_calendar_aut_a_10")
 })
 
 test("a launch coordinates in the conversation the programming names, else the one its launches use, else a new one", async () => {
@@ -209,7 +214,8 @@ test("a prepared Mission a person started, removed or replaced by an edit is fol
   const started = fixture()
   started.prepare("msn_prepared")
   started.missions.get("msn_prepared")!.runState = "running"
-  assert.deepEqual([(await started.run(1, undefined, "aut_a", {}, "msn_prepared")).outcome, started.missions.size], ["waiting", 1])
+  const byHand = await started.run(1, undefined, "aut_a", {}, "msn_prepared")
+  assert.deepEqual([byHand.outcome, byHand.launches, started.missions.size], ["waiting", 1, 1], "a launch started by hand counts")
   const removed = fixture()
   assert.equal((await removed.run(1, undefined, "aut_a", {}, "msn_gone")).missionID, "msn_calendar_aut_a_1")
   const edited = fixture()
